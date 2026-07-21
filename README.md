@@ -36,6 +36,7 @@ FOLLOW_UPS_ENABLED=false
 PALLET_PROS_KNOWLEDGE=
 MANUAL_TAKEOVER_MINUTES=8
 PORT=3000
+DATA_DIR=
 ```
 
 Notes:
@@ -56,6 +57,7 @@ Notes:
 - `FOLLOW_UPS_ENABLED=false` keeps follow-up nudges disabled. Set it to `true` only after testing.
 - `PALLET_PROS_KNOWLEDGE` is optional. If set, it overrides `knowledge/pallet-pros.md` and gets included in the AI prompt as private business context.
 - `MANUAL_TAKEOVER_MINUTES=8` pauses auto-send briefly after the app detects a manual Zernio reply, then lets the bot take over again if you are not around.
+- `DATA_DIR` is optional. Leave it empty for the default local JSON file at `data/store.json`.
 - Kommo sending/history requires the Kommo Chats API scopes. If those are not available on your Kommo account, use Zernio for inbox send/receive instead.
 - The OpenAI API key must have active API billing/credits. ChatGPT Plus/Pro billing is separate from API billing.
 
@@ -198,6 +200,10 @@ Training/YouTube links sent
 Booking links sent
 Follow-ups sent
 ```
+
+The dashboard also shows all-time counters beside today's counters so daily performance does not disappear from the top row when a new day starts.
+
+Important DigitalOcean note: App Platform web components use ephemeral local filesystems. That means `data/store.json` can reset on redeploy/restart because App Platform does not support mounted volumes. For permanent analytics across deploys, use Spaces/Object Storage or a managed database later. The current app intentionally stays database-free.
 
 Training link counts use the current YouTube Academy URL:
 

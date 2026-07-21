@@ -6,7 +6,10 @@ const path = require("path");
 const app = express();
 
 const PORT = Number(process.env.PORT || 3000);
-const DATA_DIR = path.join(__dirname, "data");
+const DEFAULT_DATA_DIR = path.join(__dirname, "data");
+const DATA_DIR = process.env.DATA_DIR
+  ? path.resolve(process.env.DATA_DIR)
+  : DEFAULT_DATA_DIR;
 const DATA_FILE = path.join(DATA_DIR, "store.json");
 const KNOWLEDGE_FILE = path.join(__dirname, "knowledge", "pallet-pros.md");
 const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
@@ -881,6 +884,60 @@ function getDailyStats(store, day = todayKey()) {
   const stats = store.dailyStats[day];
   stats.prospect_keys = Array.isArray(stats.prospect_keys) ? stats.prospect_keys : [];
   return stats;
+}
+
+function publicStats(stats) {
+  const { prospect_keys: prospectKeys = [], ...counters } = stats || {};
+
+  return {
+    ...counters,
+    prospects_touched: Array.isArray(prospectKeys)
+      ? prospectKeys.length
+      : Number(counters.prospects_touched || 0)
+  };
+}
+
+function getAllTimeStats(store) {
+  const totals = {
+    prospects_touched: 0,
+    prospect_keys: [],
+    ai_replies_sent: 0,
+    manual_approvals_sent: 0,
+    auto_replies_sent: 0,
+    drafts_created: 0,
+    training_links_sent: 0,
+    youtube_links_sent: 0,
+    booking_links_sent: 0,
+    followups_sent: 0
+  };
+  const prospectKeys = new Set();
+
+  for (const stats of Object.values(store.dailyStats || {})) {
+    const normalizedStats = stats && typeof stats === "object" ? stats : {};
+
+    for (const key of Array.isArray(normalizedStats.prospect_keys)
+      ? normalizedStats.prospect_keys
+      : []) {
+      prospectKeys.add(key);
+    }
+
+    for (const key of [
+      "ai_replies_sent",
+      "manual_approvals_sent",
+      "auto_replies_sent",
+      "drafts_created",
+      "training_links_sent",
+      "youtube_links_sent",
+      "booking_links_sent",
+      "followups_sent"
+    ]) {
+      totals[key] += Number(normalizedStats[key] || 0);
+    }
+  }
+
+  totals.prospect_keys = [...prospectKeys];
+  totals.prospects_touched = totals.prospect_keys.length;
+  return totals;
 }
 
 function recordDailyStat(store, conversationKey, increments = {}) {
@@ -2592,18 +2649,17 @@ app.get("/api/stats", async (_req, res, next) => {
     const store = await readStore();
     const day = todayKey();
     const stats = getDailyStats(store, day);
+    const allTimeStats = getAllTimeStats(store);
     const providerSettings = getProviderSettings(store);
     const featureSettings = getFeatureSettings(store);
     const businessKnowledge = await loadKnowledgeBase();
     const delayBounds = humanSendDelayBounds();
-    const { prospect_keys: _prospectKeys, ...publicStats } = stats;
 
     res.json({
       day,
-      stats: {
-        ...publicStats,
-        prospects_touched: stats.prospect_keys.length
-      },
+      stats: publicStats(stats),
+      today_stats: publicStats(stats),
+      all_time_stats: publicStats(allTimeStats),
       settings: {
         auto_send: isAutoSendEnabled(featureSettings),
         humanize_replies_enabled: isHumanizeRepliesEnabled(featureSettings),
@@ -2624,6 +2680,7 @@ app.get("/api/stats", async (_req, res, next) => {
         ),
         memory_store_messages: MAX_RECENT_MEMORY_MESSAGES,
         memory_prompt_messages: MAX_PROMPT_MEMORY_MESSAGES,
+        custom_data_dir: Boolean(process.env.DATA_DIR),
         feature_settings: featureSettings,
         provider_settings: providerSettings
       }
@@ -2981,7 +3038,7 @@ function renderHomePage() {
     .stats-grid {
       display: grid;
       gap: 10px;
-      grid-template-columns: repeat(6, minmax(0, 1fr));
+      grid-template-columns: repeat(4, minmax(0, 1fr));
       margin-bottom: 14px;
     }
 
@@ -3004,6 +3061,13 @@ function renderHomePage() {
       display: block;
       font-size: 12px;
       margin-top: 4px;
+    }
+
+    .stat small {
+      color: #40516d;
+      display: block;
+      font-size: 11px;
+      margin-top: 2px;
     }
 
     .flags {
@@ -3205,13 +3269,14 @@ function renderHomePage() {
       text-align: center;
     }
 
-    @media (max-width: 620px) {
+    @media (max-width: 760px) {
       main {
-        width: min(100% - 20px, 980px);
-        margin: 18px auto;
+        width: min(100% - 16px, 980px);
+        margin: 14px auto 28px;
       }
 
-      header {
+      header,
+      .section-title {
         align-items: flex-start;
         flex-direction: column;
       }
@@ -3232,6 +3297,31 @@ function renderHomePage() {
       .actions {
         display: grid;
         grid-template-columns: 1fr 1fr;
+      }
+
+      .provider-toggle,
+      .feedback {
+        flex: 1 1 calc(50% - 8px);
+      }
+    }
+
+    @media (max-width: 420px) {
+      h1 {
+        font-size: 21px;
+      }
+
+      .stat {
+        min-height: 68px;
+        padding: 10px;
+      }
+
+      .stat strong {
+        font-size: 20px;
+      }
+
+      button {
+        min-height: 44px;
+        padding: 0 12px;
       }
     }
   </style>
@@ -3315,19 +3405,22 @@ function renderHomePage() {
     }
 
     function renderStats(data) {
-      const stats = data.stats || {};
+      const today = data.today_stats || data.stats || {};
+      const allTime = data.all_time_stats || data.stats || {};
       const settings = data.settings || {};
       const cards = [
-        ["Prospects", stats.prospects_touched || 0],
-        ["AI replies", stats.ai_replies_sent || 0],
-        ["Drafts", stats.drafts_created || 0],
-        ["Training/YouTube", stats.youtube_links_sent || 0],
-        ["Booking links", stats.booking_links_sent || 0],
-        ["Follow-ups", stats.followups_sent || 0]
+        ["Prospects", allTime.prospects_touched || 0, "all-time"],
+        ["AI replies", allTime.ai_replies_sent || 0, "all-time"],
+        ["Training/YouTube", allTime.youtube_links_sent || 0, "all-time"],
+        ["Booking links", allTime.booking_links_sent || 0, "all-time"],
+        ["Prospects", today.prospects_touched || 0, "today"],
+        ["AI replies", today.ai_replies_sent || 0, "today"],
+        ["Drafts", today.drafts_created || 0, "today"],
+        ["Follow-ups", today.followups_sent || 0, "today"]
       ];
 
       statsEl.innerHTML = "";
-      cards.forEach(([label, value]) => {
+      cards.forEach(([label, value, range]) => {
         const card = document.createElement("div");
         card.className = "stat";
 
@@ -3337,7 +3430,10 @@ function renderHomePage() {
         const span = document.createElement("span");
         span.textContent = label;
 
-        card.append(strong, span);
+        const small = document.createElement("small");
+        small.textContent = range;
+
+        card.append(strong, span, small);
         statsEl.appendChild(card);
       });
 
@@ -3667,8 +3763,10 @@ function renderHomePage() {
       return article;
     }
 
-    async function loadDrafts() {
-      setStatus("Loading...");
+    async function loadDrafts(options = {}) {
+      if (!options.silent) {
+        setStatus("Loading...");
+      }
       try {
         const [data, statsData, conversationsData] = await Promise.all([
           api("/api/drafts"),
@@ -3688,7 +3786,7 @@ function renderHomePage() {
           data.drafts.forEach((draft) => draftsEl.appendChild(renderDraft(draft)));
         }
 
-        setStatus(data.drafts.length + " pending");
+        setStatus(data.drafts.length + " pending · live refresh on");
       } catch (error) {
         draftsEl.innerHTML = "";
         setStatus(error.message);
@@ -3724,7 +3822,7 @@ function renderHomePage() {
     });
 
     loadDrafts();
-    setInterval(loadDrafts, 30000);
+    setInterval(() => loadDrafts({ silent: true }), 10000);
   </script>
 </body>
 </html>`;
