@@ -17,9 +17,11 @@ const MAX_KNOWLEDGE_CHARS = 12_000;
 const MAX_RECENT_MEMORY_MESSAGES = 20;
 const MAX_PROCESSED_MESSAGE_IDS = 100;
 const DEFAULT_MANUAL_TAKEOVER_MINUTES = 8;
+const DEFAULT_HUMAN_SEND_DELAY_MIN_MS = 6500;
+const DEFAULT_HUMAN_SEND_DELAY_MAX_MS = 18000;
 const APP_OUTGOING_ECHO_WINDOW_MS = 15 * 60 * 1000;
 const FOLLOW_UP_OFFSETS_MS = [
-  30 * 60 * 1000,
+  45 * 60 * 1000,
   4 * 60 * 60 * 1000,
   18 * 60 * 60 * 1000
 ];
@@ -192,6 +194,19 @@ function manualTakeoverMs() {
     0,
     numberEnv("MANUAL_TAKEOVER_MINUTES", DEFAULT_MANUAL_TAKEOVER_MINUTES)
   ) * 60 * 1000;
+}
+
+function humanSendDelayBounds() {
+  const minMs = Math.max(
+    0,
+    numberEnv("HUMAN_SEND_DELAY_MIN_MS", DEFAULT_HUMAN_SEND_DELAY_MIN_MS)
+  );
+  const maxMs = Math.max(
+    minMs,
+    numberEnv("HUMAN_SEND_DELAY_MAX_MS", DEFAULT_HUMAN_SEND_DELAY_MAX_MS)
+  );
+
+  return { minMs, maxMs };
 }
 
 function systemPrompt(settings) {
@@ -414,8 +429,7 @@ function humanSendDelayMs(replyText, settings) {
     return 0;
   }
 
-  const minMs = Math.max(0, numberEnv("HUMAN_SEND_DELAY_MIN_MS", 2500));
-  const maxMs = Math.max(minMs, numberEnv("HUMAN_SEND_DELAY_MAX_MS", 9000));
+  const { minMs, maxMs } = humanSendDelayBounds();
   const textLength = String(replyText || "").length;
   const readingLikeDelay = Math.min(maxMs, minMs + textLength * 35);
   const upperMs = Math.max(minMs, Math.min(maxMs, readingLikeDelay + 2500));
@@ -2297,6 +2311,7 @@ app.get("/api/stats", async (_req, res, next) => {
     const providerSettings = getProviderSettings(store);
     const featureSettings = getFeatureSettings(store);
     const businessKnowledge = await loadKnowledgeBase();
+    const delayBounds = humanSendDelayBounds();
     const { prospect_keys: _prospectKeys, ...publicStats } = stats;
 
     res.json({
@@ -2317,6 +2332,11 @@ app.get("/api/stats", async (_req, res, next) => {
         manual_takeover_minutes: numberEnv(
           "MANUAL_TAKEOVER_MINUTES",
           DEFAULT_MANUAL_TAKEOVER_MINUTES
+        ),
+        human_send_delay_min_ms: delayBounds.minMs,
+        human_send_delay_max_ms: delayBounds.maxMs,
+        follow_up_offsets_minutes: FOLLOW_UP_OFFSETS_MS.map((offsetMs) =>
+          Math.round(offsetMs / 60_000)
         ),
         feature_settings: featureSettings,
         provider_settings: providerSettings
@@ -2741,6 +2761,13 @@ function renderHomePage() {
       return date.toLocaleString();
     }
 
+    function formatMinutes(value) {
+      const minutes = Number(value || 0);
+      if (!minutes) return "0m";
+      if (minutes >= 60 && minutes % 60 === 0) return minutes / 60 + "h";
+      return minutes + "m";
+    }
+
     async function api(path, options) {
       const response = await fetch(path, options);
       const data = await response.json().catch(() => ({}));
@@ -2754,6 +2781,7 @@ function renderHomePage() {
 
     function renderStats(data) {
       const stats = data.stats || {};
+      const settings = data.settings || {};
       const cards = [
         ["Prospects", stats.prospects_touched || 0],
         ["AI replies", stats.ai_replies_sent || 0],
@@ -2778,7 +2806,6 @@ function renderHomePage() {
         statsEl.appendChild(card);
       });
 
-      const settings = data.settings || {};
       flagsEl.innerHTML = "";
       [
         ["Auto-send", settings.auto_send],
@@ -2788,11 +2815,24 @@ function renderHomePage() {
         ["Memory", settings.conversation_memory_enabled],
         ["Follow-ups", settings.follow_ups_enabled],
         ["Zernio key", settings.zernio_configured],
-        ["Knowledge", settings.knowledge_base_configured]
-      ].forEach(([label, enabled]) => {
+        ["Knowledge", settings.knowledge_base_configured],
+        ["Manual hold", (settings.manual_takeover_minutes || 0) + "m"],
+        [
+          "Send delay",
+          Math.round((settings.human_send_delay_min_ms || 0) / 100) / 10 +
+            "-" +
+            Math.round((settings.human_send_delay_max_ms || 0) / 100) / 10 +
+            "s"
+        ],
+        [
+          "Nudges",
+          (settings.follow_up_offsets_minutes || []).map(formatMinutes).join("/")
+        ]
+      ].forEach(([label, value]) => {
         const flag = document.createElement("span");
         flag.className = "flag";
-        flag.textContent = label + ": " + (enabled ? "on" : "off");
+        flag.textContent =
+          label + ": " + (typeof value === "boolean" ? (value ? "on" : "off") : value);
         flagsEl.appendChild(flag);
       });
 

@@ -29,8 +29,8 @@ AUTO_SEND=false
 HUMANIZE_REPLIES_ENABLED=true
 TYPING_INDICATOR_ENABLED=true
 HUMAN_SEND_DELAY_ENABLED=true
-HUMAN_SEND_DELAY_MIN_MS=2500
-HUMAN_SEND_DELAY_MAX_MS=9000
+HUMAN_SEND_DELAY_MIN_MS=6500
+HUMAN_SEND_DELAY_MAX_MS=18000
 CONVERSATION_MEMORY_ENABLED=true
 FOLLOW_UPS_ENABLED=false
 PALLET_PROS_KNOWLEDGE=
@@ -77,8 +77,8 @@ $env:AUTO_SEND="false"
 $env:HUMANIZE_REPLIES_ENABLED="true"
 $env:TYPING_INDICATOR_ENABLED="true"
 $env:HUMAN_SEND_DELAY_ENABLED="true"
-$env:HUMAN_SEND_DELAY_MIN_MS="2500"
-$env:HUMAN_SEND_DELAY_MAX_MS="9000"
+$env:HUMAN_SEND_DELAY_MIN_MS="6500"
+$env:HUMAN_SEND_DELAY_MAX_MS="18000"
 $env:CONVERSATION_MEMORY_ENABLED="true"
 $env:FOLLOW_UPS_ENABLED="false"
 $env:PALLET_PROS_KNOWLEDGE=""
@@ -282,7 +282,7 @@ If `AUTO_SEND=false`, due follow-ups are saved as editable drafts. If both `AUTO
 When enabled, the app schedules up to 3 gentle AI follow-up nudges after a sent reply asks a question:
 
 ```text
-30 minutes after the question
+45 minutes after the question
 4 hours after the question
 18 hours after the question
 ```
