@@ -1555,6 +1555,7 @@ app.post(
     const webhookSecret = process.env.ZERNIO_WEBHOOK_SECRET;
     const signature =
       req.headers["x-zernio-signature"] ||
+      req.headers["x-late-signature"] ||
       req.headers["zernio-signature"] ||
       req.headers["x-signature"];
     const fallbackSecretOk =
