@@ -173,7 +173,18 @@ provider/account + origin + contact_id
 
 If the provider does not provide `contact_id`, it falls back to `chat_id`, then conversation/talk id. This lets the AI continue naturally if the messaging provider creates a new thread for the same Instagram contact.
 
-The memory stores recent messages, sent-link flags, qualifying questions already asked, processed incoming message IDs, and follow-up state. It does not add a database or separate service.
+The memory stores recent messages, sent-link flags, qualifying questions already asked, processed incoming message IDs, manual takeover state, and follow-up state. It does not add a database or separate service.
+
+The app keeps up to 40 local messages per conversation, sends the latest 20 into the OpenAI prompt, and builds a compact summary for older context. This is the app-code version of a Zernio workflow `history` variable.
+
+For the best memory, the Zernio webhook should include:
+
+```text
+message.received
+message.sent
+```
+
+`message.received` stores prospect replies. `message.sent` stores manual replies that Zernio sees, including outgoing Instagram DMs when Zernio emits that event for the connected account.
 
 ## Daily Tracker
 

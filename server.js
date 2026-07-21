@@ -14,7 +14,10 @@ const ZERNIO_BASE_URL = "https://zernio.com/api/v1";
 const YOUTUBE_URL = "https://youtube.com/@palletprosacademy";
 const BOOKING_URL = "https://www.tidycal.com/palletprosga/discovery";
 const MAX_KNOWLEDGE_CHARS = 12_000;
-const MAX_RECENT_MEMORY_MESSAGES = 20;
+const MAX_RECENT_MEMORY_MESSAGES = 40;
+const MAX_PROMPT_MEMORY_MESSAGES = 20;
+const MAX_SUMMARY_SOURCE_MESSAGES = 12;
+const MAX_MEMORY_SUMMARY_CHARS = 1800;
 const MAX_PROCESSED_MESSAGE_IDS = 100;
 const DEFAULT_MANUAL_TAKEOVER_MINUTES = 8;
 const DEFAULT_HUMAN_SEND_DELAY_MIN_MS = 6500;
@@ -550,6 +553,99 @@ function addMemoryMessage(memory, message) {
   memory.last_messages = memory.last_messages.slice(-MAX_RECENT_MEMORY_MESSAGES);
 }
 
+function memoryMessageLabel(message) {
+  if (message.role === "user") {
+    return "Prospect";
+  }
+
+  if (message.source === "manual") {
+    return "You";
+  }
+
+  return "Assistant";
+}
+
+function compactMemoryText(text, maxLength = 220) {
+  const cleanText = String(text || "").replace(/\s+/g, " ").trim();
+  return cleanText.length > maxLength
+    ? `${cleanText.slice(0, maxLength - 3)}...`
+    : cleanText;
+}
+
+function questionLabel(key) {
+  return (
+    {
+      why_start: "why they want to start",
+      when_start: "when they want to start",
+      holding_back: "what is holding them back",
+      would_call: "whether they would get on a call"
+    }[key] || key
+  );
+}
+
+function buildConversationSummary(memory) {
+  if (!memory) {
+    return "";
+  }
+
+  const messages = Array.isArray(memory.last_messages) ? memory.last_messages : [];
+  const olderCount = Math.max(0, messages.length - MAX_PROMPT_MEMORY_MESSAGES);
+  const olderMessages = messages
+    .slice(0, olderCount)
+    .slice(-MAX_SUMMARY_SOURCE_MESSAGES)
+    .map((message) => {
+      const text = compactMemoryText(message.text);
+      return text ? `${memoryMessageLabel(message)}: ${text}` : "";
+    })
+    .filter(Boolean);
+
+  const parts = [];
+
+  if (olderMessages.length) {
+    parts.push(`Earlier context: ${olderMessages.join(" | ")}`);
+  }
+
+  const state = [];
+
+  if (Array.isArray(memory.questions_asked) && memory.questions_asked.length) {
+    state.push(
+      `questions already asked: ${memory.questions_asked.map(questionLabel).join(", ")}`
+    );
+  }
+
+  if (memory.youtube_link_sent || memory.training_link_sent) {
+    state.push("training/YouTube link was already sent");
+  }
+
+  if (memory.booking_link_sent) {
+    state.push("booking link was already sent");
+  }
+
+  if (memory.booking_confirmed) {
+    state.push("prospect said they booked/scheduled");
+  }
+
+  if (memory.last_outgoing_source === "manual") {
+    state.push("last outbound reply was sent manually");
+  }
+
+  if (isManualTakeoverActive(memory)) {
+    state.push(`manual takeover active until ${memory.manual_takeover_until}`);
+  }
+
+  if (state.length) {
+    parts.push(`Conversation state: ${state.join("; ")}.`);
+  }
+
+  return parts.join("\n").slice(0, MAX_MEMORY_SUMMARY_CHARS);
+}
+
+function refreshMemorySummary(memory) {
+  if (memory) {
+    memory.summary = buildConversationSummary(memory);
+  }
+}
+
 function markProcessedMessage(memory, messageId) {
   if (!messageId) {
     return false;
@@ -738,7 +834,8 @@ function memoryForPrompt(memory, settings) {
   return {
     key: memory.key,
     summary: memory.summary,
-    recent_messages: memory.last_messages.slice(-12),
+    stored_message_count: memory.last_messages.length,
+    recent_messages: memory.last_messages.slice(-MAX_PROMPT_MEMORY_MESSAGES),
     questions_asked: memory.questions_asked,
     youtube_link_sent: Boolean(memory.youtube_link_sent),
     training_link_sent: Boolean(memory.training_link_sent),
@@ -1037,6 +1134,9 @@ function extractZernioIncomingMessage(payload) {
     "data.accountId",
     "data.account_id",
     "data.account.id",
+    "message.accountId",
+    "message.account_id",
+    "account.id",
     "accountId",
     "account_id"
   ]);
@@ -1060,11 +1160,14 @@ function extractZernioIncomingMessage(payload) {
   const direction = pickValue(payload, [
     "data.direction",
     "data.message.direction",
+    "message.direction",
     "direction"
   ]);
   const platform = pickValue(payload, [
     "data.platform",
     "data.account.platform",
+    "message.platform",
+    "account.platform",
     "platform"
   ]);
   const senderId = pickValue(payload, [
@@ -1074,6 +1177,11 @@ function extractZernioIncomingMessage(payload) {
     "data.sender_id",
     "data.participantId",
     "data.participant_id",
+    "message.sender.contactId",
+    "message.sender.id",
+    "message.sender.username",
+    "message.participantId",
+    "message.participant_id",
     "sender.id",
     "senderId"
   ]);
@@ -1572,7 +1680,6 @@ async function recordIncomingForMemory(incoming, featureSettings) {
   if (!duplicate) {
     const incomingAt = new Date(toMessageTimestampMs(incoming.created_at)).toISOString();
     memory.last_incoming_at = incomingAt;
-    memory.summary = `Last inbound: ${incoming.text.slice(0, 240)}`;
     if (isBookingConfirmation(incoming.text)) {
       memory.booking_confirmed = true;
       memory.booking_link_sent = true;
@@ -1584,6 +1691,7 @@ async function recordIncomingForMemory(incoming, featureSettings) {
       at: incomingAt,
       id: incoming.incoming_message_id
     });
+    refreshMemorySummary(memory);
   }
 
   await writeStore(store);
@@ -1616,10 +1724,10 @@ async function recordOutgoingForMemory(messageLike, replyText, options = {}) {
   });
   memory.last_outgoing_at = sentAt;
   memory.last_outgoing_source = source;
-  memory.summary = `Last outbound: ${String(replyText || "").slice(0, 240)}`;
   updateLinkMemory(memory, replyText);
   updateQuestionMemory(memory, replyText);
   scheduleFollowUpIfNeeded(memory, replyText, sentAtMs, featureSettings);
+  refreshMemorySummary(memory);
 
   recordDailyStat(store, conversationKey, {
     prospects_touched: 1,
@@ -1750,10 +1858,10 @@ async function processManualOutgoingMessage(outgoing) {
   updateQuestionMemory(memory, outgoing.text);
   memory.last_outgoing_at = sentAt;
   memory.last_outgoing_source = "manual";
-  memory.summary = `Manual outbound: ${String(outgoing.text || "").slice(0, 240)}`;
   memory.ai_paused = true;
   memory.manual_takeover_since = sentAt;
   memory.manual_takeover_until = takeoverUntil;
+  refreshMemorySummary(memory);
 
   settings.manual_takeover_since = sentAt;
   settings.manual_takeover_until = takeoverUntil;
@@ -1988,6 +2096,7 @@ async function sendDueFollowUp(conversationKey) {
   updatedMemory.last_outgoing_source = "follow_up";
   updatedMemory.follow_up.count = nextCount;
   updatedMemory.follow_up.last_sent_at = new Date().toISOString();
+  refreshMemorySummary(updatedMemory);
 
   if (nextCount >= FOLLOW_UP_OFFSETS_MS.length) {
     updatedMemory.follow_up.active = false;
@@ -2338,6 +2447,8 @@ app.get("/api/stats", async (_req, res, next) => {
         follow_up_offsets_minutes: FOLLOW_UP_OFFSETS_MS.map((offsetMs) =>
           Math.round(offsetMs / 60_000)
         ),
+        memory_store_messages: MAX_RECENT_MEMORY_MESSAGES,
+        memory_prompt_messages: MAX_PROMPT_MEMORY_MESSAGES,
         feature_settings: featureSettings,
         provider_settings: providerSettings
       }
@@ -2827,6 +2938,12 @@ function renderHomePage() {
         [
           "Nudges",
           (settings.follow_up_offsets_minutes || []).map(formatMinutes).join("/")
+        ],
+        [
+          "Memory depth",
+          (settings.memory_prompt_messages || 0) +
+            "/" +
+            (settings.memory_store_messages || 0)
         ]
       ].forEach(([label, value]) => {
         const flag = document.createElement("span");
