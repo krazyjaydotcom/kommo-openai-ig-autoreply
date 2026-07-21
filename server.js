@@ -77,6 +77,12 @@ const HUMAN_STYLE_RULES = `Style guidance:
 - Keep punctuation relaxed. Do not use an exclamation point in every reply.
 - Never say or imply you are an AI, bot, automation, or typing.`;
 
+const CONTEXT_RULES = `Context rules:
+- Treat conversation_history and conversation_memory as the source of truth for where the conversation is.
+- If the person refers to something they already did or you already sent, infer it from the prior messages instead of asking "for what?" or restarting the conversation.
+- Do not repeat a greeting, link, or qualifying question that already happened unless the newest message clearly asks for it.
+- If the history is missing, contradictory, or too thin to answer confidently, set needs_review true.`;
+
 function envFlag(name, fallback) {
   const raw = process.env[name];
 
@@ -153,11 +159,9 @@ function numberEnv(name, fallback) {
 }
 
 function systemPrompt(settings) {
-  if (!isHumanizeRepliesEnabled(settings)) {
-    return HOUSE_RULES;
-  }
-
-  return `${HOUSE_RULES}\n\n${HUMAN_STYLE_RULES}`;
+  return [HOUSE_RULES, CONTEXT_RULES, isHumanizeRepliesEnabled(settings) ? HUMAN_STYLE_RULES : ""]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 function normalizeSubdomain(rawSubdomain) {
@@ -1084,10 +1088,58 @@ function normalizeKommoMessages(responseBody) {
     .sort((a, b) => Number(a.created_at || 0) - Number(b.created_at || 0));
 }
 
+function firstTextValue(...values) {
+  for (const value of values) {
+    if (value === undefined || value === null) {
+      continue;
+    }
+
+    if (typeof value === "string" || typeof value === "number") {
+      const text = String(value).trim();
+      if (text) {
+        return text;
+      }
+    }
+  }
+
+  return "";
+}
+
+function parseMessageTimestamp(value) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+
+  const asNumber = Number(value);
+  if (Number.isFinite(asNumber) && asNumber > 0) {
+    return asNumber < 10_000_000_000 ? asNumber * 1000 : asNumber;
+  }
+
+  const parsed = Date.parse(String(value));
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function zernioMessageText(message) {
+  return firstTextValue(
+    message.message,
+    message.text,
+    message.body,
+    message.content?.text,
+    message.content?.body,
+    message.payload?.text,
+    message.payload?.body,
+    message.message?.text,
+    message.message?.body
+  );
+}
+
 function normalizeZernioMessages(responseBody) {
   const rawMessages =
     responseBody?.messages ||
     responseBody?.data?.messages ||
+    responseBody?.data?.items ||
+    responseBody?.items ||
+    responseBody?.result?.messages ||
     responseBody?.data ||
     [];
   const messages = Array.isArray(rawMessages) ? rawMessages : [];
@@ -1095,14 +1147,21 @@ function normalizeZernioMessages(responseBody) {
   return messages
     .map((message) => {
       const direction = normalizeDirection(message.direction);
-      const createdAt = message.createdAt || message.created_at || message.timestamp || null;
-      const createdAtMs = createdAt ? Date.parse(String(createdAt)) : NaN;
+      const createdAt = parseMessageTimestamp(
+        message.createdAt ||
+          message.created_at ||
+          message.timestamp ||
+          message.sentAt ||
+          message.sent_at ||
+          message.deliveredAt ||
+          message.delivered_at
+      );
 
       return {
-        id: message.id || message.messageId || "",
+        id: message.id || message.messageId || message.message_id || message._id || "",
         role: direction === "incoming" ? "user" : "assistant",
-        text: String(message.message || message.text || "").trim(),
-        created_at: Number.isNaN(createdAtMs) ? null : createdAtMs
+        text: zernioMessageText(message),
+        created_at: createdAt
       };
     })
     .filter((message) => message.text)
@@ -1123,12 +1182,19 @@ async function getConversationThread(talkId) {
 }
 
 async function getZernioConversationThread(conversationId, accountId) {
-  if (!conversationId || !accountId) {
+  if (!conversationId) {
     return [];
   }
 
+  const resolvedAccountId = accountId || process.env.ZERNIO_ACCOUNT_ID;
+  if (!resolvedAccountId) {
+    throw new Error(
+      "Missing Zernio account id for conversation history. Set ZERNIO_ACCOUNT_ID in DigitalOcean or confirm the Zernio webhook includes accountId."
+    );
+  }
+
   const params = new URLSearchParams({
-    accountId,
+    accountId: resolvedAccountId,
     limit: "50",
     sortOrder: "asc"
   });
@@ -1137,7 +1203,11 @@ async function getZernioConversationThread(conversationId, accountId) {
     { method: "GET" }
   );
 
-  return normalizeZernioMessages(responseBody);
+  const messages = normalizeZernioMessages(responseBody);
+  console.log(
+    `Loaded Zernio conversation history for conversation_id=${conversationId}: ${messages.length} message(s).`
+  );
+  return messages;
 }
 
 async function getConversationThreadForIncoming(incoming) {
@@ -1158,9 +1228,15 @@ async function generateReply({
   memory,
   featureSettings
 }) {
+  const promptMemory = memoryForPrompt(memory, featureSettings);
   const payload = {
     conversation_history: thread.slice(-30),
-    conversation_memory: memoryForPrompt(memory, featureSettings),
+    conversation_memory: promptMemory,
+    context_status: {
+      provider: newMessage.provider || "kommo",
+      history_messages_loaded: thread.length,
+      memory_messages_loaded: promptMemory?.recent_messages?.length || 0
+    },
     new_message: newMessage.text,
     context_warning: contextWarning || null
   };
@@ -1181,7 +1257,7 @@ async function generateReply({
           role: "user",
           content:
             "Use this JSON conversation data to write the next Instagram DM reply. Return JSON only.\n" +
-            "Use conversation_memory to avoid repeating links or qualifying questions.\n" +
+            "Use conversation_history and conversation_memory to understand where the conversation is and avoid repeating links or qualifying questions.\n" +
             JSON.stringify(payload, null, 2)
         }
       ]

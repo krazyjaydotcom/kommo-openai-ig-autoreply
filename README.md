@@ -41,7 +41,7 @@ Notes:
 - `OPENAI_MODEL` defaults to `gpt-4o-mini` if empty.
 - `KOMMO_SUBDOMAIN` can be `your-subdomain` or `your-subdomain.kommo.com`.
 - `ZERNIO_API_KEY` enables Zernio inbox receiving/sending.
-- `ZERNIO_ACCOUNT_ID` is optional when Zernio includes `accountId` in webhook payloads, but useful as a fallback for sends.
+- `ZERNIO_ACCOUNT_ID` is optional when Zernio includes `accountId` in webhook payloads, but important as a fallback for pulling conversation history and sending replies.
 - `ZERNIO_WEBHOOK_SECRET` verifies signed Zernio webhooks. If you do not configure it yet, `/webhook/zernio?secret=WEBHOOK_SECRET` can use the simple query-secret fallback.
 - `AUTO_SEND=true` sends replies immediately only when the AI returns `needs_review: false`.
 - `AUTO_SEND=false` saves every generated reply as a pending draft.
