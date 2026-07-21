@@ -246,7 +246,11 @@ HUMAN_SEND_DELAY_ENABLED=true
 
 Humanized replies add casual Instagram DM style guidance to the AI prompt. Zernio typing indicators are sent before Zernio replies when the connected platform supports them. The send delay adds a short randomized pause before Zernio sends, which keeps automated replies from landing instantly.
 
-The app also has a simple post-booking guard. When someone says they booked or scheduled the call, it acknowledges naturally instead of asking another qualifying question.
+The app also has a simple post-booking guard. When someone says they booked or scheduled the call, it acknowledges naturally, sends the free training playlist, and stops qualifying:
+
+```text
+https://www.youtube.com/playlist?list=PLPFyOjF-83nJ0B5xCreYqoQzcGx-SQsvs
+```
 
 ## Knowledge Base
 

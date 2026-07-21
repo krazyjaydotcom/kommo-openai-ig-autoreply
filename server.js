@@ -13,6 +13,8 @@ const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
 const ZERNIO_BASE_URL = "https://zernio.com/api/v1";
 const YOUTUBE_URL = "https://youtube.com/@palletprosacademy";
 const BOOKING_URL = "https://www.tidycal.com/palletprosga/discovery";
+const TRAINING_PLAYLIST_URL =
+  "https://www.youtube.com/playlist?list=PLPFyOjF-83nJ0B5xCreYqoQzcGx-SQsvs";
 const MAX_KNOWLEDGE_CHARS = 12_000;
 const MAX_RECENT_MEMORY_MESSAGES = 40;
 const MAX_PROMPT_MEMORY_MESSAGES = 20;
@@ -52,11 +54,7 @@ Rules:
 5. If the person is only curious, joking, or just wants content, send them to:
    https://youtube.com/@palletprosacademy
 6. If the person is interested in starting a pallet business, qualify them before booking.
-7. Ask up to 4 qualifying questions total across the conversation:
-   - Why do you want to start?
-   - When do you want to start?
-   - What is holding you back?
-   - Would you get on a call?
+7. Qualify using the qualifying flow below. Follow that order, ask one question per message, and never repeat something already asked or answered.
 8. If they are warm enough to book, send:
    https://www.tidycal.com/palletprosga/discovery
 9. If they ask for a call, do not suggest weekend calls.
@@ -67,7 +65,37 @@ Rules:
 14. If unsure, do not send yet; draft the reply instead by setting needs_review true.
 15. Keep the focus on helping them take the next best step.
 16. If they say they booked, scheduled, or got on the calendar, acknowledge it naturally and do not ask what it was for.
-17. After someone confirms they booked, do not send the booking link again and do not keep qualifying them.
+17. After someone confirms they booked, send this free training playlist once so they can better understand the opportunity:
+   https://www.youtube.com/playlist?list=PLPFyOjF-83nJ0B5xCreYqoQzcGx-SQsvs
+18. After someone confirms they booked, do not send the booking link again and do not keep qualifying them.
+
+Disqualify or redirect immediately to https://youtube.com/@palletprosacademy and do not continue qualifying if the person:
+- Is unemployed with no capital or real plan.
+- Is incarcerated.
+- Is clearly just here for free content or curiosity.
+- Is asking for load-finding or freight-dispatch help. This program does not find loads for drivers. It teaches the pallet business model and how to run it successfully.
+
+Fast-track to booking if the person already:
+- Owns a truck or trailer.
+- Owns a business.
+- Says they are ready to invest or ready to go.
+
+Qualifying flow:
+1. Situation: ask what brought them here or what has them looking into the pallet business right now.
+2. Logistics: ask about truck/trailer/business status or when they want to start.
+3. Problem: ask what is holding them back right now.
+4. Implication: ask about the cost of staying where they are, for example what it is costing them if nothing changes.
+5. Need-payoff: tie their own stated reason back to the outcome, using their words.
+6. Ask: once they have engaged with implication/need-payoff, ask if they would be open to getting on a call.
+
+Standing facts:
+- Location: Marietta, Georgia, city/state only.
+- Business name: Pallet Pros Academy.
+- Recommended vehicle: a 24ft flatbed. It allows forklift access from all angles, unlike standard box trucks. A 24ft flatbed can move around 200 standard pallets in a load.
+- Income: do not guarantee or imply typical income. If asked, frame this as one personal example only: "As an example, my own business runs around $400k/year in revenue, and I personally pay myself around $75k/year, but it did not start there, and results vary based on effort and market."
+- Program pricing: do not quote one fixed number. Say it depends on the individual and how much success they are prepared to have in the business. If they push for a range, solutions start as low as $37/month for people who are not business owners yet, up to $5,500 for existing business owners.
+- Calls: do not accept direct phone calls. If they want a call, the best way is to book time on the calendar:
+  https://www.tidycal.com/palletprosga/discovery
 
 Return only valid JSON in this exact shape:
 {
@@ -693,7 +721,11 @@ function replyLooksLikeQuestion(text) {
 function updateLinkMemory(memory, text) {
   const replyText = String(text || "");
 
-  if (replyText.includes(YOUTUBE_URL)) {
+  if (
+    replyText.includes(YOUTUBE_URL) ||
+    replyText.includes(TRAINING_PLAYLIST_URL) ||
+    replyText.includes("youtube.com/")
+  ) {
     memory.youtube_link_sent = true;
     memory.training_link_sent = true;
   }
@@ -743,7 +775,7 @@ function isBookingConfirmation(text) {
 function bookingConfirmationReply() {
   return {
     reply:
-      "Perfect, glad you got it booked. Keep an eye on your email/calendar for the confirmation. Talk soon.",
+      `Perfect, glad you got it booked. Before the call, go through this free training so you have a better feel for the opportunity: ${TRAINING_PLAYLIST_URL}`,
     needs_review: false,
     handled: true
   };
@@ -816,7 +848,10 @@ function recordDailyStat(store, conversationKey, increments = {}) {
 
 function linkStatsForText(text) {
   const replyText = String(text || "");
-  const hasYoutube = replyText.includes(YOUTUBE_URL);
+  const hasYoutube =
+    replyText.includes(YOUTUBE_URL) ||
+    replyText.includes(TRAINING_PLAYLIST_URL) ||
+    replyText.includes("youtube.com/");
   const hasBooking = replyText.includes(BOOKING_URL);
 
   return {
