@@ -23,6 +23,8 @@ KOMMO_SUBDOMAIN=your-subdomain
 KOMMO_ACCESS_TOKEN=your-long-lived-kommo-access-token
 WEBHOOK_SECRET=choose-a-long-random-secret
 AUTO_SEND=false
+CONVERSATION_MEMORY_ENABLED=true
+FOLLOW_UPS_ENABLED=false
 PORT=3000
 ```
 
@@ -32,6 +34,8 @@ Notes:
 - `KOMMO_SUBDOMAIN` can be `your-subdomain` or `your-subdomain.kommo.com`.
 - `AUTO_SEND=true` sends replies immediately only when the AI returns `needs_review: false`.
 - `AUTO_SEND=false` saves every generated reply as a pending draft.
+- `CONVERSATION_MEMORY_ENABLED=true` stores lightweight per-prospect memory in the local JSON file.
+- `FOLLOW_UPS_ENABLED=false` keeps automatic follow-up nudges disabled. Set it to `true` only after testing.
 - The Kommo token needs these chat permissions: `External chat history` and `Sending to external chats`.
 - The OpenAI API key must have active API billing/credits. ChatGPT Plus/Pro billing is separate from API billing.
 
@@ -47,6 +51,8 @@ $env:KOMMO_SUBDOMAIN="your-subdomain"
 $env:KOMMO_ACCESS_TOKEN="your-long-lived-kommo-access-token"
 $env:WEBHOOK_SECRET="choose-a-long-random-secret"
 $env:AUTO_SEND="false"
+$env:CONVERSATION_MEMORY_ENABLED="true"
+$env:FOLLOW_UPS_ENABLED="false"
 $env:PORT="3000"
 
 npm start
@@ -108,7 +114,57 @@ https://YOUR-DIGITALOCEAN-APP-URL/webhook/kommo?secret=YOUR_WEBHOOK_SECRET
 6. If `AUTO_SEND=true` and `needs_review=false`, it sends through:
    `POST /api/v4/talks/{talk_id}/send_message`
 7. Otherwise it saves a draft in `data/store.json`.
-8. `GET /` shows pending drafts with Send and Discard buttons.
+8. The app updates lightweight conversation memory by prospect/channel.
+9. `GET /` shows today's tracker plus pending drafts with Send and Discard buttons.
+
+## Conversation Memory Lite
+
+When `CONVERSATION_MEMORY_ENABLED=true`, the app stores a compact record under `data/store.json` keyed by:
+
+```text
+KOMMO_SUBDOMAIN + origin + contact_id
+```
+
+If Kommo does not provide `contact_id`, it falls back to `chat_id`, then `talk_id`. This lets the AI continue naturally if Kommo creates a new talk for the same Instagram contact.
+
+The memory stores recent messages, sent-link flags, qualifying questions already asked, processed incoming message IDs, and follow-up state. It does not add a database or separate service.
+
+## Daily Tracker
+
+The homepage and `GET /api/stats` show today's counts:
+
+```text
+Prospects touched by sent replies
+AI replies sent
+Drafts created
+Training/YouTube links sent
+Booking links sent
+Follow-ups sent
+```
+
+Training link counts use the current YouTube Academy URL:
+
+```text
+https://youtube.com/@palletprosacademy
+```
+
+## Follow-Ups
+
+Follow-ups are disabled unless:
+
+```bash
+FOLLOW_UPS_ENABLED=true
+```
+
+When enabled, the app schedules up to 3 gentle AI follow-up nudges after a sent reply asks a question:
+
+```text
+30 minutes after the question
+4 hours after the question
+18 hours after the question
+```
+
+If the prospect replies, the follow-up schedule is canceled. The app also skips follow-ups outside a conservative 23-hour window from the prospect's latest incoming message.
 
 ## Draft Review API
 

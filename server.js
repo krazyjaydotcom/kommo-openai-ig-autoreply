@@ -9,6 +9,23 @@ const PORT = Number(process.env.PORT || 3000);
 const DATA_DIR = path.join(__dirname, "data");
 const DATA_FILE = path.join(DATA_DIR, "store.json");
 const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
+const YOUTUBE_URL = "https://youtube.com/@palletprosacademy";
+const BOOKING_URL = "https://www.tidycal.com/palletprosga/discovery";
+const MAX_RECENT_MEMORY_MESSAGES = 20;
+const MAX_PROCESSED_MESSAGE_IDS = 100;
+const FOLLOW_UP_OFFSETS_MS = [
+  30 * 60 * 1000,
+  4 * 60 * 60 * 1000,
+  18 * 60 * 60 * 1000
+];
+const FOLLOW_UP_CHECK_MS = 60 * 1000;
+const FOLLOW_UP_WINDOW_MS = 23 * 60 * 60 * 1000;
+const DEFAULT_STORE = {
+  drafts: [],
+  conversationSettings: {},
+  conversations: {},
+  dailyStats: {}
+};
 
 const HOUSE_RULES = `You are replying to Instagram DMs for Pallet Pros Academy.
 
@@ -47,6 +64,14 @@ function isAutoSendEnabled() {
   return String(process.env.AUTO_SEND || "").toLowerCase() === "true";
 }
 
+function isConversationMemoryEnabled() {
+  return String(process.env.CONVERSATION_MEMORY_ENABLED || "true").toLowerCase() === "true";
+}
+
+function isFollowUpsEnabled() {
+  return String(process.env.FOLLOW_UPS_ENABLED || "").toLowerCase() === "true";
+}
+
 function requireEnv(name) {
   const value = process.env[name];
   if (!value) {
@@ -76,7 +101,7 @@ async function ensureStoreFile() {
   } catch {
     await fs.writeFile(
       DATA_FILE,
-      JSON.stringify({ drafts: [], conversationSettings: {} }, null, 2)
+      JSON.stringify(DEFAULT_STORE, null, 2)
     );
   }
 }
@@ -86,20 +111,34 @@ async function readStore() {
   const raw = await fs.readFile(DATA_FILE, "utf8");
   const parsed = JSON.parse(raw || "{}");
 
-  return {
-    drafts: Array.isArray(parsed.drafts) ? parsed.drafts : [],
-    conversationSettings:
-      parsed.conversationSettings && typeof parsed.conversationSettings === "object"
-        ? parsed.conversationSettings
-        : {}
-  };
+  return normalizeStore(parsed);
 }
 
 async function writeStore(store) {
   await fs.mkdir(DATA_DIR, { recursive: true });
   const tempFile = `${DATA_FILE}.tmp`;
-  await fs.writeFile(tempFile, JSON.stringify(store, null, 2));
+  await fs.writeFile(tempFile, JSON.stringify(normalizeStore(store), null, 2));
   await fs.rename(tempFile, DATA_FILE);
+}
+
+function normalizeStore(store) {
+  const parsed = store && typeof store === "object" ? store : {};
+
+  return {
+    drafts: Array.isArray(parsed.drafts) ? parsed.drafts : [],
+    conversationSettings:
+      parsed.conversationSettings && typeof parsed.conversationSettings === "object"
+        ? parsed.conversationSettings
+        : {},
+    conversations:
+      parsed.conversations && typeof parsed.conversations === "object"
+        ? parsed.conversations
+        : {},
+    dailyStats:
+      parsed.dailyStats && typeof parsed.dailyStats === "object"
+        ? parsed.dailyStats
+        : {}
+  };
 }
 
 function getConversationSettings(store, talkId) {
@@ -114,9 +153,262 @@ function getConversationSettings(store, talkId) {
   return store.conversationSettings[talkId];
 }
 
+function toMessageTimestampMs(createdAt) {
+  if (!createdAt) {
+    return Date.now();
+  }
+
+  const numeric = Number(createdAt);
+  if (!Number.isFinite(numeric)) {
+    return Date.now();
+  }
+
+  return numeric < 10_000_000_000 ? numeric * 1000 : numeric;
+}
+
+function todayKey(date = new Date()) {
+  return date.toISOString().slice(0, 10);
+}
+
+function makeConversationKey({ contact_id, chat_id, talk_id, origin }) {
+  const subdomain = process.env.KOMMO_SUBDOMAIN
+    ? normalizeSubdomain(process.env.KOMMO_SUBDOMAIN)
+    : "unknown";
+  const channel = origin || "unknown";
+  const person = contact_id || chat_id || talk_id || "unknown";
+  return `${subdomain}:${channel}:${person}`;
+}
+
+function getConversationMemory(store, messageLike) {
+  const key = messageLike.conversation_key || makeConversationKey(messageLike);
+
+  if (!store.conversations[key]) {
+    store.conversations[key] = {
+      key,
+      contact_id: messageLike.contact_id || "",
+      chat_id: messageLike.chat_id || "",
+      origin: messageLike.origin || "",
+      current_talk_id: messageLike.talk_id || "",
+      summary: "",
+      last_messages: [],
+      processed_message_ids: [],
+      questions_asked: [],
+      youtube_link_sent: false,
+      training_link_sent: false,
+      booking_link_sent: false,
+      ai_paused: false,
+      last_incoming_at: null,
+      last_outgoing_at: null,
+      follow_up: {
+        active: false,
+        count: 0,
+        question_text: "",
+        question_sent_at: null,
+        due_at: null,
+        last_sent_at: null
+      }
+    };
+  }
+
+  const memory = store.conversations[key];
+  memory.key = key;
+  memory.contact_id = messageLike.contact_id || memory.contact_id || "";
+  memory.chat_id = messageLike.chat_id || memory.chat_id || "";
+  memory.origin = messageLike.origin || memory.origin || "";
+  memory.current_talk_id = messageLike.talk_id || memory.current_talk_id || "";
+  memory.summary = memory.summary || "";
+  memory.last_messages = Array.isArray(memory.last_messages) ? memory.last_messages : [];
+  memory.processed_message_ids = Array.isArray(memory.processed_message_ids)
+    ? memory.processed_message_ids
+    : [];
+  memory.questions_asked = Array.isArray(memory.questions_asked) ? memory.questions_asked : [];
+  memory.follow_up =
+    memory.follow_up && typeof memory.follow_up === "object"
+      ? memory.follow_up
+      : {};
+  memory.follow_up.active = Boolean(memory.follow_up.active);
+  memory.follow_up.count = Number(memory.follow_up.count || 0);
+  memory.follow_up.question_text = memory.follow_up.question_text || "";
+  memory.follow_up.question_sent_at = memory.follow_up.question_sent_at || null;
+  memory.follow_up.due_at = memory.follow_up.due_at || null;
+  memory.follow_up.last_sent_at = memory.follow_up.last_sent_at || null;
+
+  return memory;
+}
+
+function addMemoryMessage(memory, message) {
+  memory.last_messages.push({
+    role: message.role,
+    text: String(message.text || "").slice(0, 1200),
+    at: message.at || new Date().toISOString(),
+    id: message.id || ""
+  });
+  memory.last_messages = memory.last_messages.slice(-MAX_RECENT_MEMORY_MESSAGES);
+}
+
+function markProcessedMessage(memory, messageId) {
+  if (!messageId) {
+    return false;
+  }
+
+  if (memory.processed_message_ids.includes(messageId)) {
+    return true;
+  }
+
+  memory.processed_message_ids.push(messageId);
+  memory.processed_message_ids = memory.processed_message_ids.slice(
+    -MAX_PROCESSED_MESSAGE_IDS
+  );
+
+  return false;
+}
+
+function detectQuestionKeys(text) {
+  const lower = String(text || "").toLowerCase();
+  const keys = [];
+
+  if (/why.*start|what.*made.*start|what.*makes.*you.*want/.test(lower)) {
+    keys.push("why_start");
+  }
+
+  if (/when.*start|timeline|how soon|start.*when/.test(lower)) {
+    keys.push("when_start");
+  }
+
+  if (/holding.*back|hold.*back|stopping.*you|blocker|stuck/.test(lower)) {
+    keys.push("holding_back");
+  }
+
+  if (/get on a call|hop on a call|book.*call|discovery/.test(lower)) {
+    keys.push("would_call");
+  }
+
+  return keys;
+}
+
+function replyLooksLikeQuestion(text) {
+  return String(text || "").includes("?");
+}
+
+function updateLinkMemory(memory, text) {
+  const replyText = String(text || "");
+
+  if (replyText.includes(YOUTUBE_URL)) {
+    memory.youtube_link_sent = true;
+    memory.training_link_sent = true;
+  }
+
+  if (replyText.includes(BOOKING_URL)) {
+    memory.booking_link_sent = true;
+  }
+}
+
+function updateQuestionMemory(memory, text) {
+  for (const key of detectQuestionKeys(text)) {
+    if (!memory.questions_asked.includes(key)) {
+      memory.questions_asked.push(key);
+    }
+  }
+}
+
+function scheduleFollowUpIfNeeded(memory, replyText, sentAtMs = Date.now()) {
+  if (!isFollowUpsEnabled() || !replyLooksLikeQuestion(replyText)) {
+    memory.follow_up.active = false;
+    return;
+  }
+
+  memory.follow_up = {
+    active: true,
+    count: 0,
+    question_text: String(replyText || "").slice(0, 500),
+    question_sent_at: new Date(sentAtMs).toISOString(),
+    due_at: new Date(sentAtMs + FOLLOW_UP_OFFSETS_MS[0]).toISOString(),
+    last_sent_at: null
+  };
+}
+
+function cancelFollowUp(memory) {
+  if (!memory.follow_up) {
+    return;
+  }
+
+  memory.follow_up.active = false;
+  memory.follow_up.due_at = null;
+}
+
+function getDailyStats(store, day = todayKey()) {
+  if (!store.dailyStats[day]) {
+    store.dailyStats[day] = {
+      prospects_touched: 0,
+      prospect_keys: [],
+      ai_replies_sent: 0,
+      manual_approvals_sent: 0,
+      auto_replies_sent: 0,
+      drafts_created: 0,
+      training_links_sent: 0,
+      youtube_links_sent: 0,
+      booking_links_sent: 0,
+      followups_sent: 0
+    };
+  }
+
+  const stats = store.dailyStats[day];
+  stats.prospect_keys = Array.isArray(stats.prospect_keys) ? stats.prospect_keys : [];
+  return stats;
+}
+
+function recordDailyStat(store, conversationKey, increments = {}) {
+  const stats = getDailyStats(store);
+
+  if (
+    conversationKey &&
+    increments.prospects_touched &&
+    !stats.prospect_keys.includes(conversationKey)
+  ) {
+    stats.prospect_keys.push(conversationKey);
+    stats.prospects_touched = stats.prospect_keys.length;
+  }
+
+  const { prospects_touched: _prospectsTouched, ...counterIncrements } = increments;
+
+  for (const [key, value] of Object.entries(counterIncrements)) {
+    stats[key] = Number(stats[key] || 0) + Number(value || 0);
+  }
+}
+
+function linkStatsForText(text) {
+  const replyText = String(text || "");
+  const hasYoutube = replyText.includes(YOUTUBE_URL);
+  const hasBooking = replyText.includes(BOOKING_URL);
+
+  return {
+    training_links_sent: hasYoutube ? 1 : 0,
+    youtube_links_sent: hasYoutube ? 1 : 0,
+    booking_links_sent: hasBooking ? 1 : 0
+  };
+}
+
+function memoryForPrompt(memory) {
+  if (!memory || !isConversationMemoryEnabled()) {
+    return null;
+  }
+
+  return {
+    key: memory.key,
+    summary: memory.summary,
+    recent_messages: memory.last_messages.slice(-12),
+    questions_asked: memory.questions_asked,
+    youtube_link_sent: Boolean(memory.youtube_link_sent),
+    training_link_sent: Boolean(memory.training_link_sent),
+    booking_link_sent: Boolean(memory.booking_link_sent),
+    follow_up_count: Number(memory.follow_up?.count || 0)
+  };
+}
+
 async function saveDraft(draft) {
   const store = await readStore();
   getConversationSettings(store, draft.talk_id);
+  const conversationKey = draft.conversation_key || makeConversationKey(draft);
 
   const existingIndex = draft.incoming_message_id
     ? store.drafts.findIndex(
@@ -133,10 +425,12 @@ async function saveDraft(draft) {
   } else {
     store.drafts.push({
       ...draft,
+      conversation_key: conversationKey,
       id: draft.id || crypto.randomUUID(),
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     });
+    recordDailyStat(store, conversationKey, { drafts_created: 1 });
   }
 
   await writeStore(store);
@@ -400,9 +694,10 @@ async function getConversationThread(talkId) {
   return normalizeKommoMessages(responseBody);
 }
 
-async function generateReply({ thread, newMessage, contextWarning }) {
+async function generateReply({ thread, newMessage, contextWarning, memory }) {
   const payload = {
     conversation_history: thread.slice(-30),
+    conversation_memory: memoryForPrompt(memory),
     new_message: newMessage.text,
     context_warning: contextWarning || null
   };
@@ -423,6 +718,7 @@ async function generateReply({ thread, newMessage, contextWarning }) {
           role: "user",
           content:
             "Use this JSON conversation data to write the next Instagram DM reply. Return JSON only.\n" +
+            "Use conversation_memory to avoid repeating links or qualifying questions.\n" +
             JSON.stringify(payload, null, 2)
         }
       ]
@@ -469,6 +765,311 @@ async function sendReplyToKommo(talkId, replyText) {
   );
 }
 
+async function generateFollowUpReply(memory) {
+  const followUpNumber = Number(memory.follow_up?.count || 0) + 1;
+  const payload = {
+    follow_up_number: followUpNumber,
+    original_question: memory.follow_up?.question_text || "",
+    conversation_memory: memoryForPrompt(memory)
+  };
+
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${requireEnv("OPENAI_API_KEY")}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: process.env.OPENAI_MODEL || DEFAULT_OPENAI_MODEL,
+      temperature: 0.35,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: HOUSE_RULES },
+        {
+          role: "user",
+          content:
+            "The prospect has not answered after the assistant asked a question. " +
+            "Write a gentle, short follow-up nudge for Instagram. Do not sound pushy. " +
+            "Do not ask more than one question. Return JSON only.\n" +
+            JSON.stringify(payload, null, 2)
+        }
+      ]
+    })
+  });
+
+  const responseText = await response.text();
+  const responseBody = safeJsonParse(responseText);
+
+  if (!response.ok) {
+    throw new Error(
+      `OpenAI API ${response.status} ${response.statusText}: ${responseText}`
+    );
+  }
+
+  const content = responseBody?.choices?.[0]?.message?.content || "";
+  const parsed = safeJsonParse(content);
+
+  if (!parsed || typeof parsed.reply !== "string") {
+    throw new Error(`OpenAI returned unexpected follow-up content: ${content}`);
+  }
+
+  return {
+    reply: parsed.reply.trim(),
+    needs_review: parsed.needs_review !== false
+  };
+}
+
+async function recordIncomingForMemory(incoming) {
+  if (!isConversationMemoryEnabled()) {
+    return { duplicate: false, memory: null, conversationKey: makeConversationKey(incoming) };
+  }
+
+  const store = await readStore();
+  const memory = getConversationMemory(store, incoming);
+  const duplicate = markProcessedMessage(memory, incoming.incoming_message_id);
+
+  if (!duplicate) {
+    const incomingAt = new Date(toMessageTimestampMs(incoming.created_at)).toISOString();
+    memory.last_incoming_at = incomingAt;
+    memory.summary = `Last inbound: ${incoming.text.slice(0, 240)}`;
+    cancelFollowUp(memory);
+    addMemoryMessage(memory, {
+      role: "user",
+      text: incoming.text,
+      at: incomingAt,
+      id: incoming.incoming_message_id
+    });
+  }
+
+  await writeStore(store);
+
+  return { duplicate, memory, conversationKey: memory.key };
+}
+
+async function recordOutgoingForMemory(messageLike, replyText, options = {}) {
+  const store = await readStore();
+  const memory = isConversationMemoryEnabled()
+    ? getConversationMemory(store, messageLike)
+    : null;
+  const conversationKey = memory?.key || makeConversationKey(messageLike);
+  const sentAtMs = Date.now();
+  const sentAt = new Date(sentAtMs).toISOString();
+  const source = options.source || "ai";
+
+  if (memory) {
+    addMemoryMessage(memory, {
+      role: "assistant",
+      text: replyText,
+      at: sentAt,
+      id: options.messageId || ""
+    });
+    memory.last_outgoing_at = sentAt;
+    memory.summary = `Last outbound: ${String(replyText || "").slice(0, 240)}`;
+    updateLinkMemory(memory, replyText);
+    updateQuestionMemory(memory, replyText);
+    scheduleFollowUpIfNeeded(memory, replyText, sentAtMs);
+  }
+
+  recordDailyStat(store, conversationKey, {
+    prospects_touched: 1,
+    ai_replies_sent: 1,
+    auto_replies_sent: source === "auto" ? 1 : 0,
+    manual_approvals_sent: source === "manual_approval" ? 1 : 0,
+    followups_sent: source === "follow_up" ? 1 : 0,
+    ...linkStatsForText(replyText)
+  });
+
+  await writeStore(store);
+}
+
+let followUpSweepRunning = false;
+
+async function processDueFollowUps() {
+  if (!isFollowUpsEnabled() || followUpSweepRunning) {
+    return;
+  }
+
+  followUpSweepRunning = true;
+
+  try {
+    const nowMs = Date.now();
+    const store = await readStore();
+    const dueConversations = Object.values(store.conversations).filter((memory) => {
+      const dueAtMs = memory.follow_up?.due_at
+        ? new Date(memory.follow_up.due_at).getTime()
+        : 0;
+      const lastIncomingMs = memory.last_incoming_at
+        ? new Date(memory.last_incoming_at).getTime()
+        : 0;
+
+      return (
+        memory.follow_up?.active &&
+        !memory.ai_paused &&
+        memory.current_talk_id &&
+        dueAtMs > 0 &&
+        dueAtMs <= nowMs &&
+        Number(memory.follow_up.count || 0) < FOLLOW_UP_OFFSETS_MS.length &&
+        lastIncomingMs > 0 &&
+        nowMs - lastIncomingMs < FOLLOW_UP_WINDOW_MS
+      );
+    });
+
+    for (const memory of dueConversations) {
+      await sendDueFollowUp(memory.key);
+    }
+  } catch (error) {
+    console.error("Follow-up sweep failed:", error);
+  } finally {
+    followUpSweepRunning = false;
+  }
+}
+
+async function sendDueFollowUp(conversationKey) {
+  const store = await readStore();
+  const memory = store.conversations[conversationKey];
+
+  if (!memory || !memory.follow_up?.active || memory.ai_paused) {
+    return;
+  }
+
+  const dueAtMs = memory.follow_up.due_at
+    ? new Date(memory.follow_up.due_at).getTime()
+    : 0;
+  const lastIncomingMs = memory.last_incoming_at
+    ? new Date(memory.last_incoming_at).getTime()
+    : 0;
+
+  if (!dueAtMs || dueAtMs > Date.now()) {
+    return;
+  }
+
+  if (!lastIncomingMs || Date.now() - lastIncomingMs >= FOLLOW_UP_WINDOW_MS) {
+    memory.follow_up.active = false;
+    await writeStore(store);
+    console.log(`Follow-up skipped outside messaging window for ${conversationKey}.`);
+    return;
+  }
+
+  if (!memory.current_talk_id) {
+    memory.follow_up.active = false;
+    await writeStore(store);
+    console.log(`Follow-up skipped without current talk_id for ${conversationKey}.`);
+    return;
+  }
+
+  let aiReply;
+
+  try {
+    aiReply = await generateFollowUpReply(memory);
+  } catch (error) {
+    memory.follow_up.active = false;
+    memory.follow_up.due_at = null;
+    await writeStore(store);
+
+    await saveDraft({
+      conversation_key: conversationKey,
+      talk_id: memory.current_talk_id,
+      chat_id: memory.chat_id,
+      contact_id: memory.contact_id,
+      origin: memory.origin,
+      incoming_message_id: `follow-up-${conversationKey}-${memory.follow_up.count + 1}`,
+      incoming_text: "Follow-up due",
+      reply: "",
+      needs_review: true,
+      reason: `Follow-up generation failed: ${error.message}`
+    });
+
+    console.error(`Follow-up generation failed for ${conversationKey}:`, error);
+    return;
+  }
+
+  const replyText = aiReply.reply;
+
+  if (aiReply.needs_review || !replyText) {
+    memory.follow_up.active = false;
+    memory.follow_up.due_at = null;
+    await writeStore(store);
+
+    await saveDraft({
+      conversation_key: conversationKey,
+      talk_id: memory.current_talk_id,
+      chat_id: memory.chat_id,
+      contact_id: memory.contact_id,
+      origin: memory.origin,
+      incoming_message_id: `follow-up-review-${conversationKey}-${memory.follow_up.count + 1}`,
+      incoming_text: "Follow-up due",
+      reply: replyText,
+      needs_review: true,
+      reason: "AI requested review for this follow-up."
+    });
+
+    console.log(`Saved follow-up draft for ${conversationKey}.`);
+    return;
+  }
+
+  try {
+    await sendReplyToKommo(memory.current_talk_id, replyText);
+  } catch (error) {
+    memory.follow_up.active = false;
+    memory.follow_up.due_at = null;
+    await writeStore(store);
+
+    await saveDraft({
+      conversation_key: conversationKey,
+      talk_id: memory.current_talk_id,
+      chat_id: memory.chat_id,
+      contact_id: memory.contact_id,
+      origin: memory.origin,
+      incoming_message_id: `follow-up-send-${conversationKey}-${memory.follow_up.count + 1}`,
+      incoming_text: "Follow-up due",
+      reply: replyText,
+      needs_review: true,
+      reason: `Follow-up send failed: ${error.message}`
+    });
+
+    console.error(`Follow-up send failed for ${conversationKey}:`, error);
+    return;
+  }
+
+  const updatedStore = await readStore();
+  const updatedMemory = updatedStore.conversations[conversationKey];
+  const nextCount = Number(updatedMemory.follow_up?.count || 0) + 1;
+  const questionSentMs = updatedMemory.follow_up?.question_sent_at
+    ? new Date(updatedMemory.follow_up.question_sent_at).getTime()
+    : Date.now();
+
+  addMemoryMessage(updatedMemory, {
+    role: "assistant",
+    text: replyText,
+    at: new Date().toISOString(),
+    id: `follow-up-${nextCount}`
+  });
+  updateLinkMemory(updatedMemory, replyText);
+  updateQuestionMemory(updatedMemory, replyText);
+  updatedMemory.last_outgoing_at = new Date().toISOString();
+  updatedMemory.follow_up.count = nextCount;
+  updatedMemory.follow_up.last_sent_at = new Date().toISOString();
+
+  if (nextCount >= FOLLOW_UP_OFFSETS_MS.length) {
+    updatedMemory.follow_up.active = false;
+    updatedMemory.follow_up.due_at = null;
+  } else {
+    updatedMemory.follow_up.due_at = new Date(
+      questionSentMs + FOLLOW_UP_OFFSETS_MS[nextCount]
+    ).toISOString();
+  }
+
+  recordDailyStat(updatedStore, conversationKey, {
+    prospects_touched: 1,
+    ai_replies_sent: 1,
+    followups_sent: 1,
+    ...linkStatsForText(replyText)
+  });
+
+  await writeStore(updatedStore);
+  console.log(`Sent follow-up ${nextCount} for ${conversationKey}.`);
+}
+
 async function processIncomingMessage(incoming, parsedPayload) {
   if (!incoming.text) {
     console.log("Webhook ignored: no text message found.");
@@ -495,6 +1096,13 @@ async function processIncomingMessage(incoming, parsedPayload) {
     return;
   }
 
+  const { duplicate, memory, conversationKey } = await recordIncomingForMemory(incoming);
+
+  if (duplicate) {
+    console.log(`Webhook ignored: duplicate message ${incoming.incoming_message_id}.`);
+    return;
+  }
+
   let thread = [];
   let contextWarning = "";
 
@@ -515,10 +1123,12 @@ async function processIncomingMessage(incoming, parsedPayload) {
     aiReply = await generateReply({
       thread: filteredThread,
       newMessage: incoming,
-      contextWarning
+      contextWarning,
+      memory
     });
   } catch (error) {
     await saveDraft({
+      conversation_key: conversationKey,
       talk_id: incoming.talk_id,
       chat_id: incoming.chat_id,
       contact_id: incoming.contact_id,
@@ -550,11 +1160,13 @@ async function processIncomingMessage(incoming, parsedPayload) {
 
   if (shouldAutoSend) {
     await sendReplyToKommo(incoming.talk_id, aiReply.reply);
+    await recordOutgoingForMemory(incoming, aiReply.reply, { source: "auto" });
     console.log(`Auto-sent reply for talk_id=${incoming.talk_id}.`);
     return;
   }
 
   await saveDraft({
+    conversation_key: conversationKey,
     talk_id: incoming.talk_id,
     chat_id: incoming.chat_id,
     contact_id: incoming.contact_id,
@@ -622,6 +1234,30 @@ app.get("/api/drafts", async (_req, res, next) => {
   }
 });
 
+app.get("/api/stats", async (_req, res, next) => {
+  try {
+    const store = await readStore();
+    const day = todayKey();
+    const stats = getDailyStats(store, day);
+    const { prospect_keys: _prospectKeys, ...publicStats } = stats;
+
+    res.json({
+      day,
+      stats: {
+        ...publicStats,
+        prospects_touched: stats.prospect_keys.length
+      },
+      settings: {
+        auto_send: isAutoSendEnabled(),
+        conversation_memory_enabled: isConversationMemoryEnabled(),
+        follow_ups_enabled: isFollowUpsEnabled()
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post("/api/drafts/:id/approve", async (req, res, next) => {
   try {
     const store = await readStore();
@@ -634,6 +1270,7 @@ app.post("/api/drafts/:id/approve", async (req, res, next) => {
 
     const reply = String(req.body.reply || draft.reply || "").trim();
     await sendReplyToKommo(draft.talk_id, reply);
+    await recordOutgoingForMemory(draft, reply, { source: "manual_approval" });
     await removeDraft(draft.id);
 
     res.json({ ok: true });
@@ -717,6 +1354,49 @@ function renderHomePage() {
       color: var(--muted);
       font-size: 14px;
       text-align: right;
+    }
+
+    .stats-grid {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      margin-bottom: 14px;
+    }
+
+    .stat {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      min-height: 78px;
+      padding: 12px;
+    }
+
+    .stat strong {
+      display: block;
+      font-size: 22px;
+      line-height: 1.15;
+    }
+
+    .stat span {
+      color: var(--muted);
+      display: block;
+      font-size: 12px;
+      margin-top: 4px;
+    }
+
+    .flags {
+      color: var(--muted);
+      display: flex;
+      flex-wrap: wrap;
+      font-size: 12px;
+      gap: 8px;
+      margin: -4px 0 16px;
+    }
+
+    .flag {
+      background: #eef1f6;
+      border-radius: 999px;
+      padding: 4px 8px;
     }
 
     .draft-list {
@@ -814,6 +1494,10 @@ function renderHomePage() {
         text-align: left;
       }
 
+      .stats-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
       .actions {
         display: grid;
         grid-template-columns: 1fr 1fr;
@@ -827,11 +1511,15 @@ function renderHomePage() {
       <h1>Pending Drafts</h1>
       <div id="status"></div>
     </header>
+    <section id="stats" class="stats-grid" aria-label="Daily tracker"></section>
+    <section id="flags" class="flags" aria-label="Settings"></section>
     <section id="drafts" class="draft-list"></section>
   </main>
 
   <script>
     const draftsEl = document.getElementById("drafts");
+    const flagsEl = document.getElementById("flags");
+    const statsEl = document.getElementById("stats");
     const statusEl = document.getElementById("status");
 
     function setStatus(message) {
@@ -854,6 +1542,46 @@ function renderHomePage() {
       }
 
       return data;
+    }
+
+    function renderStats(data) {
+      const stats = data.stats || {};
+      const cards = [
+        ["Prospects", stats.prospects_touched || 0],
+        ["AI replies", stats.ai_replies_sent || 0],
+        ["Drafts", stats.drafts_created || 0],
+        ["Training/YouTube", stats.youtube_links_sent || 0],
+        ["Booking links", stats.booking_links_sent || 0],
+        ["Follow-ups", stats.followups_sent || 0]
+      ];
+
+      statsEl.innerHTML = "";
+      cards.forEach(([label, value]) => {
+        const card = document.createElement("div");
+        card.className = "stat";
+
+        const strong = document.createElement("strong");
+        strong.textContent = value;
+
+        const span = document.createElement("span");
+        span.textContent = label;
+
+        card.append(strong, span);
+        statsEl.appendChild(card);
+      });
+
+      const settings = data.settings || {};
+      flagsEl.innerHTML = "";
+      [
+        ["Auto-send", settings.auto_send],
+        ["Memory", settings.conversation_memory_enabled],
+        ["Follow-ups", settings.follow_ups_enabled]
+      ].forEach(([label, enabled]) => {
+        const flag = document.createElement("span");
+        flag.className = "flag";
+        flag.textContent = label + ": " + (enabled ? "on" : "off");
+        flagsEl.appendChild(flag);
+      });
     }
 
     function renderDraft(draft) {
@@ -941,7 +1669,11 @@ function renderHomePage() {
     async function loadDrafts() {
       setStatus("Loading...");
       try {
-        const data = await api("/api/drafts");
+        const [data, statsData] = await Promise.all([
+          api("/api/drafts"),
+          api("/api/stats")
+        ]);
+        renderStats(statsData);
         draftsEl.innerHTML = "";
 
         if (!data.drafts || data.drafts.length === 0) {
@@ -969,9 +1701,17 @@ function renderHomePage() {
 
 ensureStoreFile()
   .then(() => {
+    setInterval(() => {
+      processDueFollowUps().catch((error) => {
+        console.error("Follow-up interval failed:", error);
+      });
+    }, FOLLOW_UP_CHECK_MS);
+
     app.listen(PORT, () => {
       console.log(`Kommo OpenAI IG auto-reply app listening on port ${PORT}`);
       console.log(`AUTO_SEND=${isAutoSendEnabled()}`);
+      console.log(`CONVERSATION_MEMORY_ENABLED=${isConversationMemoryEnabled()}`);
+      console.log(`FOLLOW_UPS_ENABLED=${isFollowUpsEnabled()}`);
     });
   })
   .catch((error) => {
