@@ -1,6 +1,6 @@
-# Kommo + OpenAI Instagram DM Auto-Reply
+# Kommo/Zernio + OpenAI Instagram DM Auto-Reply
 
-Minimal one-person Node.js app for replying to Kommo Instagram DM talks with OpenAI.
+Minimal one-person Node.js app for replying to Instagram DMs with OpenAI through Kommo or Zernio.
 
 This is intentionally small:
 
@@ -21,6 +21,9 @@ OPENAI_API_KEY=sk-your-openai-api-key
 OPENAI_MODEL=gpt-4o-mini
 KOMMO_SUBDOMAIN=your-subdomain
 KOMMO_ACCESS_TOKEN=your-long-lived-kommo-access-token
+ZERNIO_API_KEY=your-zernio-api-key
+ZERNIO_ACCOUNT_ID=your-zernio-account-id
+ZERNIO_WEBHOOK_SECRET=choose-a-long-random-zernio-secret
 WEBHOOK_SECRET=choose-a-long-random-secret
 AUTO_SEND=false
 CONVERSATION_MEMORY_ENABLED=true
@@ -32,11 +35,14 @@ Notes:
 
 - `OPENAI_MODEL` defaults to `gpt-4o-mini` if empty.
 - `KOMMO_SUBDOMAIN` can be `your-subdomain` or `your-subdomain.kommo.com`.
+- `ZERNIO_API_KEY` enables Zernio inbox receiving/sending.
+- `ZERNIO_ACCOUNT_ID` is optional when Zernio includes `accountId` in webhook payloads, but useful as a fallback for sends.
+- `ZERNIO_WEBHOOK_SECRET` verifies signed Zernio webhooks. If you do not configure it yet, `/webhook/zernio?secret=WEBHOOK_SECRET` can use the simple query-secret fallback.
 - `AUTO_SEND=true` sends replies immediately only when the AI returns `needs_review: false`.
 - `AUTO_SEND=false` saves every generated reply as a pending draft.
 - `CONVERSATION_MEMORY_ENABLED=true` stores lightweight per-prospect memory in the local JSON file.
 - `FOLLOW_UPS_ENABLED=false` keeps follow-up nudges disabled. Set it to `true` only after testing.
-- The Kommo token needs these chat permissions: `External chat history` and `Sending to external chats`.
+- Kommo sending/history requires the Kommo Chats API scopes. If those are not available on your Kommo account, use Zernio for inbox send/receive instead.
 - The OpenAI API key must have active API billing/credits. ChatGPT Plus/Pro billing is separate from API billing.
 
 ## Local Setup
@@ -49,6 +55,9 @@ $env:OPENAI_API_KEY="sk-your-openai-api-key"
 $env:OPENAI_MODEL="gpt-4o-mini"
 $env:KOMMO_SUBDOMAIN="your-subdomain"
 $env:KOMMO_ACCESS_TOKEN="your-long-lived-kommo-access-token"
+$env:ZERNIO_API_KEY="your-zernio-api-key"
+$env:ZERNIO_ACCOUNT_ID="your-zernio-account-id"
+$env:ZERNIO_WEBHOOK_SECRET="choose-a-long-random-zernio-secret"
 $env:WEBHOOK_SECRET="choose-a-long-random-secret"
 $env:AUTO_SEND="false"
 $env:CONVERSATION_MEMORY_ENABLED="true"
@@ -72,15 +81,27 @@ https://YOUR-TUNNEL-DOMAIN/webhook/kommo?secret=YOUR_WEBHOOK_SECRET
 
 The first Kommo webhook logs the full raw payload and parsed payload to stdout so you can confirm Kommo's real field names.
 
-## Kommo Webhook URL
+## Webhook URLs
 
-After deploying, paste this into Kommo:
+After deploying, paste this into Kommo if you are using Kommo webhooks:
 
 ```text
 https://YOUR-DIGITALOCEAN-APP-URL/webhook/kommo?secret=YOUR_WEBHOOK_SECRET
 ```
 
 Use the `Incoming message received` event for talks/messages. If Kommo lets you scope by channel, scope it to Instagram.
+
+Paste this into Zernio if you are using Zernio webhooks:
+
+```text
+https://YOUR-DIGITALOCEAN-APP-URL/webhook/zernio
+```
+
+Set the Zernio webhook event to `message.received`. If you are not using Zernio's signed webhook secret yet, use this temporary fallback URL:
+
+```text
+https://YOUR-DIGITALOCEAN-APP-URL/webhook/zernio?secret=YOUR_WEBHOOK_SECRET
+```
 
 ## DigitalOcean App Platform Deploy
 
@@ -96,36 +117,40 @@ Use the `Incoming message received` event for talks/messages. If Kommo lets you 
 10. Do not add a second component.
 11. Deploy.
 
-Then set the Kommo webhook URL to:
+Then set the Kommo or Zernio webhook URL:
 
 ```text
 https://YOUR-DIGITALOCEAN-APP-URL/webhook/kommo?secret=YOUR_WEBHOOK_SECRET
+https://YOUR-DIGITALOCEAN-APP-URL/webhook/zernio
 ```
 
 ## How It Works
 
 1. `POST /webhook/kommo?secret=X` verifies `X` against `WEBHOOK_SECRET`.
-2. The app logs the raw Kommo payload.
-3. It extracts the incoming talk/message fields it knows about.
-4. It pulls recent conversation messages from:
+2. `POST /webhook/zernio` verifies the Zernio signature from `ZERNIO_WEBHOOK_SECRET`.
+3. The app logs the raw webhook payload.
+4. It extracts the incoming message fields it knows about.
+5. It pulls recent conversation messages from Kommo or Zernio:
    `GET /api/v4/talks/{talk_id}/messages`
-5. It calls OpenAI Chat Completions and asks for:
+   `GET /v1/inbox/conversations/{conversationId}/messages`
+6. It calls OpenAI Chat Completions and asks for:
    `{ "reply": string, "needs_review": boolean }`
-6. If `AUTO_SEND=true` and `needs_review=false`, it sends through:
+7. If `AUTO_SEND=true` and `needs_review=false`, it sends through the source provider:
    `POST /api/v4/talks/{talk_id}/send_message`
-7. Otherwise it saves a draft in `data/store.json`.
-8. The app updates lightweight conversation memory by prospect/channel.
-9. `GET /` shows today's tracker plus pending drafts with Send and Discard buttons.
+   `POST /v1/inbox/conversations/{conversationId}/messages`
+8. Otherwise it saves a draft in `data/store.json`.
+9. The app updates lightweight conversation memory by prospect/channel.
+10. `GET /` shows today's tracker plus pending drafts with Send and Discard buttons.
 
 ## Conversation Memory Lite
 
 When `CONVERSATION_MEMORY_ENABLED=true`, the app stores a compact record under `data/store.json` keyed by:
 
 ```text
-KOMMO_SUBDOMAIN + origin + contact_id
+provider/account + origin + contact_id
 ```
 
-If Kommo does not provide `contact_id`, it falls back to `chat_id`, then `talk_id`. This lets the AI continue naturally if Kommo creates a new talk for the same Instagram contact.
+If the provider does not provide `contact_id`, it falls back to `chat_id`, then conversation/talk id. This lets the AI continue naturally if the messaging provider creates a new thread for the same Instagram contact.
 
 The memory stores recent messages, sent-link flags, qualifying questions already asked, processed incoming message IDs, and follow-up state. It does not add a database or separate service.
 

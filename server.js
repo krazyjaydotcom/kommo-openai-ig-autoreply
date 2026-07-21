@@ -9,6 +9,7 @@ const PORT = Number(process.env.PORT || 3000);
 const DATA_DIR = path.join(__dirname, "data");
 const DATA_FILE = path.join(DATA_DIR, "store.json");
 const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
+const ZERNIO_BASE_URL = "https://zernio.com/api/v1";
 const YOUTUBE_URL = "https://youtube.com/@palletprosacademy";
 const BOOKING_URL = "https://www.tidycal.com/palletprosga/discovery";
 const MAX_RECENT_MEMORY_MESSAGES = 20;
@@ -170,12 +171,24 @@ function todayKey(date = new Date()) {
   return date.toISOString().slice(0, 10);
 }
 
-function makeConversationKey({ contact_id, chat_id, talk_id, origin }) {
+function makeConversationKey({
+  provider,
+  contact_id,
+  chat_id,
+  talk_id,
+  origin,
+  zernio_account_id
+}) {
+  const channel = origin || "unknown";
+  const person = contact_id || chat_id || talk_id || "unknown";
+
+  if (provider === "zernio") {
+    return `zernio:${zernio_account_id || "unknown"}:${channel}:${person}`;
+  }
+
   const subdomain = process.env.KOMMO_SUBDOMAIN
     ? normalizeSubdomain(process.env.KOMMO_SUBDOMAIN)
     : "unknown";
-  const channel = origin || "unknown";
-  const person = contact_id || chat_id || talk_id || "unknown";
   return `${subdomain}:${channel}:${person}`;
 }
 
@@ -185,10 +198,13 @@ function getConversationMemory(store, messageLike) {
   if (!store.conversations[key]) {
     store.conversations[key] = {
       key,
+      provider: messageLike.provider || "kommo",
       contact_id: messageLike.contact_id || "",
       chat_id: messageLike.chat_id || "",
       origin: messageLike.origin || "",
       current_talk_id: messageLike.talk_id || "",
+      zernio_account_id: messageLike.zernio_account_id || "",
+      zernio_conversation_id: messageLike.zernio_conversation_id || "",
       summary: "",
       last_messages: [],
       processed_message_ids: [],
@@ -212,10 +228,15 @@ function getConversationMemory(store, messageLike) {
 
   const memory = store.conversations[key];
   memory.key = key;
+  memory.provider = messageLike.provider || memory.provider || "kommo";
   memory.contact_id = messageLike.contact_id || memory.contact_id || "";
   memory.chat_id = messageLike.chat_id || memory.chat_id || "";
   memory.origin = messageLike.origin || memory.origin || "";
   memory.current_talk_id = messageLike.talk_id || memory.current_talk_id || "";
+  memory.zernio_account_id =
+    messageLike.zernio_account_id || memory.zernio_account_id || "";
+  memory.zernio_conversation_id =
+    messageLike.zernio_conversation_id || memory.zernio_conversation_id || "";
   memory.summary = memory.summary || "";
   memory.last_messages = Array.isArray(memory.last_messages) ? memory.last_messages : [];
   memory.processed_message_ids = Array.isArray(memory.processed_message_ids)
@@ -470,6 +491,38 @@ function safeJsonParse(raw) {
   }
 }
 
+function timingSafeEqualString(left, right) {
+  const leftBuffer = Buffer.from(String(left || ""), "utf8");
+  const rightBuffer = Buffer.from(String(right || ""), "utf8");
+
+  if (leftBuffer.length !== rightBuffer.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function verifyZernioSignature(rawBody, signature, secret) {
+  if (!signature || !secret) {
+    return false;
+  }
+
+  const expectedHex = crypto
+    .createHmac("sha256", secret)
+    .update(rawBody)
+    .digest("hex");
+  const signatureText = String(signature).trim();
+  const candidates = signatureText
+    .split(",")
+    .map((part) => part.trim())
+    .flatMap((part) => {
+      const value = part.includes("=") ? part.split("=").pop().trim() : part;
+      return [part, value];
+    });
+
+  return candidates.some((candidate) => timingSafeEqualString(candidate, expectedHex));
+}
+
 function parseWebhookPayload(rawBody, contentType) {
   const rawText = rawBody.toString("utf8");
   const lowerContentType = String(contentType || "").toLowerCase();
@@ -520,6 +573,20 @@ function pickValue(payload, candidates) {
   }
 
   return undefined;
+}
+
+function normalizeDirection(value) {
+  const direction = String(value || "").toLowerCase();
+
+  if (["incoming", "inbound", "received"].includes(direction)) {
+    return "incoming";
+  }
+
+  if (["outgoing", "outbound", "sent"].includes(direction)) {
+    return "outgoing";
+  }
+
+  return direction;
 }
 
 function extractIncomingMessage(payload) {
@@ -619,15 +686,103 @@ function extractIncomingMessage(payload) {
   ]);
 
   return {
+    provider: "kommo",
     talk_id: talkId ? String(talkId) : "",
     chat_id: chatId ? String(chatId) : "",
     contact_id: contactId ? String(contactId) : "",
     incoming_message_id: incomingMessageId ? String(incomingMessageId) : "",
     text: text ? String(text).trim() : "",
-    direction: direction ? String(direction).toLowerCase() : "",
+    direction: normalizeDirection(direction),
     message_type: messageType ? String(messageType).toLowerCase() : "",
     origin: origin ? String(origin).toLowerCase() : "",
     created_at: createdAt ? Number(createdAt) || null : null
+  };
+}
+
+function extractZernioIncomingMessage(payload) {
+  const eventId = pickValue(payload, ["id", "event_id", "eventId"]);
+  const eventType = pickValue(payload, ["event", "type", "event_type"]);
+  const conversationId = pickValue(payload, [
+    "data.conversationId",
+    "data.conversation_id",
+    "data.conversation.id",
+    "data.message.conversationId",
+    "message.conversationId",
+    "conversationId",
+    "conversation_id"
+  ]);
+  const accountId = pickValue(payload, [
+    "data.accountId",
+    "data.account_id",
+    "data.account.id",
+    "accountId",
+    "account_id"
+  ]);
+  const messageId = pickValue(payload, [
+    "data.messageId",
+    "data.message_id",
+    "data.id",
+    "data.message.id",
+    "message.id",
+    "messageId",
+    "message_id"
+  ]);
+  const text = pickValue(payload, [
+    "data.text",
+    "data.message.text",
+    "data.body",
+    "message.text",
+    "data.message",
+    "text"
+  ]);
+  const direction = pickValue(payload, [
+    "data.direction",
+    "data.message.direction",
+    "direction"
+  ]);
+  const platform = pickValue(payload, [
+    "data.platform",
+    "data.account.platform",
+    "platform"
+  ]);
+  const senderId = pickValue(payload, [
+    "data.sender.contactId",
+    "data.sender.id",
+    "data.senderId",
+    "data.sender_id",
+    "data.participantId",
+    "data.participant_id",
+    "sender.id",
+    "senderId"
+  ]);
+  const timestamp = pickValue(payload, [
+    "data.timestamp",
+    "data.createdAt",
+    "data.created_at",
+    "data.sentAt",
+    "message.createdAt",
+    "timestamp",
+    "createdAt"
+  ]);
+  const timestampMs = timestamp ? Date.parse(String(timestamp)) : NaN;
+  const stableMessageId = eventId || messageId || `${conversationId || "unknown"}:${timestamp || Date.now()}`;
+  const textValue =
+    text && typeof text === "object" ? text.text || text.message || "" : text;
+
+  return {
+    provider: "zernio",
+    talk_id: conversationId ? String(conversationId) : "",
+    chat_id: conversationId ? String(conversationId) : "",
+    contact_id: senderId ? String(senderId) : "",
+    zernio_conversation_id: conversationId ? String(conversationId) : "",
+    zernio_account_id: accountId ? String(accountId) : "",
+    incoming_message_id: stableMessageId ? String(stableMessageId) : "",
+    text: textValue ? String(textValue).trim() : "",
+    direction: normalizeDirection(direction),
+    message_type: "text",
+    origin: platform ? String(platform).toLowerCase() : "",
+    event_type: eventType ? String(eventType) : "",
+    created_at: Number.isNaN(timestampMs) ? null : timestampMs
   };
 }
 
@@ -674,6 +829,31 @@ async function kommoRequest(pathname, options = {}) {
   return body;
 }
 
+async function zernioRequest(pathname, options = {}) {
+  const response = await fetch(`${ZERNIO_BASE_URL}${pathname}`, {
+    ...options,
+    headers: {
+      Authorization: `Bearer ${requireEnv("ZERNIO_API_KEY")}`,
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      ...(options.headers || {})
+    }
+  });
+
+  const text = await response.text();
+  const body = text ? safeJsonParse(text) || text : null;
+
+  if (!response.ok) {
+    throw new Error(
+      `Zernio API ${response.status} ${response.statusText}: ${
+        typeof body === "string" ? body : JSON.stringify(body)
+      }`
+    );
+  }
+
+  return body;
+}
+
 function normalizeKommoMessages(responseBody) {
   const messages =
     responseBody?._embedded?.messages ||
@@ -699,6 +879,31 @@ function normalizeKommoMessages(responseBody) {
     .sort((a, b) => Number(a.created_at || 0) - Number(b.created_at || 0));
 }
 
+function normalizeZernioMessages(responseBody) {
+  const rawMessages =
+    responseBody?.messages ||
+    responseBody?.data?.messages ||
+    responseBody?.data ||
+    [];
+  const messages = Array.isArray(rawMessages) ? rawMessages : [];
+
+  return messages
+    .map((message) => {
+      const direction = normalizeDirection(message.direction);
+      const createdAt = message.createdAt || message.created_at || message.timestamp || null;
+      const createdAtMs = createdAt ? Date.parse(String(createdAt)) : NaN;
+
+      return {
+        id: message.id || message.messageId || "",
+        role: direction === "incoming" ? "user" : "assistant",
+        text: String(message.message || message.text || "").trim(),
+        created_at: Number.isNaN(createdAtMs) ? null : createdAtMs
+      };
+    })
+    .filter((message) => message.text)
+    .sort((a, b) => Number(a.created_at || 0) - Number(b.created_at || 0));
+}
+
 async function getConversationThread(talkId) {
   if (!talkId) {
     return [];
@@ -710,6 +915,35 @@ async function getConversationThread(talkId) {
   );
 
   return normalizeKommoMessages(responseBody);
+}
+
+async function getZernioConversationThread(conversationId, accountId) {
+  if (!conversationId || !accountId) {
+    return [];
+  }
+
+  const params = new URLSearchParams({
+    accountId,
+    limit: "50",
+    sortOrder: "asc"
+  });
+  const responseBody = await zernioRequest(
+    `/inbox/conversations/${encodeURIComponent(conversationId)}/messages?${params.toString()}`,
+    { method: "GET" }
+  );
+
+  return normalizeZernioMessages(responseBody);
+}
+
+async function getConversationThreadForIncoming(incoming) {
+  if (incoming.provider === "zernio") {
+    return getZernioConversationThread(
+      incoming.zernio_conversation_id || incoming.talk_id,
+      incoming.zernio_account_id
+    );
+  }
+
+  return getConversationThread(incoming.talk_id);
 }
 
 async function generateReply({ thread, newMessage, contextWarning, memory }) {
@@ -781,6 +1015,46 @@ async function sendReplyToKommo(talkId, replyText) {
       body: JSON.stringify({ text: replyText.trim() })
     }
   );
+}
+
+async function sendReplyToZernio(messageLike, replyText) {
+  const conversationId =
+    messageLike.zernio_conversation_id ||
+    messageLike.conversation_id ||
+    messageLike.talk_id ||
+    messageLike.current_talk_id;
+  const accountId = messageLike.zernio_account_id || process.env.ZERNIO_ACCOUNT_ID;
+
+  if (!conversationId) {
+    throw new Error("Cannot send Zernio reply without a conversation id.");
+  }
+
+  if (!accountId) {
+    throw new Error("Cannot send Zernio reply without a Zernio account id.");
+  }
+
+  if (!replyText || !replyText.trim()) {
+    throw new Error("Cannot send an empty reply.");
+  }
+
+  return zernioRequest(
+    `/inbox/conversations/${encodeURIComponent(conversationId)}/messages`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        accountId,
+        message: replyText.trim()
+      })
+    }
+  );
+}
+
+async function sendReply(messageLike, replyText) {
+  if (messageLike.provider === "zernio") {
+    return sendReplyToZernio(messageLike, replyText);
+  }
+
+  return sendReplyToKommo(messageLike.talk_id || messageLike.current_talk_id, replyText);
 }
 
 async function generateFollowUpReply(memory) {
@@ -985,10 +1259,13 @@ async function sendDueFollowUp(conversationKey) {
     await writeStore(store);
 
     await saveDraft({
+      provider: memory.provider || "kommo",
       conversation_key: conversationKey,
       talk_id: memory.current_talk_id,
       chat_id: memory.chat_id,
       contact_id: memory.contact_id,
+      zernio_conversation_id: memory.zernio_conversation_id,
+      zernio_account_id: memory.zernio_account_id,
       origin: memory.origin,
       incoming_message_id: `follow-up-${conversationKey}-${memory.follow_up.count + 1}`,
       incoming_text: "Follow-up due",
@@ -1009,10 +1286,13 @@ async function sendDueFollowUp(conversationKey) {
     await writeStore(store);
 
     await saveDraft({
+      provider: memory.provider || "kommo",
       conversation_key: conversationKey,
       talk_id: memory.current_talk_id,
       chat_id: memory.chat_id,
       contact_id: memory.contact_id,
+      zernio_conversation_id: memory.zernio_conversation_id,
+      zernio_account_id: memory.zernio_account_id,
       origin: memory.origin,
       incoming_message_id: `follow-up-review-${conversationKey}-${memory.follow_up.count + 1}`,
       incoming_text: "Follow-up due",
@@ -1031,10 +1311,13 @@ async function sendDueFollowUp(conversationKey) {
     await writeStore(store);
 
     await saveDraft({
+      provider: memory.provider || "kommo",
       conversation_key: conversationKey,
       talk_id: memory.current_talk_id,
       chat_id: memory.chat_id,
       contact_id: memory.contact_id,
+      zernio_conversation_id: memory.zernio_conversation_id,
+      zernio_account_id: memory.zernio_account_id,
       origin: memory.origin,
       incoming_message_id: `follow-up-draft-${conversationKey}-${memory.follow_up.count + 1}`,
       incoming_text: "Follow-up due",
@@ -1048,17 +1331,20 @@ async function sendDueFollowUp(conversationKey) {
   }
 
   try {
-    await sendReplyToKommo(memory.current_talk_id, replyText);
+    await sendReply(memory, replyText);
   } catch (error) {
     memory.follow_up.active = false;
     memory.follow_up.due_at = null;
     await writeStore(store);
 
     await saveDraft({
+      provider: memory.provider || "kommo",
       conversation_key: conversationKey,
       talk_id: memory.current_talk_id,
       chat_id: memory.chat_id,
       contact_id: memory.contact_id,
+      zernio_conversation_id: memory.zernio_conversation_id,
+      zernio_account_id: memory.zernio_account_id,
       origin: memory.origin,
       incoming_message_id: `follow-up-send-${conversationKey}-${memory.follow_up.count + 1}`,
       incoming_text: "Follow-up due",
@@ -1147,9 +1433,9 @@ async function processIncomingMessage(incoming, parsedPayload) {
   let contextWarning = "";
 
   try {
-    thread = await getConversationThread(incoming.talk_id);
+    thread = await getConversationThreadForIncoming(incoming);
   } catch (error) {
-    contextWarning = `Could not pull Kommo thread: ${error.message}`;
+    contextWarning = `Could not pull ${incoming.provider || "kommo"} thread: ${error.message}`;
     console.error(contextWarning);
   }
 
@@ -1168,10 +1454,13 @@ async function processIncomingMessage(incoming, parsedPayload) {
     });
   } catch (error) {
     await saveDraft({
+      provider: incoming.provider || "kommo",
       conversation_key: conversationKey,
       talk_id: incoming.talk_id,
       chat_id: incoming.chat_id,
       contact_id: incoming.contact_id,
+      zernio_conversation_id: incoming.zernio_conversation_id,
+      zernio_account_id: incoming.zernio_account_id,
       incoming_message_id: incoming.incoming_message_id,
       incoming_text: incoming.text,
       origin: incoming.origin,
@@ -1199,17 +1488,20 @@ async function processIncomingMessage(incoming, parsedPayload) {
     Boolean(aiReply.reply);
 
   if (shouldAutoSend) {
-    await sendReplyToKommo(incoming.talk_id, aiReply.reply);
+    await sendReply(incoming, aiReply.reply);
     await recordOutgoingForMemory(incoming, aiReply.reply, { source: "auto" });
     console.log(`Auto-sent reply for talk_id=${incoming.talk_id}.`);
     return;
   }
 
   await saveDraft({
+    provider: incoming.provider || "kommo",
     conversation_key: conversationKey,
     talk_id: incoming.talk_id,
     chat_id: incoming.chat_id,
     contact_id: incoming.contact_id,
+    zernio_conversation_id: incoming.zernio_conversation_id,
+    zernio_account_id: incoming.zernio_account_id,
     incoming_message_id: incoming.incoming_message_id,
     incoming_text: incoming.text,
     origin: incoming.origin,
@@ -1255,6 +1547,56 @@ app.post(
   }
 );
 
+app.post(
+  "/webhook/zernio",
+  express.raw({ type: "*/*", limit: "2mb" }),
+  (req, res) => {
+    const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.from("");
+    const webhookSecret = process.env.ZERNIO_WEBHOOK_SECRET;
+    const signature =
+      req.headers["x-zernio-signature"] ||
+      req.headers["zernio-signature"] ||
+      req.headers["x-signature"];
+    const fallbackSecretOk =
+      process.env.WEBHOOK_SECRET && req.query.secret === process.env.WEBHOOK_SECRET;
+
+    if (webhookSecret) {
+      if (!verifyZernioSignature(rawBody, signature, webhookSecret)) {
+        res.status(403).json({ ok: false, error: "Invalid Zernio webhook signature" });
+        return;
+      }
+    } else if (!fallbackSecretOk) {
+      res.status(500).json({
+        ok: false,
+        error: "ZERNIO_WEBHOOK_SECRET is not configured"
+      });
+      return;
+    }
+
+    const parsedPayload = parseWebhookPayload(rawBody, req.headers["content-type"]);
+    const incoming = extractZernioIncomingMessage(parsedPayload);
+
+    console.log("Zernio webhook content-type:", req.headers["content-type"] || "");
+    console.log("Zernio webhook raw payload:");
+    console.log(rawBody.toString("utf8"));
+    console.log("Zernio webhook parsed payload:");
+    console.log(JSON.stringify(parsedPayload, null, 2));
+    console.log("Zernio webhook extracted message:");
+    console.log(JSON.stringify(incoming, null, 2));
+
+    res.status(202).json({ ok: true });
+
+    if (incoming.event_type && incoming.event_type !== "message.received") {
+      console.log(`Zernio webhook ignored: event_type is ${incoming.event_type}.`);
+      return;
+    }
+
+    processIncomingMessage(incoming, parsedPayload).catch((error) => {
+      console.error("Zernio webhook processing failed:", error);
+    });
+  }
+);
+
 app.use(express.json({ limit: "1mb" }));
 
 app.get("/", (_req, res) => {
@@ -1290,7 +1632,8 @@ app.get("/api/stats", async (_req, res, next) => {
       settings: {
         auto_send: isAutoSendEnabled(),
         conversation_memory_enabled: isConversationMemoryEnabled(),
-        follow_ups_enabled: isFollowUpsEnabled()
+        follow_ups_enabled: isFollowUpsEnabled(),
+        zernio_configured: Boolean(process.env.ZERNIO_API_KEY)
       }
     });
   } catch (error) {
@@ -1311,7 +1654,7 @@ app.post("/api/drafts/:id/approve", async (req, res, next) => {
     const reply = String(req.body.reply || draft.reply || "").trim();
 
     try {
-      await sendReplyToKommo(draft.talk_id, reply);
+      await sendReply(draft, reply);
     } catch (error) {
       await updateDraft(draft.id, {
         reply,
@@ -1627,7 +1970,8 @@ function renderHomePage() {
       [
         ["Auto-send", settings.auto_send],
         ["Memory", settings.conversation_memory_enabled],
-        ["Follow-ups", settings.follow_ups_enabled]
+        ["Follow-ups", settings.follow_ups_enabled],
+        ["Zernio", settings.zernio_configured]
       ].forEach(([label, enabled]) => {
         const flag = document.createElement("span");
         flag.className = "flag";
@@ -1644,6 +1988,7 @@ function renderHomePage() {
       meta.className = "meta";
 
       const fields = [
+        draft.provider ? draft.provider : "kommo",
         draft.talk_id ? "Talk " + draft.talk_id : "Talk unknown",
         draft.origin ? draft.origin : "",
         draft.created_at ? formatDate(draft.created_at) : "",
