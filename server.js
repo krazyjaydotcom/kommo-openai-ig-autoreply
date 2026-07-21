@@ -244,14 +244,19 @@ function manualTakeoverMs() {
   ) * 60 * 1000;
 }
 
-function humanSendDelayBounds() {
+function humanSendDelayBounds(settings) {
+  const normalizedSettings = settings ? normalizeFeatureSettings(settings) : null;
   const minMs = Math.max(
     0,
-    numberEnv("HUMAN_SEND_DELAY_MIN_MS", DEFAULT_HUMAN_SEND_DELAY_MIN_MS)
+    normalizedSettings
+      ? Number(normalizedSettings.human_send_delay_min_ms)
+      : numberEnv("HUMAN_SEND_DELAY_MIN_MS", DEFAULT_HUMAN_SEND_DELAY_MIN_MS)
   );
   const maxMs = Math.max(
     minMs,
-    numberEnv("HUMAN_SEND_DELAY_MAX_MS", DEFAULT_HUMAN_SEND_DELAY_MAX_MS)
+    normalizedSettings
+      ? Number(normalizedSettings.human_send_delay_max_ms)
+      : numberEnv("HUMAN_SEND_DELAY_MAX_MS", DEFAULT_HUMAN_SEND_DELAY_MAX_MS)
   );
 
   return { minMs, maxMs };
@@ -338,6 +343,18 @@ function normalizeProvider(provider) {
 
 function normalizeFeatureSettings(settings) {
   const raw = settings && typeof settings === "object" ? settings : {};
+  const delayMinMs = Math.max(
+    0,
+    Number.isFinite(Number(raw.human_send_delay_min_ms))
+      ? Number(raw.human_send_delay_min_ms)
+      : numberEnv("HUMAN_SEND_DELAY_MIN_MS", DEFAULT_HUMAN_SEND_DELAY_MIN_MS)
+  );
+  const delayMaxMs = Math.max(
+    delayMinMs,
+    Number.isFinite(Number(raw.human_send_delay_max_ms))
+      ? Number(raw.human_send_delay_max_ms)
+      : numberEnv("HUMAN_SEND_DELAY_MAX_MS", DEFAULT_HUMAN_SEND_DELAY_MAX_MS)
+  );
 
   return {
     auto_send: featureEnabled(raw, "auto_send", "AUTO_SEND", false),
@@ -365,7 +382,9 @@ function normalizeFeatureSettings(settings) {
       "conversation_memory",
       "CONVERSATION_MEMORY_ENABLED",
       true
-    )
+    ),
+    human_send_delay_min_ms: delayMinMs,
+    human_send_delay_max_ms: delayMaxMs
   };
 }
 
@@ -478,7 +497,7 @@ function humanSendDelayMs(replyText, settings) {
     return 0;
   }
 
-  const { minMs, maxMs } = humanSendDelayBounds();
+  const { minMs, maxMs } = humanSendDelayBounds(settings);
   const textLength = String(replyText || "").length;
   const readingLikeDelay = Math.min(maxMs, minMs + textLength * 35);
   const upperMs = Math.max(minMs, Math.min(maxMs, readingLikeDelay + 2500));
@@ -2784,7 +2803,7 @@ app.get("/api/stats", async (_req, res, next) => {
     const providerSettings = getProviderSettings(store);
     const featureSettings = getFeatureSettings(store);
     const businessKnowledge = await loadKnowledgeBase();
-    const delayBounds = humanSendDelayBounds();
+    const delayBounds = humanSendDelayBounds(featureSettings);
 
     res.json({
       day,
@@ -2856,6 +2875,35 @@ app.post("/api/features", async (req, res, next) => {
 
     res.json({
       ok: true,
+      features: getFeatureSettings(store)
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/delay", async (req, res, next) => {
+  try {
+    const minMs = Math.round(Number(req.body.min_ms));
+    const maxMs = Math.round(Number(req.body.max_ms));
+
+    if (!Number.isFinite(minMs) || !Number.isFinite(maxMs) || minMs < 0 || maxMs < minMs) {
+      res.status(400).json({
+        ok: false,
+        error: "Delay must be valid milliseconds, and max_ms must be greater than min_ms."
+      });
+      return;
+    }
+
+    const store = await readStore();
+    const featureSettings = getFeatureSettings(store);
+    featureSettings.human_send_delay_min_ms = minMs;
+    featureSettings.human_send_delay_max_ms = maxMs;
+    await writeStore(store);
+
+    res.json({
+      ok: true,
+      delay: humanSendDelayBounds(getFeatureSettings(store)),
       features: getFeatureSettings(store)
     });
   } catch (error) {
@@ -3239,6 +3287,34 @@ function renderHomePage() {
       margin: -6px 0 16px;
     }
 
+    .delay-controls {
+      align-items: center;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: -6px 0 16px;
+      padding: 10px;
+    }
+
+    .delay-controls label {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .delay-controls input {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font: inherit;
+      min-height: 36px;
+      padding: 0 10px;
+      width: 92px;
+    }
+
     .section-title {
       align-items: center;
       display: flex;
@@ -3483,6 +3559,7 @@ function renderHomePage() {
     <section id="flags" class="flags" aria-label="Settings"></section>
     <section id="providers" class="provider-controls" aria-label="Provider controls"></section>
     <section id="features" class="provider-controls" aria-label="Feature controls"></section>
+    <section id="delay-controls" class="delay-controls" aria-label="Send delay controls"></section>
     <section class="section-title">
       <h2>Operator Cockpit</h2>
       <span class="section-note">Pause a lead when you want to handle it yourself.</span>
@@ -3512,6 +3589,7 @@ function renderHomePage() {
   <script>
     const conversationsEl = document.getElementById("conversations");
     const draftsEl = document.getElementById("drafts");
+    const delayControlsEl = document.getElementById("delay-controls");
     const featuresEl = document.getElementById("features");
     const flagsEl = document.getElementById("flags");
     const providersEl = document.getElementById("providers");
@@ -3622,6 +3700,7 @@ function renderHomePage() {
 
       renderProviderControls(settings);
       renderFeatureControls(settings);
+      renderDelayControls(settings);
     }
 
     function renderProviderControls(settings) {
@@ -3698,6 +3777,75 @@ function renderHomePage() {
 
         featuresEl.appendChild(button);
       });
+    }
+
+    function secondsFromMs(value) {
+      return Math.round(Number(value || 0) / 100) / 10;
+    }
+
+    function renderDelayControls(settings) {
+      delayControlsEl.innerHTML = "";
+
+      const minInput = document.createElement("input");
+      minInput.type = "number";
+      minInput.min = "0";
+      minInput.step = "0.5";
+      minInput.value = secondsFromMs(settings.human_send_delay_min_ms || 0);
+      minInput.setAttribute("aria-label", "Minimum delay seconds");
+
+      const maxInput = document.createElement("input");
+      maxInput.type = "number";
+      maxInput.min = "0";
+      maxInput.step = "0.5";
+      maxInput.value = secondsFromMs(settings.human_send_delay_max_ms || 0);
+      maxInput.setAttribute("aria-label", "Maximum delay seconds");
+
+      const label = document.createElement("label");
+      label.textContent = "Send delay seconds";
+
+      const saveButton = document.createElement("button");
+      saveButton.className = "provider-toggle is-on";
+      saveButton.type = "button";
+      saveButton.textContent = "Save";
+
+      const quickButton = document.createElement("button");
+      quickButton.className = "provider-toggle";
+      quickButton.type = "button";
+      quickButton.textContent = "Use 2.5-7s";
+
+      async function saveDelay(minSeconds, maxSeconds) {
+        saveButton.disabled = true;
+        quickButton.disabled = true;
+        setStatus("Saving delay...");
+        try {
+          await api("/api/delay", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              min_ms: Math.round(Number(minSeconds) * 1000),
+              max_ms: Math.round(Number(maxSeconds) * 1000)
+            })
+          });
+          await loadDrafts({ silent: true });
+          setStatus("Delay saved.");
+        } catch (error) {
+          setStatus(error.message);
+          saveButton.disabled = false;
+          quickButton.disabled = false;
+        }
+      }
+
+      saveButton.addEventListener("click", () => {
+        saveDelay(minInput.value, maxInput.value);
+      });
+
+      quickButton.addEventListener("click", () => {
+        minInput.value = "2.5";
+        maxInput.value = "7";
+        saveDelay(2.5, 7);
+      });
+
+      delayControlsEl.append(label, minInput, maxInput, saveButton, quickButton);
     }
 
     function statusLabel(value) {
