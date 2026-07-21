@@ -65,8 +65,29 @@ Return only valid JSON in this exact shape:
 
 Set needs_review to true when the reply should be reviewed before sending.`;
 
+const HUMAN_STYLE_RULES = `Style guidance:
+- Write like a real person sending an Instagram DM.
+- Use casual contractions when they fit.
+- Match the person's energy without copying slang unnaturally.
+- Do not greet them again if the conversation is already started.
+- Avoid canned phrases like "Thank you for reaching out" or "I'd be happy to assist."
+- Keep punctuation relaxed. Do not use an exclamation point in every reply.
+- Never say or imply you are an AI, bot, automation, or typing.`;
+
 function isAutoSendEnabled() {
   return String(process.env.AUTO_SEND || "").toLowerCase() === "true";
+}
+
+function isHumanizeRepliesEnabled() {
+  return String(process.env.HUMANIZE_REPLIES_ENABLED || "true").toLowerCase() === "true";
+}
+
+function isTypingIndicatorEnabled() {
+  return String(process.env.TYPING_INDICATOR_ENABLED || "true").toLowerCase() === "true";
+}
+
+function isHumanSendDelayEnabled() {
+  return String(process.env.HUMAN_SEND_DELAY_ENABLED || "true").toLowerCase() === "true";
 }
 
 function isConversationMemoryEnabled() {
@@ -83,6 +104,19 @@ function requireEnv(name) {
     throw new Error(`Missing required env var: ${name}`);
   }
   return value;
+}
+
+function numberEnv(name, fallback) {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function systemPrompt() {
+  if (!isHumanizeRepliesEnabled()) {
+    return HOUSE_RULES;
+  }
+
+  return `${HOUSE_RULES}\n\n${HUMAN_STYLE_RULES}`;
 }
 
 function normalizeSubdomain(rawSubdomain) {
@@ -197,6 +231,24 @@ function toMessageTimestampMs(createdAt) {
   }
 
   return numeric < 10_000_000_000 ? numeric * 1000 : numeric;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function humanSendDelayMs(replyText) {
+  if (!isHumanSendDelayEnabled()) {
+    return 0;
+  }
+
+  const minMs = Math.max(0, numberEnv("HUMAN_SEND_DELAY_MIN_MS", 2500));
+  const maxMs = Math.max(minMs, numberEnv("HUMAN_SEND_DELAY_MAX_MS", 9000));
+  const textLength = String(replyText || "").length;
+  const readingLikeDelay = Math.min(maxMs, minMs + textLength * 35);
+  const upperMs = Math.max(minMs, Math.min(maxMs, readingLikeDelay + 2500));
+
+  return Math.round(minMs + Math.random() * (upperMs - minMs));
 }
 
 function todayKey(date = new Date()) {
@@ -997,7 +1049,7 @@ async function generateReply({ thread, newMessage, contextWarning, memory }) {
       temperature: 0.4,
       response_format: { type: "json_object" },
       messages: [
-        { role: "system", content: HOUSE_RULES },
+        { role: "system", content: systemPrompt() },
         {
           role: "user",
           content:
@@ -1069,6 +1121,8 @@ async function sendReplyToZernio(messageLike, replyText) {
     throw new Error("Cannot send an empty reply.");
   }
 
+  await prepareZernioSend(messageLike, replyText);
+
   return zernioRequest(
     `/inbox/conversations/${encodeURIComponent(conversationId)}/messages`,
     {
@@ -1079,6 +1133,45 @@ async function sendReplyToZernio(messageLike, replyText) {
       })
     }
   );
+}
+
+async function sendZernioTypingIndicator(messageLike) {
+  if (!isTypingIndicatorEnabled()) {
+    return;
+  }
+
+  const conversationId =
+    messageLike.zernio_conversation_id ||
+    messageLike.conversation_id ||
+    messageLike.talk_id ||
+    messageLike.current_talk_id;
+  const accountId = messageLike.zernio_account_id || process.env.ZERNIO_ACCOUNT_ID;
+
+  if (!conversationId || !accountId) {
+    return;
+  }
+
+  try {
+    await zernioRequest(
+      `/inbox/conversations/${encodeURIComponent(conversationId)}/typing`,
+      {
+        method: "POST",
+        body: JSON.stringify({ accountId })
+      }
+    );
+  } catch (error) {
+    console.warn(`Zernio typing indicator failed: ${error.message}`);
+  }
+}
+
+async function prepareZernioSend(messageLike, replyText) {
+  await sendZernioTypingIndicator(messageLike);
+
+  const delayMs = humanSendDelayMs(replyText);
+
+  if (delayMs > 0) {
+    await sleep(delayMs);
+  }
 }
 
 async function sendReply(messageLike, replyText) {
@@ -1108,7 +1201,7 @@ async function generateFollowUpReply(memory) {
       temperature: 0.35,
       response_format: { type: "json_object" },
       messages: [
-        { role: "system", content: HOUSE_RULES },
+        { role: "system", content: systemPrompt() },
         {
           role: "user",
           content:
@@ -1682,6 +1775,9 @@ app.get("/api/stats", async (_req, res, next) => {
       },
       settings: {
         auto_send: isAutoSendEnabled(),
+        humanize_replies_enabled: isHumanizeRepliesEnabled(),
+        typing_indicator_enabled: isTypingIndicatorEnabled(),
+        human_send_delay_enabled: isHumanSendDelayEnabled(),
         conversation_memory_enabled: isConversationMemoryEnabled(),
         follow_ups_enabled: isFollowUpsEnabled(),
         zernio_configured: Boolean(process.env.ZERNIO_API_KEY),
@@ -2103,6 +2199,9 @@ function renderHomePage() {
       flagsEl.innerHTML = "";
       [
         ["Auto-send", settings.auto_send],
+        ["Humanize", settings.humanize_replies_enabled],
+        ["Typing", settings.typing_indicator_enabled],
+        ["Delay", settings.human_send_delay_enabled],
         ["Memory", settings.conversation_memory_enabled],
         ["Follow-ups", settings.follow_ups_enabled],
         ["Zernio key", settings.zernio_configured]

@@ -26,6 +26,11 @@ ZERNIO_ACCOUNT_ID=your-zernio-account-id
 ZERNIO_WEBHOOK_SECRET=choose-a-long-random-zernio-secret
 WEBHOOK_SECRET=choose-a-long-random-secret
 AUTO_SEND=false
+HUMANIZE_REPLIES_ENABLED=true
+TYPING_INDICATOR_ENABLED=true
+HUMAN_SEND_DELAY_ENABLED=true
+HUMAN_SEND_DELAY_MIN_MS=2500
+HUMAN_SEND_DELAY_MAX_MS=9000
 CONVERSATION_MEMORY_ENABLED=true
 FOLLOW_UPS_ENABLED=false
 PORT=3000
@@ -40,6 +45,10 @@ Notes:
 - `ZERNIO_WEBHOOK_SECRET` verifies signed Zernio webhooks. If you do not configure it yet, `/webhook/zernio?secret=WEBHOOK_SECRET` can use the simple query-secret fallback.
 - `AUTO_SEND=true` sends replies immediately only when the AI returns `needs_review: false`.
 - `AUTO_SEND=false` saves every generated reply as a pending draft.
+- `HUMANIZE_REPLIES_ENABLED=true` adds relaxed Instagram DM style guidance to the AI prompt.
+- `TYPING_INDICATOR_ENABLED=true` asks Zernio to show typing before sending when the provider supports it.
+- `HUMAN_SEND_DELAY_ENABLED=true` adds a short randomized delay before Zernio sends.
+- `HUMAN_SEND_DELAY_MIN_MS` and `HUMAN_SEND_DELAY_MAX_MS` control that delay window.
 - `CONVERSATION_MEMORY_ENABLED=true` stores lightweight per-prospect memory in the local JSON file.
 - `FOLLOW_UPS_ENABLED=false` keeps follow-up nudges disabled. Set it to `true` only after testing.
 - Kommo sending/history requires the Kommo Chats API scopes. If those are not available on your Kommo account, use Zernio for inbox send/receive instead.
@@ -60,6 +69,11 @@ $env:ZERNIO_ACCOUNT_ID="your-zernio-account-id"
 $env:ZERNIO_WEBHOOK_SECRET="choose-a-long-random-zernio-secret"
 $env:WEBHOOK_SECRET="choose-a-long-random-secret"
 $env:AUTO_SEND="false"
+$env:HUMANIZE_REPLIES_ENABLED="true"
+$env:TYPING_INDICATOR_ENABLED="true"
+$env:HUMAN_SEND_DELAY_ENABLED="true"
+$env:HUMAN_SEND_DELAY_MIN_MS="2500"
+$env:HUMAN_SEND_DELAY_MAX_MS="9000"
 $env:CONVERSATION_MEMORY_ENABLED="true"
 $env:FOLLOW_UPS_ENABLED="false"
 $env:PORT="3000"
@@ -186,6 +200,18 @@ Scheduled follow-ups for that provider are skipped
 ```
 
 This is useful while moving from Kommo to Zernio. Leave Zernio on and turn Kommo off once your Zernio webhook is working.
+
+## Human Feel
+
+The app has three small options to make replies feel less robotic:
+
+```text
+HUMANIZE_REPLIES_ENABLED=true
+TYPING_INDICATOR_ENABLED=true
+HUMAN_SEND_DELAY_ENABLED=true
+```
+
+Humanized replies add casual Instagram DM style guidance to the AI prompt. Zernio typing indicators are sent before Zernio replies when the connected platform supports them. The send delay adds a short randomized pause before Zernio sends, which keeps automated replies from landing instantly.
 
 ## Follow-Ups
 
