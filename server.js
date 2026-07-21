@@ -238,11 +238,16 @@ function numberEnv(name, fallback) {
   return Number.isFinite(value) ? value : fallback;
 }
 
-function manualTakeoverMs() {
-  return Math.max(
-    0,
-    numberEnv("MANUAL_TAKEOVER_MINUTES", DEFAULT_MANUAL_TAKEOVER_MINUTES)
-  ) * 60 * 1000;
+function manualTakeoverMinutes(settings) {
+  const value = settings && Number.isFinite(Number(settings.manual_takeover_minutes))
+    ? Number(settings.manual_takeover_minutes)
+    : numberEnv("MANUAL_TAKEOVER_MINUTES", DEFAULT_MANUAL_TAKEOVER_MINUTES);
+
+  return Math.max(0, value);
+}
+
+function manualTakeoverMs(settings) {
+  return manualTakeoverMinutes(settings) * 60 * 1000;
 }
 
 function humanSendDelayBounds(settings) {
@@ -356,6 +361,12 @@ function normalizeFeatureSettings(settings) {
       ? Number(raw.human_send_delay_max_ms)
       : numberEnv("HUMAN_SEND_DELAY_MAX_MS", DEFAULT_HUMAN_SEND_DELAY_MAX_MS)
   );
+  const manualMinutes = Math.max(
+    0,
+    Number.isFinite(Number(raw.manual_takeover_minutes))
+      ? Number(raw.manual_takeover_minutes)
+      : numberEnv("MANUAL_TAKEOVER_MINUTES", DEFAULT_MANUAL_TAKEOVER_MINUTES)
+  );
 
   return {
     auto_send: featureEnabled(raw, "auto_send", "AUTO_SEND", false),
@@ -385,7 +396,8 @@ function normalizeFeatureSettings(settings) {
       true
     ),
     human_send_delay_min_ms: delayMinMs,
-    human_send_delay_max_ms: delayMaxMs
+    human_send_delay_max_ms: delayMaxMs,
+    manual_takeover_minutes: manualMinutes
   };
 }
 
@@ -2268,7 +2280,8 @@ async function processManualOutgoingMessage(outgoing) {
 
   const sentAtMs = toMessageTimestampMs(outgoing.created_at);
   const sentAt = new Date(sentAtMs).toISOString();
-  const takeoverUntil = new Date(Date.now() + manualTakeoverMs()).toISOString();
+  const featureSettings = getFeatureSettings(store);
+  const takeoverUntil = new Date(Date.now() + manualTakeoverMs(featureSettings)).toISOString();
   const settings = getConversationSettings(store, outgoing.talk_id);
 
   cancelFollowUp(memory);
@@ -2863,10 +2876,7 @@ app.get("/api/stats", async (_req, res, next) => {
         follow_ups_enabled: isFollowUpsEnabled(featureSettings),
         zernio_configured: Boolean(process.env.ZERNIO_API_KEY),
         knowledge_base_configured: Boolean(businessKnowledge),
-        manual_takeover_minutes: numberEnv(
-          "MANUAL_TAKEOVER_MINUTES",
-          DEFAULT_MANUAL_TAKEOVER_MINUTES
-        ),
+        manual_takeover_minutes: manualTakeoverMinutes(featureSettings),
         human_send_delay_min_ms: delayBounds.minMs,
         human_send_delay_max_ms: delayBounds.maxMs,
         follow_up_offsets_minutes: FOLLOW_UP_OFFSETS_MS.map((offsetMs) =>
@@ -2948,6 +2958,33 @@ app.post("/api/delay", async (req, res, next) => {
     res.json({
       ok: true,
       delay: humanSendDelayBounds(getFeatureSettings(store)),
+      features: getFeatureSettings(store)
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/manual-takeover", async (req, res, next) => {
+  try {
+    const minutes = Number(req.body.minutes);
+
+    if (!Number.isFinite(minutes) || minutes < 0) {
+      res.status(400).json({
+        ok: false,
+        error: "minutes must be a positive number or 0."
+      });
+      return;
+    }
+
+    const store = await readStore();
+    const featureSettings = getFeatureSettings(store);
+    featureSettings.manual_takeover_minutes = minutes;
+    await writeStore(store);
+
+    res.json({
+      ok: true,
+      manual_takeover_minutes: manualTakeoverMinutes(getFeatureSettings(store)),
       features: getFeatureSettings(store)
     });
   } catch (error) {
