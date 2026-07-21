@@ -8,10 +8,12 @@ const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const DATA_DIR = path.join(__dirname, "data");
 const DATA_FILE = path.join(DATA_DIR, "store.json");
+const KNOWLEDGE_FILE = path.join(__dirname, "knowledge", "pallet-pros.md");
 const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
 const ZERNIO_BASE_URL = "https://zernio.com/api/v1";
 const YOUTUBE_URL = "https://youtube.com/@palletprosacademy";
 const BOOKING_URL = "https://www.tidycal.com/palletprosga/discovery";
+const MAX_KNOWLEDGE_CHARS = 12_000;
 const MAX_RECENT_MEMORY_MESSAGES = 20;
 const MAX_PROCESSED_MESSAGE_IDS = 100;
 const FOLLOW_UP_OFFSETS_MS = [
@@ -83,6 +85,12 @@ const CONTEXT_RULES = `Context rules:
 - Do not repeat a greeting, link, or qualifying question that already happened unless the newest message clearly asks for it.
 - If the history is missing, contradictory, or too thin to answer confidently, set needs_review true.`;
 
+const KNOWLEDGE_RULES = `Business knowledge rules:
+- Use business_knowledge for Pallet Pros and Pallet Pros Academy facts, offer details, tone, objections, and FAQs.
+- Do not mention that you have a knowledge base.
+- Do not invent prices, guarantees, timelines, legal claims, income claims, or program details that are not in business_knowledge.
+- If the prospect asks for a specific detail that is missing from business_knowledge, either ask one simple clarifying question or set needs_review true.`;
+
 function envFlag(name, fallback) {
   const raw = process.env[name];
 
@@ -153,13 +161,37 @@ function requireEnv(name) {
   return value;
 }
 
+async function loadKnowledgeBase() {
+  const envKnowledge = String(process.env.PALLET_PROS_KNOWLEDGE || "").trim();
+
+  if (envKnowledge) {
+    return envKnowledge.slice(0, MAX_KNOWLEDGE_CHARS);
+  }
+
+  try {
+    const fileKnowledge = await fs.readFile(KNOWLEDGE_FILE, "utf8");
+    return fileKnowledge.trim().slice(0, MAX_KNOWLEDGE_CHARS);
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      return "";
+    }
+
+    throw error;
+  }
+}
+
 function numberEnv(name, fallback) {
   const value = Number(process.env[name]);
   return Number.isFinite(value) ? value : fallback;
 }
 
 function systemPrompt(settings) {
-  return [HOUSE_RULES, CONTEXT_RULES, isHumanizeRepliesEnabled(settings) ? HUMAN_STYLE_RULES : ""]
+  return [
+    HOUSE_RULES,
+    CONTEXT_RULES,
+    KNOWLEDGE_RULES,
+    isHumanizeRepliesEnabled(settings) ? HUMAN_STYLE_RULES : ""
+  ]
     .filter(Boolean)
     .join("\n\n");
 }
@@ -1229,13 +1261,16 @@ async function generateReply({
   featureSettings
 }) {
   const promptMemory = memoryForPrompt(memory, featureSettings);
+  const businessKnowledge = await loadKnowledgeBase();
   const payload = {
     conversation_history: thread.slice(-30),
     conversation_memory: promptMemory,
+    business_knowledge: businessKnowledge || null,
     context_status: {
       provider: newMessage.provider || "kommo",
       history_messages_loaded: thread.length,
-      memory_messages_loaded: promptMemory?.recent_messages?.length || 0
+      memory_messages_loaded: promptMemory?.recent_messages?.length || 0,
+      business_knowledge_loaded: Boolean(businessKnowledge)
     },
     new_message: newMessage.text,
     context_warning: contextWarning || null
@@ -1258,6 +1293,7 @@ async function generateReply({
           content:
             "Use this JSON conversation data to write the next Instagram DM reply. Return JSON only.\n" +
             "Use conversation_history and conversation_memory to understand where the conversation is and avoid repeating links or qualifying questions.\n" +
+            "Use business_knowledge for Pallet Pros facts and voice, but do not invent missing details.\n" +
             JSON.stringify(payload, null, 2)
         }
       ]
@@ -1387,10 +1423,12 @@ async function sendReply(messageLike, replyText, featureSettings) {
 
 async function generateFollowUpReply(memory, featureSettings) {
   const followUpNumber = Number(memory.follow_up?.count || 0) + 1;
+  const businessKnowledge = await loadKnowledgeBase();
   const payload = {
     follow_up_number: followUpNumber,
     original_question: memory.follow_up?.question_text || "",
-    conversation_memory: memoryForPrompt(memory, featureSettings)
+    conversation_memory: memoryForPrompt(memory, featureSettings),
+    business_knowledge: businessKnowledge || null
   };
 
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -1410,7 +1448,7 @@ async function generateFollowUpReply(memory, featureSettings) {
           content:
             "The prospect has not answered after the assistant asked a question. " +
             "Write a gentle, short follow-up nudge for Instagram. Do not sound pushy. " +
-            "Do not ask more than one question. Return JSON only.\n" +
+            "Do not ask more than one question. Use business_knowledge for Pallet Pros voice. Return JSON only.\n" +
             JSON.stringify(payload, null, 2)
         }
       ]
@@ -2038,6 +2076,7 @@ app.get("/api/stats", async (_req, res, next) => {
     const stats = getDailyStats(store, day);
     const providerSettings = getProviderSettings(store);
     const featureSettings = getFeatureSettings(store);
+    const businessKnowledge = await loadKnowledgeBase();
     const { prospect_keys: _prospectKeys, ...publicStats } = stats;
 
     res.json({
@@ -2054,6 +2093,7 @@ app.get("/api/stats", async (_req, res, next) => {
         conversation_memory_enabled: isConversationMemoryEnabled(featureSettings),
         follow_ups_enabled: isFollowUpsEnabled(featureSettings),
         zernio_configured: Boolean(process.env.ZERNIO_API_KEY),
+        knowledge_base_configured: Boolean(businessKnowledge),
         feature_settings: featureSettings,
         provider_settings: providerSettings
       }
@@ -2523,7 +2563,8 @@ function renderHomePage() {
         ["Delay", settings.human_send_delay_enabled],
         ["Memory", settings.conversation_memory_enabled],
         ["Follow-ups", settings.follow_ups_enabled],
-        ["Zernio key", settings.zernio_configured]
+        ["Zernio key", settings.zernio_configured],
+        ["Knowledge", settings.knowledge_base_configured]
       ].forEach(([label, enabled]) => {
         const flag = document.createElement("span");
         flag.className = "flag";

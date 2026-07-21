@@ -33,6 +33,7 @@ HUMAN_SEND_DELAY_MIN_MS=2500
 HUMAN_SEND_DELAY_MAX_MS=9000
 CONVERSATION_MEMORY_ENABLED=true
 FOLLOW_UPS_ENABLED=false
+PALLET_PROS_KNOWLEDGE=
 PORT=3000
 ```
 
@@ -52,6 +53,7 @@ Notes:
 - `HUMAN_SEND_DELAY_MIN_MS` and `HUMAN_SEND_DELAY_MAX_MS` control that delay window.
 - `CONVERSATION_MEMORY_ENABLED=true` stores lightweight per-prospect memory in the local JSON file.
 - `FOLLOW_UPS_ENABLED=false` keeps follow-up nudges disabled. Set it to `true` only after testing.
+- `PALLET_PROS_KNOWLEDGE` is optional. If set, it overrides `knowledge/pallet-pros.md` and gets included in the AI prompt as private business context.
 - Kommo sending/history requires the Kommo Chats API scopes. If those are not available on your Kommo account, use Zernio for inbox send/receive instead.
 - The OpenAI API key must have active API billing/credits. ChatGPT Plus/Pro billing is separate from API billing.
 
@@ -77,6 +79,7 @@ $env:HUMAN_SEND_DELAY_MIN_MS="2500"
 $env:HUMAN_SEND_DELAY_MAX_MS="9000"
 $env:CONVERSATION_MEMORY_ENABLED="true"
 $env:FOLLOW_UPS_ENABLED="false"
+$env:PALLET_PROS_KNOWLEDGE=""
 $env:PORT="3000"
 
 npm start
@@ -230,6 +233,26 @@ HUMAN_SEND_DELAY_ENABLED=true
 Humanized replies add casual Instagram DM style guidance to the AI prompt. Zernio typing indicators are sent before Zernio replies when the connected platform supports them. The send delay adds a short randomized pause before Zernio sends, which keeps automated replies from landing instantly.
 
 The app also has a simple post-booking guard. When someone says they booked or scheduled the call, it acknowledges naturally instead of asking another qualifying question.
+
+## Knowledge Base
+
+The app includes a simple business knowledge base at:
+
+```text
+knowledge/pallet-pros.md
+```
+
+That file is added to the OpenAI prompt as `business_knowledge` for replies and follow-ups. It is meant for Pallet Pros facts, offer details, FAQs, objections, tone examples, boundaries, and words/phrases to avoid.
+
+For DigitalOcean, the most durable no-database option is:
+
+```text
+PALLET_PROS_KNOWLEDGE=your longer business context
+```
+
+If `PALLET_PROS_KNOWLEDGE` is set, it overrides the repo file. If it is empty, the app uses `knowledge/pallet-pros.md`.
+
+Keep sensitive/private information out of the knowledge base because it can be sent to OpenAI as prompt context.
 
 ## Follow-Ups
 
