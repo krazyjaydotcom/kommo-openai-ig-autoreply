@@ -444,6 +444,24 @@ async function removeDraft(id) {
   return draft;
 }
 
+async function updateDraft(id, updates) {
+  const store = await readStore();
+  const index = store.drafts.findIndex((item) => item.id === id);
+
+  if (index < 0) {
+    return null;
+  }
+
+  store.drafts[index] = {
+    ...store.drafts[index],
+    ...updates,
+    updated_at: new Date().toISOString()
+  };
+
+  await writeStore(store);
+  return store.drafts[index];
+}
+
 function safeJsonParse(raw) {
   try {
     return JSON.parse(raw);
@@ -1291,7 +1309,19 @@ app.post("/api/drafts/:id/approve", async (req, res, next) => {
     }
 
     const reply = String(req.body.reply || draft.reply || "").trim();
-    await sendReplyToKommo(draft.talk_id, reply);
+
+    try {
+      await sendReplyToKommo(draft.talk_id, reply);
+    } catch (error) {
+      await updateDraft(draft.id, {
+        reply,
+        needs_review: true,
+        reason: `Send failed: ${error.message}`
+      });
+      res.status(502).json({ ok: false, error: error.message });
+      return;
+    }
+
     await recordOutgoingForMemory(draft, reply, { source: "manual_approval" });
     await removeDraft(draft.id);
 
