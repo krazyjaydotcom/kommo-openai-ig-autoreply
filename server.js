@@ -34,6 +34,7 @@ const FOLLOW_UP_CHECK_MS = 60 * 1000;
 const FOLLOW_UP_WINDOW_MS = 23 * 60 * 60 * 1000;
 const DEFAULT_STORE = {
   drafts: [],
+  feedback: [],
   conversationSettings: {},
   providerSettings: {
     kommo: { enabled: true },
@@ -297,6 +298,7 @@ function normalizeStore(store) {
 
   return {
     drafts: Array.isArray(parsed.drafts) ? parsed.drafts : [],
+    feedback: Array.isArray(parsed.feedback) ? parsed.feedback : [],
     conversationSettings:
       parsed.conversationSettings && typeof parsed.conversationSettings === "object"
         ? parsed.conversationSettings
@@ -514,6 +516,7 @@ function getConversationMemory(store, messageLike) {
       training_link_sent: false,
       booking_link_sent: false,
       booking_confirmed: false,
+      lead_status: "cold",
       ai_paused: false,
       manual_takeover_until: null,
       manual_takeover_since: null,
@@ -560,6 +563,7 @@ function getConversationMemory(store, messageLike) {
   memory.follow_up.due_at = memory.follow_up.due_at || null;
   memory.follow_up.last_sent_at = memory.follow_up.last_sent_at || null;
   memory.booking_confirmed = Boolean(memory.booking_confirmed);
+  memory.lead_status = classifyLeadStatus(memory);
   memory.manual_takeover_until = memory.manual_takeover_until || null;
   memory.manual_takeover_since = memory.manual_takeover_since || null;
   memory.pending_app_outgoing = Array.isArray(memory.pending_app_outgoing)
@@ -634,6 +638,11 @@ function buildConversationSummary(memory) {
   }
 
   const state = [];
+  const leadStatus = classifyLeadStatus(memory);
+
+  if (leadStatus) {
+    state.push(`lead status: ${leadStatus}`);
+  }
 
   if (Array.isArray(memory.questions_asked) && memory.questions_asked.length) {
     state.push(
@@ -668,8 +677,55 @@ function buildConversationSummary(memory) {
   return parts.join("\n").slice(0, MAX_MEMORY_SUMMARY_CHARS);
 }
 
+function recentConversationText(memory, messageCount = 10) {
+  return (Array.isArray(memory?.last_messages) ? memory.last_messages : [])
+    .slice(-messageCount)
+    .map((message) => message.text || "")
+    .join(" ")
+    .toLowerCase();
+}
+
+function classifyLeadStatus(memory) {
+  const recentText = recentConversationText(memory);
+
+  if (memory?.booking_confirmed || /\b(booked|scheduled|got on the calendar|locked in)\b/.test(recentText)) {
+    return "booked";
+  }
+
+  if (/\b(incarcerated|in jail|prison|dispatch|find loads|freight|no money|no capital)\b/.test(recentText)) {
+    return "not_fit";
+  }
+
+  if (
+    memory?.booking_link_sent ||
+    /\b(ready to invest|ready to start|ready to go|book a call|hop on a call|discovery call|own a truck|have a truck|own a trailer|have a trailer|own a business)\b/.test(
+      recentText
+    )
+  ) {
+    return "hot";
+  }
+
+  if (
+    (Array.isArray(memory?.questions_asked) && memory.questions_asked.length >= 2) ||
+    /\b(timeline|holding me back|start soon|need help|want to start|trying to start)\b/.test(recentText)
+  ) {
+    return "qualified";
+  }
+
+  if (
+    memory?.youtube_link_sent ||
+    memory?.training_link_sent ||
+    /\b(just curious|just looking|more info|free training|youtube|content)\b/.test(recentText)
+  ) {
+    return "curious";
+  }
+
+  return "cold";
+}
+
 function refreshMemorySummary(memory) {
   if (memory) {
+    memory.lead_status = classifyLeadStatus(memory);
     memory.summary = buildConversationSummary(memory);
   }
 }
@@ -869,6 +925,7 @@ function memoryForPrompt(memory, settings) {
   return {
     key: memory.key,
     summary: memory.summary,
+    lead_status: memory.lead_status || classifyLeadStatus(memory),
     stored_message_count: memory.last_messages.length,
     recent_messages: memory.last_messages.slice(-MAX_PROMPT_MEMORY_MESSAGES),
     questions_asked: memory.questions_asked,
@@ -935,6 +992,89 @@ async function updateDraft(id, updates) {
 
   await writeStore(store);
   return store.drafts[index];
+}
+
+function publicConversation(memory, settings = {}) {
+  refreshMemorySummary(memory);
+  const messages = Array.isArray(memory.last_messages) ? memory.last_messages : [];
+  const lastMessage = messages[messages.length - 1] || null;
+
+  return {
+    key: memory.key,
+    provider: memory.provider || "kommo",
+    contact_id: memory.contact_id || "",
+    talk_id: memory.current_talk_id || "",
+    origin: memory.origin || "",
+    lead_status: memory.lead_status || classifyLeadStatus(memory),
+    summary: memory.summary || "",
+    last_message: lastMessage,
+    last_incoming_at: memory.last_incoming_at || "",
+    last_outgoing_at: memory.last_outgoing_at || "",
+    last_outgoing_source: memory.last_outgoing_source || "",
+    ai_paused: Boolean(settings.paused || memory.ai_paused),
+    manual_takeover_active: isManualTakeoverActive(settings) || isManualTakeoverActive(memory),
+    manual_takeover_until:
+      settings.manual_takeover_until || memory.manual_takeover_until || null,
+    booking_link_sent: Boolean(memory.booking_link_sent),
+    training_link_sent: Boolean(memory.training_link_sent),
+    booking_confirmed: Boolean(memory.booking_confirmed),
+    follow_up: memory.follow_up || {}
+  };
+}
+
+function parseTranscriptForTest(transcript) {
+  return String(transcript || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line, index) => {
+      const match = line.match(/^(prospect|lead|customer|user|you|me|assistant|ai|bot)\s*:\s*(.+)$/i);
+      const label = match ? match[1].toLowerCase() : "";
+      const text = match ? match[2] : line;
+      const role = ["you", "me", "assistant", "ai", "bot"].includes(label)
+        ? "assistant"
+        : "user";
+
+      return {
+        id: `test-${index + 1}`,
+        role,
+        text,
+        created_at: new Date().toISOString()
+      };
+    });
+}
+
+function testMemoryFromThread(thread) {
+  const memory = {
+    key: "test-mode",
+    provider: "test",
+    summary: "",
+    last_messages: thread.map((message) => ({
+      role: message.role,
+      text: message.text,
+      at: message.created_at,
+      id: message.id,
+      source: message.role === "assistant" ? "manual" : ""
+    })),
+    questions_asked: [],
+    youtube_link_sent: false,
+    training_link_sent: false,
+    booking_link_sent: false,
+    booking_confirmed: false,
+    lead_status: "cold",
+    follow_up: { active: false, count: 0 }
+  };
+
+  updateLinkMemory(memory, memory.last_messages.map((message) => message.text).join("\n"));
+  memory.booking_confirmed = isBookingConfirmation(
+    memory.last_messages
+      .filter((message) => message.role === "user")
+      .map((message) => message.text)
+      .join("\n")
+  );
+  refreshMemorySummary(memory);
+
+  return memory;
 }
 
 function safeJsonParse(raw) {
@@ -2636,6 +2776,146 @@ app.post("/api/drafts/:id/reject", async (req, res, next) => {
   }
 });
 
+app.get("/api/conversations", async (_req, res, next) => {
+  try {
+    const store = await readStore();
+    const conversations = Object.values(store.conversations)
+      .map((memory) =>
+        publicConversation(
+          memory,
+          getConversationSettings(store, memory.current_talk_id)
+        )
+      )
+      .sort((a, b) => {
+        const left = Date.parse(b.last_incoming_at || b.last_outgoing_at || 0);
+        const right = Date.parse(a.last_incoming_at || a.last_outgoing_at || 0);
+        return left - right;
+      });
+
+    await writeStore(store);
+    res.json({ conversations });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/conversations/:key/pause", async (req, res, next) => {
+  try {
+    const store = await readStore();
+    const memory = store.conversations[req.params.key];
+
+    if (!memory) {
+      res.status(404).json({ ok: false, error: "Conversation not found" });
+      return;
+    }
+
+    const settings = getConversationSettings(store, memory.current_talk_id);
+    settings.paused = true;
+    settings.manual_takeover_reason = "Paused from dashboard.";
+    memory.ai_paused = true;
+    refreshMemorySummary(memory);
+
+    await writeStore(store);
+    res.json({ ok: true, conversation: publicConversation(memory, settings) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/conversations/:key/resume", async (req, res, next) => {
+  try {
+    const store = await readStore();
+    const memory = store.conversations[req.params.key];
+
+    if (!memory) {
+      res.status(404).json({ ok: false, error: "Conversation not found" });
+      return;
+    }
+
+    const settings = getConversationSettings(store, memory.current_talk_id);
+    settings.paused = false;
+    settings.manual_takeover_until = null;
+    settings.manual_takeover_since = null;
+    settings.manual_takeover_reason = "";
+    memory.ai_paused = false;
+    memory.manual_takeover_until = null;
+    memory.manual_takeover_since = null;
+    refreshMemorySummary(memory);
+
+    await writeStore(store);
+    res.json({ ok: true, conversation: publicConversation(memory, settings) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/feedback", async (req, res, next) => {
+  try {
+    const type = String(req.body.type || "").trim().slice(0, 40);
+    const note = String(req.body.note || "").trim().slice(0, 500);
+
+    if (!type) {
+      res.status(400).json({ ok: false, error: "Feedback type is required." });
+      return;
+    }
+
+    const store = await readStore();
+    store.feedback.push({
+      id: crypto.randomUUID(),
+      type,
+      note,
+      conversation_key: String(req.body.conversation_key || ""),
+      draft_id: String(req.body.draft_id || ""),
+      reply: String(req.body.reply || "").slice(0, 2000),
+      incoming_text: String(req.body.incoming_text || "").slice(0, 2000),
+      created_at: new Date().toISOString()
+    });
+    store.feedback = store.feedback.slice(-500);
+
+    await writeStore(store);
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/test-reply", async (req, res, next) => {
+  try {
+    const transcript = String(req.body.transcript || "").trim();
+    const newText = String(req.body.new_message || "").trim();
+
+    if (!transcript && !newText) {
+      res.status(400).json({ ok: false, error: "Add a transcript or a new message." });
+      return;
+    }
+
+    const featureSettings = getFeatureSettings(await readStore());
+    const thread = parseTranscriptForTest(transcript);
+    const newMessage = {
+      provider: "test",
+      text: newText || thread[thread.length - 1]?.text || "",
+      origin: "instagram_business"
+    };
+    const memory = testMemoryFromThread(thread);
+    const aiReply = await generateReply({
+      thread,
+      newMessage,
+      contextWarning: "",
+      memory,
+      featureSettings
+    });
+
+    res.json({
+      ok: true,
+      lead_status: memory.lead_status,
+      reply: aiReply.reply,
+      needs_review: aiReply.needs_review
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.use((error, _req, res, _next) => {
   console.error(error);
   res.status(500).json({ ok: false, error: error.message });
@@ -2748,6 +3028,23 @@ function renderHomePage() {
       margin: -6px 0 16px;
     }
 
+    .section-title {
+      align-items: center;
+      display: flex;
+      justify-content: space-between;
+      margin: 24px 0 10px;
+    }
+
+    .section-title h2 {
+      font-size: 18px;
+      margin: 0;
+    }
+
+    .section-note {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
     .provider-toggle {
       background: var(--panel);
       border: 1px solid var(--border);
@@ -2774,11 +3071,70 @@ function renderHomePage() {
       gap: 14px;
     }
 
-    .draft {
+    .draft,
+    .conversation,
+    .test-panel {
       background: var(--panel);
       border: 1px solid var(--border);
       border-radius: 8px;
       padding: 16px;
+    }
+
+    .conversation-list {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .conversation {
+      display: grid;
+      gap: 10px;
+    }
+
+    .pill {
+      background: #eef1f6;
+      border-radius: 999px;
+      color: #40516d;
+      display: inline-flex;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 3px 8px;
+      text-transform: uppercase;
+    }
+
+    .pill.hot { background: #fff0d8; color: #7a4b00; }
+    .pill.booked { background: #e9f7ef; color: #0c6246; }
+    .pill.not_fit { background: #fff1f1; color: #8f2424; }
+    .pill.qualified { background: #eaf0ff; color: #254aa5; }
+
+    .summary,
+    .test-result {
+      color: #364154;
+      font-size: 13px;
+      white-space: pre-wrap;
+    }
+
+    .feedback-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .feedback,
+    .secondary {
+      background: #40516d;
+      min-height: 34px;
+      padding: 0 12px;
+    }
+
+    .pause { background: #75520f; }
+    .resume { background: #13795b; }
+
+    .test-grid {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: 1fr 1fr;
     }
 
     .meta {
@@ -2868,6 +3224,11 @@ function renderHomePage() {
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
 
+      .conversation-list,
+      .test-grid {
+        grid-template-columns: 1fr;
+      }
+
       .actions {
         display: grid;
         grid-template-columns: 1fr 1fr;
@@ -2885,16 +3246,44 @@ function renderHomePage() {
     <section id="flags" class="flags" aria-label="Settings"></section>
     <section id="providers" class="provider-controls" aria-label="Provider controls"></section>
     <section id="features" class="provider-controls" aria-label="Feature controls"></section>
+    <section class="section-title">
+      <h2>Operator Cockpit</h2>
+      <span class="section-note">Pause a lead when you want to handle it yourself.</span>
+    </section>
+    <section id="conversations" class="conversation-list"></section>
+    <section class="section-title">
+      <h2>Test Reply</h2>
+      <span class="section-note">Preview the AI before sending anything.</span>
+    </section>
+    <section class="test-panel">
+      <div class="test-grid">
+        <textarea id="test-transcript" aria-label="Test transcript" placeholder="Prospect: I booked the call&#10;You: Perfect"></textarea>
+        <textarea id="test-new-message" aria-label="Newest test message" placeholder="Newest prospect message"></textarea>
+      </div>
+      <div class="actions">
+        <button id="test-button" class="secondary" type="button">Preview Reply</button>
+      </div>
+      <div id="test-result" class="test-result"></div>
+    </section>
+    <section class="section-title">
+      <h2>Pending Drafts</h2>
+      <span class="section-note">Edit, send, discard, or tag the draft quality.</span>
+    </section>
     <section id="drafts" class="draft-list"></section>
   </main>
 
   <script>
+    const conversationsEl = document.getElementById("conversations");
     const draftsEl = document.getElementById("drafts");
     const featuresEl = document.getElementById("features");
     const flagsEl = document.getElementById("flags");
     const providersEl = document.getElementById("providers");
     const statsEl = document.getElementById("stats");
     const statusEl = document.getElementById("status");
+    const testButton = document.getElementById("test-button");
+    const testTranscript = document.getElementById("test-transcript");
+    const testNewMessage = document.getElementById("test-new-message");
+    const testResult = document.getElementById("test-result");
 
     function setStatus(message) {
       statusEl.textContent = message || "";
@@ -3068,6 +3457,126 @@ function renderHomePage() {
       });
     }
 
+    function statusLabel(value) {
+      return String(value || "cold").replace("_", " ");
+    }
+
+    async function saveFeedback(payload) {
+      await api("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      setStatus("Feedback saved.");
+    }
+
+    function renderFeedbackButtons(payloadFactory) {
+      const row = document.createElement("div");
+      row.className = "feedback-row";
+
+      [
+        ["good", "Good"],
+        ["robotic", "Robotic"],
+        ["pushy", "Pushy"],
+        ["wrong_context", "Wrong context"]
+      ].forEach(([type, label]) => {
+        const button = document.createElement("button");
+        button.className = "feedback";
+        button.type = "button";
+        button.textContent = label;
+        button.addEventListener("click", async () => {
+          button.disabled = true;
+          try {
+            await saveFeedback({ ...payloadFactory(), type });
+          } catch (error) {
+            setStatus(error.message);
+            button.disabled = false;
+          }
+        });
+        row.appendChild(button);
+      });
+
+      return row;
+    }
+
+    function renderConversation(conversation) {
+      const article = document.createElement("article");
+      article.className = "conversation";
+
+      const meta = document.createElement("div");
+      meta.className = "meta";
+
+      const pill = document.createElement("span");
+      pill.className = "pill " + (conversation.lead_status || "cold");
+      pill.textContent = statusLabel(conversation.lead_status);
+      meta.appendChild(pill);
+
+      [
+        conversation.provider,
+        conversation.talk_id ? "Talk " + conversation.talk_id : "",
+        conversation.origin || "",
+        conversation.ai_paused ? "Paused" : "",
+        conversation.manual_takeover_active ? "Manual hold" : ""
+      ].filter(Boolean).forEach((field) => {
+        const span = document.createElement("span");
+        span.textContent = field;
+        meta.appendChild(span);
+      });
+
+      const summary = document.createElement("div");
+      summary.className = "summary";
+      summary.textContent =
+        conversation.summary ||
+        (conversation.last_message ? conversation.last_message.text : "No memory yet.");
+
+      const actions = document.createElement("div");
+      actions.className = "actions";
+
+      const paused = Boolean(conversation.ai_paused || conversation.manual_takeover_active);
+      const pauseButton = document.createElement("button");
+      pauseButton.className = paused ? "resume" : "pause";
+      pauseButton.type = "button";
+      pauseButton.textContent = paused ? "Resume AI" : "Pause AI";
+      pauseButton.addEventListener("click", async () => {
+        pauseButton.disabled = true;
+        setStatus(paused ? "Resuming conversation..." : "Pausing conversation...");
+        try {
+          await api(
+            "/api/conversations/" +
+              encodeURIComponent(conversation.key) +
+              (paused ? "/resume" : "/pause"),
+            { method: "POST" }
+          );
+          await loadDrafts();
+          setStatus(paused ? "Conversation resumed." : "Conversation paused.");
+        } catch (error) {
+          setStatus(error.message);
+          pauseButton.disabled = false;
+        }
+      });
+
+      actions.appendChild(pauseButton);
+      article.append(meta, summary, actions);
+      return article;
+    }
+
+    function renderConversations(conversations) {
+      conversationsEl.innerHTML = "";
+      const visible = (conversations || []).slice(0, 8);
+
+      if (visible.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "No conversation memory yet.";
+        conversationsEl.appendChild(empty);
+        return;
+      }
+
+      visible.forEach((conversation) => {
+        conversationsEl.appendChild(renderConversation(conversation));
+      });
+    }
+
     function renderDraft(draft) {
       const article = document.createElement("article");
       article.className = "draft";
@@ -3099,6 +3608,13 @@ function renderHomePage() {
 
       const actions = document.createElement("div");
       actions.className = "actions";
+
+      const feedback = renderFeedbackButtons(() => ({
+        conversation_key: draft.conversation_key || "",
+        draft_id: draft.id || "",
+        incoming_text: draft.incoming_text || "",
+        reply: textarea.value || ""
+      }));
 
       const discard = document.createElement("button");
       discard.className = "discard";
@@ -3147,18 +3663,20 @@ function renderHomePage() {
       });
 
       actions.append(discard, send);
-      article.append(meta, incoming, textarea, actions);
+      article.append(meta, incoming, textarea, feedback, actions);
       return article;
     }
 
     async function loadDrafts() {
       setStatus("Loading...");
       try {
-        const [data, statsData] = await Promise.all([
+        const [data, statsData, conversationsData] = await Promise.all([
           api("/api/drafts"),
-          api("/api/stats")
+          api("/api/stats"),
+          api("/api/conversations")
         ]);
         renderStats(statsData);
+        renderConversations(conversationsData.conversations || []);
         draftsEl.innerHTML = "";
 
         if (!data.drafts || data.drafts.length === 0) {
@@ -3176,6 +3694,34 @@ function renderHomePage() {
         setStatus(error.message);
       }
     }
+
+    testButton.addEventListener("click", async () => {
+      testButton.disabled = true;
+      testResult.textContent = "";
+      setStatus("Generating preview...");
+      try {
+        const data = await api("/api/test-reply", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            transcript: testTranscript.value,
+            new_message: testNewMessage.value
+          })
+        });
+        testResult.textContent =
+          "Lead status: " +
+          statusLabel(data.lead_status) +
+          "\\nNeeds review: " +
+          (data.needs_review ? "yes" : "no") +
+          "\\n\\n" +
+          data.reply;
+        setStatus("Preview ready.");
+      } catch (error) {
+        setStatus(error.message);
+      } finally {
+        testButton.disabled = false;
+      }
+    });
 
     loadDrafts();
     setInterval(loadDrafts, 30000);

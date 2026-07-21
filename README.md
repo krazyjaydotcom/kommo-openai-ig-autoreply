@@ -219,6 +219,17 @@ Scheduled follow-ups for that provider are skipped
 
 This is useful while moving from Kommo to Zernio. Leave Zernio on and turn Kommo off once your Zernio webhook is working.
 
+## Operator Cockpit
+
+The homepage also includes a lightweight operator cockpit:
+
+- Recent conversations with a lead status label: `cold`, `curious`, `qualified`, `hot`, `booked`, or `not_fit`.
+- Pause/Resume AI per conversation when you want to take over manually.
+- Draft feedback buttons: `Good`, `Robotic`, `Pushy`, and `Wrong context`.
+- Test Reply mode for pasting a transcript and previewing what OpenAI would say without sending anything.
+
+All of this still uses only `data/store.json`. No database, Redis, auth screen, queue, or second deployable component was added.
+
 ## Feature Controls
 
 The homepage also has on/off controls for:
