@@ -57,6 +57,8 @@ Rules:
 13. Do not change tags, pipeline stage, lead status, or close conversations.
 14. If unsure, do not send yet; draft the reply instead by setting needs_review true.
 15. Keep the focus on helping them take the next best step.
+16. If they say they booked, scheduled, or got on the calendar, acknowledge it naturally and do not ask what it was for.
+17. After someone confirms they booked, do not send the booking link again and do not keep qualifying them.
 
 Return only valid JSON in this exact shape:
 {
@@ -374,6 +376,7 @@ function getConversationMemory(store, messageLike) {
       youtube_link_sent: false,
       training_link_sent: false,
       booking_link_sent: false,
+      booking_confirmed: false,
       ai_paused: false,
       last_incoming_at: null,
       last_outgoing_at: null,
@@ -415,6 +418,7 @@ function getConversationMemory(store, messageLike) {
   memory.follow_up.question_sent_at = memory.follow_up.question_sent_at || null;
   memory.follow_up.due_at = memory.follow_up.due_at || null;
   memory.follow_up.last_sent_at = memory.follow_up.last_sent_at || null;
+  memory.booking_confirmed = Boolean(memory.booking_confirmed);
 
   return memory;
 }
@@ -492,6 +496,44 @@ function updateQuestionMemory(memory, text) {
       memory.questions_asked.push(key);
     }
   }
+}
+
+function isBookingConfirmation(text) {
+  const rawLower = String(text || "").toLowerCase();
+
+  if (!rawLower.trim() || rawLower.includes("?")) {
+    return false;
+  }
+
+  const lower = rawLower
+    .toLowerCase()
+    .replace(/[^\w\s']/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const firstPersonBooking =
+    /\b(i|i'm|im|ive|i've|we|we're|were|weve|we've)\s+(?:just\s+|already\s+)?(?:booked|scheduled|set up|setup|locked in|got on(?: the)? calendar|made (?:the |an? )?appointment|got (?:the )?call booked)\b/;
+  const alreadyBooked =
+    /\b(?:just|already)\s+(?:booked|scheduled|set up|setup|locked in|got on(?: the)? calendar|made (?:the |an? )?appointment)\b/;
+  const completedAction =
+    /\b(booked|scheduled|set up|setup|locked in|got on(?: the)? calendar|made (?:the |an? )?appointment|got (?:the )?call booked)\b/;
+  const bookingContext =
+    /\b(call|appointment|calendar|discovery|meeting|consult|consultation|session)\b/;
+
+  return (
+    firstPersonBooking.test(lower) ||
+    alreadyBooked.test(lower) ||
+    (completedAction.test(lower) && bookingContext.test(lower))
+  );
+}
+
+function bookingConfirmationReply() {
+  return {
+    reply:
+      "Perfect, glad you got it booked. Keep an eye on your email/calendar for the confirmation. Talk soon.",
+    needs_review: false,
+    handled: true
+  };
 }
 
 function scheduleFollowUpIfNeeded(memory, replyText, sentAtMs = Date.now(), settings) {
@@ -584,6 +626,7 @@ function memoryForPrompt(memory, settings) {
     youtube_link_sent: Boolean(memory.youtube_link_sent),
     training_link_sent: Boolean(memory.training_link_sent),
     booking_link_sent: Boolean(memory.booking_link_sent),
+    booking_confirmed: Boolean(memory.booking_confirmed),
     follow_up_count: Number(memory.follow_up?.count || 0)
   };
 }
@@ -1333,6 +1376,10 @@ async function recordIncomingForMemory(incoming, featureSettings) {
     const incomingAt = new Date(toMessageTimestampMs(incoming.created_at)).toISOString();
     memory.last_incoming_at = incomingAt;
     memory.summary = `Last inbound: ${incoming.text.slice(0, 240)}`;
+    if (isBookingConfirmation(incoming.text)) {
+      memory.booking_confirmed = true;
+      memory.booking_link_sent = true;
+    }
     cancelFollowUp(memory);
     addMemoryMessage(memory, {
       role: "user",
@@ -1668,6 +1715,54 @@ async function processIncomingMessage(incoming, parsedPayload) {
 
   if (duplicate) {
     console.log(`Webhook ignored: duplicate message ${incoming.incoming_message_id}.`);
+    return;
+  }
+
+  const ruleBasedReply = isBookingConfirmation(incoming.text)
+    ? bookingConfirmationReply()
+    : null;
+
+  if (ruleBasedReply) {
+    const store = await readStore();
+    const settings = getConversationSettings(store, incoming.talk_id);
+    await writeStore(store);
+
+    const shouldAutoSendRuleReply =
+      isAutoSendEnabled(featureSettings) &&
+      !settings.paused &&
+      ruleBasedReply.needs_review === false &&
+      Boolean(ruleBasedReply.reply);
+
+    if (shouldAutoSendRuleReply) {
+      try {
+        await sendReply(incoming, ruleBasedReply.reply, featureSettings);
+        await recordOutgoingForMemory(incoming, ruleBasedReply.reply, { source: "auto" });
+        console.log(`Auto-sent booking confirmation reply for talk_id=${incoming.talk_id}.`);
+        return;
+      } catch (error) {
+        console.error(`Booking confirmation auto-send failed for talk_id=${incoming.talk_id}:`, error);
+      }
+    }
+
+    await saveDraft({
+      provider: incoming.provider || "kommo",
+      conversation_key: conversationKey,
+      talk_id: incoming.talk_id,
+      chat_id: incoming.chat_id,
+      contact_id: incoming.contact_id,
+      zernio_conversation_id: incoming.zernio_conversation_id,
+      zernio_account_id: incoming.zernio_account_id,
+      incoming_message_id: incoming.incoming_message_id,
+      incoming_text: incoming.text,
+      origin: incoming.origin,
+      reply: ruleBasedReply.reply,
+      needs_review: true,
+      reason: shouldAutoSendRuleReply
+        ? "Booking confirmation auto-send failed; saved for review."
+        : "Booking confirmation handled."
+    });
+
+    console.log(`Saved booking confirmation draft for talk_id=${incoming.talk_id}.`);
     return;
   }
 
