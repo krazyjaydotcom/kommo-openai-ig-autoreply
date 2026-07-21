@@ -32,7 +32,8 @@ Notes:
 - `KOMMO_SUBDOMAIN` can be `your-subdomain` or `your-subdomain.kommo.com`.
 - `AUTO_SEND=true` sends replies immediately only when the AI returns `needs_review: false`.
 - `AUTO_SEND=false` saves every generated reply as a pending draft.
-- The Kommo token needs permission for the Talks API message history and external chat sending.
+- The Kommo token needs these chat permissions: `External chat history` and `Sending to external chats`.
+- The OpenAI API key must have active API billing/credits. ChatGPT Plus/Pro billing is separate from API billing.
 
 ## Local Setup
 

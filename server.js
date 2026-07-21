@@ -509,11 +509,30 @@ async function processIncomingMessage(incoming, parsedPayload) {
     (message) => message.id !== incoming.incoming_message_id
   );
 
-  const aiReply = await generateReply({
-    thread: filteredThread,
-    newMessage: incoming,
-    contextWarning
-  });
+  let aiReply;
+
+  try {
+    aiReply = await generateReply({
+      thread: filteredThread,
+      newMessage: incoming,
+      contextWarning
+    });
+  } catch (error) {
+    await saveDraft({
+      talk_id: incoming.talk_id,
+      chat_id: incoming.chat_id,
+      contact_id: incoming.contact_id,
+      incoming_message_id: incoming.incoming_message_id,
+      incoming_text: incoming.text,
+      origin: incoming.origin,
+      reply: "",
+      needs_review: true,
+      reason: `OpenAI reply generation failed: ${error.message}`
+    });
+
+    console.error(`Saved pending draft after OpenAI failure for talk_id=${incoming.talk_id}:`, error);
+    return;
+  }
 
   if (contextWarning) {
     aiReply.needs_review = true;
