@@ -28,6 +28,7 @@ const DEFAULT_MANUAL_TAKEOVER_MINUTES = 8;
 const DEFAULT_HUMAN_SEND_DELAY_MIN_MS = 6500;
 const DEFAULT_HUMAN_SEND_DELAY_MAX_MS = 18000;
 const APP_OUTGOING_ECHO_WINDOW_MS = 15 * 60 * 1000;
+const CALENDAR_SEQUENCE_GAP_MS = 8 * 1000;
 const FOLLOW_UP_OFFSETS_MS = [
   45 * 60 * 1000,
   4 * 60 * 60 * 1000,
@@ -844,9 +845,15 @@ function appointmentSetterCalendarAskReply() {
 }
 
 function appointmentSetterCalendarLinkReply() {
+  const messages = [
+    "Great. Give me one sec and I'll grab that link for you.",
+    `Here's the link to my calendar: ${BOOKING_URL}`,
+    "I'll be by my phone for the next 5 min. Choose a date/time that works well for you and I'll verify it on my end."
+  ];
+
   return {
-    reply:
-      `Solid. Here's the link to my calendar: ${BOOKING_URL}\n\nChoose a date/time that works for you, and I'll verify it on my end.`,
+    reply: messages.join("\n\n"),
+    messages,
     needs_review: false,
     handled: true
   };
@@ -1994,6 +2001,42 @@ async function sendReply(messageLike, replyText, featureSettings) {
   return sendReplyToKommo(messageLike.talk_id || messageLike.current_talk_id, replyText);
 }
 
+function replyMessages(replyLike) {
+  const messages = Array.isArray(replyLike?.messages)
+    ? replyLike.messages
+    : [replyLike?.reply || replyLike];
+
+  return messages
+    .map((message) => String(message || "").trim())
+    .filter(Boolean);
+}
+
+function joinedReplyText(replyLike) {
+  return replyMessages(replyLike).join("\n\n");
+}
+
+async function sendReplySequence(messageLike, replyLike, featureSettings) {
+  const messages = replyMessages(replyLike);
+
+  for (let index = 0; index < messages.length; index += 1) {
+    if (index > 0) {
+      await sleep(CALENDAR_SEQUENCE_GAP_MS);
+    }
+
+    const sendSettings =
+      index === 0
+        ? featureSettings
+        : {
+            ...featureSettings,
+            human_send_delay: false
+          };
+
+    await sendReply(messageLike, messages[index], sendSettings);
+  }
+
+  return messages;
+}
+
 async function generateFollowUpReply(memory, featureSettings) {
   const followUpNumber = Number(memory.follow_up?.count || 0) + 1;
   const businessKnowledge = await loadKnowledgeBase();
@@ -2550,6 +2593,7 @@ async function processIncomingMessage(incoming, parsedPayload) {
     : appointmentSetterRuleReply(memory, incoming);
 
   if (ruleBasedReply) {
+    const replyText = joinedReplyText(ruleBasedReply);
     const store = await readStore();
     const settings = getConversationSettings(store, incoming.talk_id);
     const holdReason = conversationHoldReason(settings);
@@ -2559,12 +2603,12 @@ async function processIncomingMessage(incoming, parsedPayload) {
       isAutoSendEnabled(featureSettings) &&
       !holdReason &&
       ruleBasedReply.needs_review === false &&
-      Boolean(ruleBasedReply.reply);
+      Boolean(replyText);
 
     if (shouldAutoSendRuleReply) {
       try {
-        await sendReply(incoming, ruleBasedReply.reply, featureSettings);
-        await recordOutgoingForMemory(incoming, ruleBasedReply.reply, { source: "auto" });
+        await sendReplySequence(incoming, ruleBasedReply, featureSettings);
+        await recordOutgoingForMemory(incoming, replyText, { source: "auto" });
         console.log(`Auto-sent rule-based reply for talk_id=${incoming.talk_id}.`);
         return;
       } catch (error) {
@@ -2583,7 +2627,7 @@ async function processIncomingMessage(incoming, parsedPayload) {
       incoming_message_id: incoming.incoming_message_id,
       incoming_text: incoming.text,
       origin: incoming.origin,
-      reply: ruleBasedReply.reply,
+      reply: replyText,
       needs_review: true,
       reason: shouldAutoSendRuleReply
         ? "Rule-based auto-send failed; saved for review."
@@ -3141,7 +3185,8 @@ app.post("/api/test-reply", async (req, res, next) => {
       res.json({
         ok: true,
         lead_status: memory.lead_status,
-        reply: ruleBasedReply.reply,
+        reply: joinedReplyText(ruleBasedReply),
+        messages: replyMessages(ruleBasedReply),
         needs_review: ruleBasedReply.needs_review,
         source: "rule"
       });
