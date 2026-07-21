@@ -34,7 +34,7 @@ HUMAN_SEND_DELAY_MAX_MS=9000
 CONVERSATION_MEMORY_ENABLED=true
 FOLLOW_UPS_ENABLED=false
 PALLET_PROS_KNOWLEDGE=
-MANUAL_TAKEOVER_MINUTES=360
+MANUAL_TAKEOVER_MINUTES=8
 PORT=3000
 ```
 
@@ -55,7 +55,7 @@ Notes:
 - `CONVERSATION_MEMORY_ENABLED=true` stores lightweight per-prospect memory in the local JSON file.
 - `FOLLOW_UPS_ENABLED=false` keeps follow-up nudges disabled. Set it to `true` only after testing.
 - `PALLET_PROS_KNOWLEDGE` is optional. If set, it overrides `knowledge/pallet-pros.md` and gets included in the AI prompt as private business context.
-- `MANUAL_TAKEOVER_MINUTES=360` pauses auto-send for a conversation after the app detects a manual Zernio reply.
+- `MANUAL_TAKEOVER_MINUTES=8` pauses auto-send briefly after the app detects a manual Zernio reply, then lets the bot take over again if you are not around.
 - Kommo sending/history requires the Kommo Chats API scopes. If those are not available on your Kommo account, use Zernio for inbox send/receive instead.
 - The OpenAI API key must have active API billing/credits. ChatGPT Plus/Pro billing is separate from API billing.
 
@@ -82,7 +82,7 @@ $env:HUMAN_SEND_DELAY_MAX_MS="9000"
 $env:CONVERSATION_MEMORY_ENABLED="true"
 $env:FOLLOW_UPS_ENABLED="false"
 $env:PALLET_PROS_KNOWLEDGE=""
-$env:MANUAL_TAKEOVER_MINUTES="360"
+$env:MANUAL_TAKEOVER_MINUTES="8"
 $env:PORT="3000"
 
 npm start
@@ -264,10 +264,10 @@ When the Zernio webhook includes `message.sent`, the app watches for manual repl
 If it sees a manual Zernio reply, it pauses auto-send for that conversation for:
 
 ```text
-MANUAL_TAKEOVER_MINUTES=360
+MANUAL_TAKEOVER_MINUTES=8
 ```
 
-During that window, new incoming messages can still become drafts, but the bot will not auto-send into the thread. App-generated sends are ignored so the bot does not pause itself after its own replies.
+During that short window, new incoming messages can still become drafts, but the bot will not auto-send into the thread. After the window passes, the bot can take over again from the current conversation history. App-generated sends are ignored so the bot does not pause itself after its own replies.
 
 ## Follow-Ups
 
