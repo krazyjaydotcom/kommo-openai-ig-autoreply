@@ -1,0 +1,16 @@
+{
+  "name": "kommo-openai-ig-autoreply",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Minimal one-person Kommo CRM + OpenAI Instagram DM auto-reply tool.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
