@@ -34,6 +34,7 @@ HUMAN_SEND_DELAY_MAX_MS=9000
 CONVERSATION_MEMORY_ENABLED=true
 FOLLOW_UPS_ENABLED=false
 PALLET_PROS_KNOWLEDGE=
+MANUAL_TAKEOVER_MINUTES=360
 PORT=3000
 ```
 
@@ -54,6 +55,7 @@ Notes:
 - `CONVERSATION_MEMORY_ENABLED=true` stores lightweight per-prospect memory in the local JSON file.
 - `FOLLOW_UPS_ENABLED=false` keeps follow-up nudges disabled. Set it to `true` only after testing.
 - `PALLET_PROS_KNOWLEDGE` is optional. If set, it overrides `knowledge/pallet-pros.md` and gets included in the AI prompt as private business context.
+- `MANUAL_TAKEOVER_MINUTES=360` pauses auto-send for a conversation after the app detects a manual Zernio reply.
 - Kommo sending/history requires the Kommo Chats API scopes. If those are not available on your Kommo account, use Zernio for inbox send/receive instead.
 - The OpenAI API key must have active API billing/credits. ChatGPT Plus/Pro billing is separate from API billing.
 
@@ -80,6 +82,7 @@ $env:HUMAN_SEND_DELAY_MAX_MS="9000"
 $env:CONVERSATION_MEMORY_ENABLED="true"
 $env:FOLLOW_UPS_ENABLED="false"
 $env:PALLET_PROS_KNOWLEDGE=""
+$env:MANUAL_TAKEOVER_MINUTES="360"
 $env:PORT="3000"
 
 npm start
@@ -115,7 +118,7 @@ Paste this into Zernio if you are using Zernio webhooks:
 https://YOUR-DIGITALOCEAN-APP-URL/webhook/zernio
 ```
 
-Set the Zernio webhook event to `message.received`. If you are not using Zernio's signed webhook secret yet, use this temporary fallback URL:
+Set the Zernio webhook events to `message.received` and `message.sent`. The `message.sent` event lets the app detect when you replied manually and pause auto-send for that conversation. If you are not using Zernio's signed webhook secret yet, use this temporary fallback URL:
 
 ```text
 https://YOUR-DIGITALOCEAN-APP-URL/webhook/zernio?secret=YOUR_WEBHOOK_SECRET
@@ -253,6 +256,18 @@ PALLET_PROS_KNOWLEDGE=your longer business context
 If `PALLET_PROS_KNOWLEDGE` is set, it overrides the repo file. If it is empty, the app uses `knowledge/pallet-pros.md`.
 
 Keep sensitive/private information out of the knowledge base because it can be sent to OpenAI as prompt context.
+
+## Manual Takeover
+
+When the Zernio webhook includes `message.sent`, the app watches for manual replies you send outside this app.
+
+If it sees a manual Zernio reply, it pauses auto-send for that conversation for:
+
+```text
+MANUAL_TAKEOVER_MINUTES=360
+```
+
+During that window, new incoming messages can still become drafts, but the bot will not auto-send into the thread. App-generated sends are ignored so the bot does not pause itself after its own replies.
 
 ## Follow-Ups
 

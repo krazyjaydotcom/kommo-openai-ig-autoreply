@@ -16,6 +16,8 @@ const BOOKING_URL = "https://www.tidycal.com/palletprosga/discovery";
 const MAX_KNOWLEDGE_CHARS = 12_000;
 const MAX_RECENT_MEMORY_MESSAGES = 20;
 const MAX_PROCESSED_MESSAGE_IDS = 100;
+const DEFAULT_MANUAL_TAKEOVER_MINUTES = 360;
+const APP_OUTGOING_ECHO_WINDOW_MS = 15 * 60 * 1000;
 const FOLLOW_UP_OFFSETS_MS = [
   30 * 60 * 1000,
   4 * 60 * 60 * 1000,
@@ -185,6 +187,13 @@ function numberEnv(name, fallback) {
   return Number.isFinite(value) ? value : fallback;
 }
 
+function manualTakeoverMs() {
+  return Math.max(
+    0,
+    numberEnv("MANUAL_TAKEOVER_MINUTES", DEFAULT_MANUAL_TAKEOVER_MINUTES)
+  ) * 60 * 1000;
+}
+
 function systemPrompt(settings) {
   return [
     HOUSE_RULES,
@@ -333,7 +342,54 @@ function getConversationSettings(store, talkId) {
     store.conversationSettings[talkId] = { paused: false };
   }
 
-  return store.conversationSettings[talkId];
+  const settings = store.conversationSettings[talkId];
+  settings.paused = Boolean(settings.paused);
+  settings.manual_takeover_until = settings.manual_takeover_until || null;
+  settings.manual_takeover_since = settings.manual_takeover_since || null;
+  settings.manual_takeover_reason = settings.manual_takeover_reason || "";
+  return settings;
+}
+
+function isManualTakeoverActive(settingsOrMemory, nowMs = Date.now()) {
+  const until = settingsOrMemory?.manual_takeover_until;
+  if (!until) {
+    return false;
+  }
+
+  const untilMs = Date.parse(String(until));
+  return Number.isFinite(untilMs) && untilMs > nowMs;
+}
+
+function conversationHoldReason(settings) {
+  if (settings?.paused) {
+    return "Conversation is paused.";
+  }
+
+  if (isManualTakeoverActive(settings)) {
+    return `Manual takeover is active until ${settings.manual_takeover_until}.`;
+  }
+
+  return "";
+}
+
+function memoryAutomationPaused(memory) {
+  if (!memory?.ai_paused) {
+    return false;
+  }
+
+  if (memory.manual_takeover_until) {
+    return isManualTakeoverActive(memory);
+  }
+
+  return true;
+}
+
+function comparableText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function appOutgoingSource(source) {
+  return ["auto", "manual_approval", "follow_up"].includes(String(source || ""));
 }
 
 function toMessageTimestampMs(createdAt) {
@@ -414,8 +470,12 @@ function getConversationMemory(store, messageLike) {
       booking_link_sent: false,
       booking_confirmed: false,
       ai_paused: false,
+      manual_takeover_until: null,
+      manual_takeover_since: null,
+      pending_app_outgoing: [],
       last_incoming_at: null,
       last_outgoing_at: null,
+      last_outgoing_source: "",
       follow_up: {
         active: false,
         count: 0,
@@ -455,6 +515,12 @@ function getConversationMemory(store, messageLike) {
   memory.follow_up.due_at = memory.follow_up.due_at || null;
   memory.follow_up.last_sent_at = memory.follow_up.last_sent_at || null;
   memory.booking_confirmed = Boolean(memory.booking_confirmed);
+  memory.manual_takeover_until = memory.manual_takeover_until || null;
+  memory.manual_takeover_since = memory.manual_takeover_since || null;
+  memory.pending_app_outgoing = Array.isArray(memory.pending_app_outgoing)
+    ? memory.pending_app_outgoing
+    : [];
+  memory.last_outgoing_source = memory.last_outgoing_source || "";
 
   return memory;
 }
@@ -464,7 +530,8 @@ function addMemoryMessage(memory, message) {
     role: message.role,
     text: String(message.text || "").slice(0, 1200),
     at: message.at || new Date().toISOString(),
-    id: message.id || ""
+    id: message.id || "",
+    source: message.source || ""
   });
   memory.last_messages = memory.last_messages.slice(-MAX_RECENT_MEMORY_MESSAGES);
 }
@@ -1414,6 +1481,8 @@ async function prepareZernioSend(messageLike, replyText, featureSettings) {
 }
 
 async function sendReply(messageLike, replyText, featureSettings) {
+  await recordPendingAppOutgoing(messageLike, replyText);
+
   if (messageLike.provider === "zernio") {
     return sendReplyToZernio(messageLike, replyText, featureSettings);
   }
@@ -1511,27 +1580,32 @@ async function recordIncomingForMemory(incoming, featureSettings) {
 async function recordOutgoingForMemory(messageLike, replyText, options = {}) {
   const store = await readStore();
   const featureSettings = getFeatureSettings(store);
-  const memory = isConversationMemoryEnabled(featureSettings)
-    ? getConversationMemory(store, messageLike)
-    : null;
-  const conversationKey = memory?.key || makeConversationKey(messageLike);
+  const memory = getConversationMemory(store, messageLike);
+  const conversationKey = memory.key || makeConversationKey(messageLike);
   const sentAtMs = Date.now();
   const sentAt = new Date(sentAtMs).toISOString();
   const source = options.source || "ai";
+  const replyComparable = comparableText(replyText);
 
-  if (memory) {
-    addMemoryMessage(memory, {
-      role: "assistant",
-      text: replyText,
-      at: sentAt,
-      id: options.messageId || ""
-    });
-    memory.last_outgoing_at = sentAt;
-    memory.summary = `Last outbound: ${String(replyText || "").slice(0, 240)}`;
-    updateLinkMemory(memory, replyText);
-    updateQuestionMemory(memory, replyText);
-    scheduleFollowUpIfNeeded(memory, replyText, sentAtMs, featureSettings);
-  }
+  memory.pending_app_outgoing = memory.pending_app_outgoing.filter((item) => {
+    const itemAtMs = item.at ? Date.parse(String(item.at)) : 0;
+    const isExpired = !itemAtMs || sentAtMs - itemAtMs > APP_OUTGOING_ECHO_WINDOW_MS;
+    const isSameText = comparableText(item.text) === replyComparable;
+    return !isExpired && !isSameText;
+  });
+  addMemoryMessage(memory, {
+    role: "assistant",
+    text: replyText,
+    at: sentAt,
+    id: options.messageId || "",
+    source
+  });
+  memory.last_outgoing_at = sentAt;
+  memory.last_outgoing_source = source;
+  memory.summary = `Last outbound: ${String(replyText || "").slice(0, 240)}`;
+  updateLinkMemory(memory, replyText);
+  updateQuestionMemory(memory, replyText);
+  scheduleFollowUpIfNeeded(memory, replyText, sentAtMs, featureSettings);
 
   recordDailyStat(store, conversationKey, {
     prospects_touched: 1,
@@ -1543,6 +1617,138 @@ async function recordOutgoingForMemory(messageLike, replyText, options = {}) {
   });
 
   await writeStore(store);
+}
+
+async function recordPendingAppOutgoing(messageLike, replyText) {
+  const cleanReply = String(replyText || "").trim();
+  if (!cleanReply) {
+    return;
+  }
+
+  const store = await readStore();
+  const memory = getConversationMemory(store, messageLike);
+  const nowMs = Date.now();
+
+  memory.pending_app_outgoing = memory.pending_app_outgoing
+    .filter((item) => {
+      const itemAtMs = item.at ? Date.parse(String(item.at)) : 0;
+      return itemAtMs && nowMs - itemAtMs <= APP_OUTGOING_ECHO_WINDOW_MS;
+    })
+    .slice(-8);
+
+  memory.pending_app_outgoing.push({
+    text: cleanReply.slice(0, 1200),
+    at: new Date(nowMs).toISOString()
+  });
+
+  await writeStore(store);
+}
+
+function isRecentAppOutgoingEcho(memory, outgoing) {
+  const outgoingText = comparableText(outgoing.text);
+
+  if (!memory || !outgoingText) {
+    return false;
+  }
+
+  const outgoingId = outgoing.incoming_message_id || outgoing.message_id || "";
+  const pendingMatches = Array.isArray(memory.pending_app_outgoing)
+    ? memory.pending_app_outgoing.some((item) => {
+        const itemAtMs = item.at ? Date.parse(String(item.at)) : 0;
+        return (
+          itemAtMs > 0 &&
+          Date.now() - itemAtMs <= APP_OUTGOING_ECHO_WINDOW_MS &&
+          comparableText(item.text) === outgoingText
+        );
+      })
+    : false;
+
+  if (pendingMatches) {
+    return true;
+  }
+
+  const recentMessages = Array.isArray(memory.last_messages)
+    ? memory.last_messages.slice(-8).reverse()
+    : [];
+
+  return recentMessages.some((message) => {
+    if (message.role !== "assistant" || !appOutgoingSource(message.source)) {
+      return false;
+    }
+
+    if (outgoingId && message.id && String(message.id) === String(outgoingId)) {
+      return true;
+    }
+
+    const messageText = comparableText(message.text);
+    if (!messageText || messageText !== outgoingText) {
+      return false;
+    }
+
+    const messageAtMs = message.at ? Date.parse(String(message.at)) : 0;
+    return messageAtMs > 0 && Date.now() - messageAtMs <= APP_OUTGOING_ECHO_WINDOW_MS;
+  });
+}
+
+async function processManualOutgoingMessage(outgoing) {
+  if (!outgoing.text) {
+    console.log("Manual takeover ignored: sent webhook had no text.");
+    return;
+  }
+
+  const store = await readStore();
+  const provider = normalizeProvider(outgoing.provider);
+
+  if (!isProviderEnabled(store, provider)) {
+    console.log(`Manual takeover ignored: ${provider} provider is disabled.`);
+    return;
+  }
+
+  const memory = getConversationMemory(store, outgoing);
+  const duplicate = markProcessedMessage(memory, outgoing.incoming_message_id);
+
+  if (duplicate) {
+    console.log(`Manual takeover ignored: duplicate sent message ${outgoing.incoming_message_id}.`);
+    await writeStore(store);
+    return;
+  }
+
+  if (isRecentAppOutgoingEcho(memory, outgoing)) {
+    console.log(`Manual takeover ignored: app sent echo for talk_id=${outgoing.talk_id}.`);
+    await writeStore(store);
+    return;
+  }
+
+  const sentAtMs = toMessageTimestampMs(outgoing.created_at);
+  const sentAt = new Date(sentAtMs).toISOString();
+  const takeoverUntil = new Date(Date.now() + manualTakeoverMs()).toISOString();
+  const settings = getConversationSettings(store, outgoing.talk_id);
+
+  cancelFollowUp(memory);
+  addMemoryMessage(memory, {
+    role: "assistant",
+    text: outgoing.text,
+    at: sentAt,
+    id: outgoing.incoming_message_id,
+    source: "manual"
+  });
+  updateLinkMemory(memory, outgoing.text);
+  updateQuestionMemory(memory, outgoing.text);
+  memory.last_outgoing_at = sentAt;
+  memory.last_outgoing_source = "manual";
+  memory.summary = `Manual outbound: ${String(outgoing.text || "").slice(0, 240)}`;
+  memory.ai_paused = true;
+  memory.manual_takeover_since = sentAt;
+  memory.manual_takeover_until = takeoverUntil;
+
+  settings.manual_takeover_since = sentAt;
+  settings.manual_takeover_until = takeoverUntil;
+  settings.manual_takeover_reason = "Manual Zernio reply detected.";
+
+  await writeStore(store);
+  console.log(
+    `Manual takeover active for talk_id=${outgoing.talk_id} until ${takeoverUntil}.`
+  );
 }
 
 let followUpSweepRunning = false;
@@ -1574,7 +1780,7 @@ async function processDueFollowUps() {
       return (
         memory.follow_up?.active &&
         isProviderEnabled(store, memory.provider) &&
-        !memory.ai_paused &&
+        !memoryAutomationPaused(memory) &&
         memory.current_talk_id &&
         dueAtMs > 0 &&
         dueAtMs <= nowMs &&
@@ -1599,7 +1805,7 @@ async function sendDueFollowUp(conversationKey) {
   const featureSettings = getFeatureSettings(store);
   const memory = store.conversations[conversationKey];
 
-  if (!memory || !memory.follow_up?.active || memory.ai_paused) {
+  if (!memory || !memory.follow_up?.active || memoryAutomationPaused(memory)) {
     return;
   }
 
@@ -1759,11 +1965,13 @@ async function sendDueFollowUp(conversationKey) {
     role: "assistant",
     text: replyText,
     at: new Date().toISOString(),
-    id: `follow-up-${nextCount}`
+    id: `follow-up-${nextCount}`,
+    source: "follow_up"
   });
   updateLinkMemory(updatedMemory, replyText);
   updateQuestionMemory(updatedMemory, replyText);
   updatedMemory.last_outgoing_at = new Date().toISOString();
+  updatedMemory.last_outgoing_source = "follow_up";
   updatedMemory.follow_up.count = nextCount;
   updatedMemory.follow_up.last_sent_at = new Date().toISOString();
 
@@ -1839,11 +2047,12 @@ async function processIncomingMessage(incoming, parsedPayload) {
   if (ruleBasedReply) {
     const store = await readStore();
     const settings = getConversationSettings(store, incoming.talk_id);
+    const holdReason = conversationHoldReason(settings);
     await writeStore(store);
 
     const shouldAutoSendRuleReply =
       isAutoSendEnabled(featureSettings) &&
-      !settings.paused &&
+      !holdReason &&
       ruleBasedReply.needs_review === false &&
       Boolean(ruleBasedReply.reply);
 
@@ -1873,7 +2082,7 @@ async function processIncomingMessage(incoming, parsedPayload) {
       needs_review: true,
       reason: shouldAutoSendRuleReply
         ? "Booking confirmation auto-send failed; saved for review."
-        : "Booking confirmation handled."
+        : holdReason || "Booking confirmation handled."
     });
 
     console.log(`Saved booking confirmation draft for talk_id=${incoming.talk_id}.`);
@@ -1931,11 +2140,12 @@ async function processIncomingMessage(incoming, parsedPayload) {
 
   const store = await readStore();
   const settings = getConversationSettings(store, incoming.talk_id);
+  const holdReason = conversationHoldReason(settings);
   await writeStore(store);
 
   const shouldAutoSend =
     isAutoSendEnabled(featureSettings) &&
-    !settings.paused &&
+    !holdReason &&
     aiReply.needs_review === false &&
     Boolean(aiReply.reply);
 
@@ -1959,7 +2169,10 @@ async function processIncomingMessage(incoming, parsedPayload) {
     origin: incoming.origin,
     reply: aiReply.reply,
     needs_review: true,
-    reason: contextWarning || (aiReply.needs_review ? "AI requested review." : "AUTO_SEND is not true or conversation is paused.")
+    reason:
+      contextWarning ||
+      holdReason ||
+      (aiReply.needs_review ? "AI requested review." : "AUTO_SEND is not true.")
   });
 
   console.log(`Saved pending draft for talk_id=${incoming.talk_id}.`);
@@ -2039,6 +2252,13 @@ app.post(
 
     res.status(202).json({ ok: true });
 
+    if (incoming.event_type === "message.sent") {
+      processManualOutgoingMessage(incoming).catch((error) => {
+        console.error("Zernio sent-message processing failed:", error);
+      });
+      return;
+    }
+
     if (incoming.event_type && incoming.event_type !== "message.received") {
       console.log(`Zernio webhook ignored: event_type is ${incoming.event_type}.`);
       return;
@@ -2094,6 +2314,10 @@ app.get("/api/stats", async (_req, res, next) => {
         follow_ups_enabled: isFollowUpsEnabled(featureSettings),
         zernio_configured: Boolean(process.env.ZERNIO_API_KEY),
         knowledge_base_configured: Boolean(businessKnowledge),
+        manual_takeover_minutes: numberEnv(
+          "MANUAL_TAKEOVER_MINUTES",
+          DEFAULT_MANUAL_TAKEOVER_MINUTES
+        ),
         feature_settings: featureSettings,
         provider_settings: providerSettings
       }
