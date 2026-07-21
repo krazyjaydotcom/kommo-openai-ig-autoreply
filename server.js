@@ -815,6 +815,124 @@ function updateQuestionMemory(memory, text) {
   }
 }
 
+function appointmentSetterCalendarAskReply() {
+  return {
+    reply:
+      "Great. Let's get on a Zoom call this week. That way we can research your market, answer any questions you have, and see if you'd be a good fit for the program.\n\nDo you mind if I send you a link to my calendar?",
+    needs_review: false,
+    handled: true
+  };
+}
+
+function appointmentSetterCalendarLinkReply() {
+  return {
+    reply:
+      `Solid. Here's the link to my calendar: ${BOOKING_URL}\n\nChoose a date/time that works for you, and I'll verify it on my end.`,
+    needs_review: false,
+    handled: true
+  };
+}
+
+function appointmentSetterUseLinkReply() {
+  return {
+    reply: "Ok. Please use the link to choose your time.",
+    needs_review: false,
+    handled: true
+  };
+}
+
+function appointmentSetterPhoneReply(memory) {
+  return {
+    reply: memory?.booking_link_sent
+      ? "Please book your time using the link I sent earlier."
+      : `The best way is to book a time here: ${BOOKING_URL}`,
+    needs_review: false,
+    handled: true
+  };
+}
+
+function appointmentSetterContentReply() {
+  return {
+    reply: `Got you. Check out the free content here: ${YOUTUBE_URL}`,
+    needs_review: false,
+    handled: true
+  };
+}
+
+function yesToCalendarLink(text) {
+  return /^(yes|yea|yeah|yep|sure|of course|that's fine|that is fine|ok|okay|send it|sounds good|lets do it|let's do it)\b/i.test(
+    String(text || "").trim()
+  );
+}
+
+function wantsContentOnly(text) {
+  return /\b(just content|only content|free content|just looking|just curious|researching|youtube)\b/i.test(
+    String(text || "")
+  );
+}
+
+function wantsPalletBusiness(text) {
+  return /\b(interested|want|wanna|trying|tryna|looking|ready|learn|start|get started|get into|appointment|consultation|schedule|book|call|zoom|business|pallet)\b/i.test(
+    String(text || "")
+  );
+}
+
+function wantsDirectPhoneCall(text) {
+  return /\b(call me|give me a call|phone call|can you call|able to call|my number|\d{3}[-.\s]?\d{3}[-.\s]?\d{4})\b/i.test(
+    String(text || "")
+  );
+}
+
+function mentionsSpecificTimeInsteadOfBooking(text) {
+  return /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|today|\d{1,2}:\d{2}|am|pm|anytime)\b/i.test(
+    String(text || "")
+  );
+}
+
+function lastAssistantAskedForCalendarPermission(memory) {
+  return (Array.isArray(memory?.last_messages) ? memory.last_messages : [])
+    .slice(-5)
+    .some(
+      (message) =>
+        message.role === "assistant" &&
+        /send you a link to my calendar|link to my calendar/i.test(message.text || "")
+    );
+}
+
+function appointmentSetterRuleReply(memory, incoming) {
+  const text = String(incoming?.text || "");
+
+  if (!text.trim()) {
+    return null;
+  }
+
+  if (wantsDirectPhoneCall(text)) {
+    return appointmentSetterPhoneReply(memory);
+  }
+
+  if (memory?.booking_link_sent && mentionsSpecificTimeInsteadOfBooking(text)) {
+    return appointmentSetterUseLinkReply();
+  }
+
+  if (lastAssistantAskedForCalendarPermission(memory) && yesToCalendarLink(text)) {
+    return appointmentSetterCalendarLinkReply();
+  }
+
+  if (wantsContentOnly(text) && !wantsPalletBusiness(text)) {
+    return appointmentSetterContentReply();
+  }
+
+  if (
+    wantsPalletBusiness(text) &&
+    !memory?.booking_link_sent &&
+    !lastAssistantAskedForCalendarPermission(memory)
+  ) {
+    return appointmentSetterCalendarAskReply();
+  }
+
+  return null;
+}
+
 function isBookingConfirmation(text) {
   const rawLower = String(text || "").toLowerCase();
 
@@ -2410,7 +2528,7 @@ async function processIncomingMessage(incoming, parsedPayload) {
 
   const ruleBasedReply = isBookingConfirmation(incoming.text)
     ? bookingConfirmationReply()
-    : null;
+    : appointmentSetterRuleReply(memory, incoming);
 
   if (ruleBasedReply) {
     const store = await readStore();
@@ -2428,10 +2546,10 @@ async function processIncomingMessage(incoming, parsedPayload) {
       try {
         await sendReply(incoming, ruleBasedReply.reply, featureSettings);
         await recordOutgoingForMemory(incoming, ruleBasedReply.reply, { source: "auto" });
-        console.log(`Auto-sent booking confirmation reply for talk_id=${incoming.talk_id}.`);
+        console.log(`Auto-sent rule-based reply for talk_id=${incoming.talk_id}.`);
         return;
       } catch (error) {
-        console.error(`Booking confirmation auto-send failed for talk_id=${incoming.talk_id}:`, error);
+        console.error(`Rule-based auto-send failed for talk_id=${incoming.talk_id}:`, error);
       }
     }
 
@@ -2449,11 +2567,11 @@ async function processIncomingMessage(incoming, parsedPayload) {
       reply: ruleBasedReply.reply,
       needs_review: true,
       reason: shouldAutoSendRuleReply
-        ? "Booking confirmation auto-send failed; saved for review."
-        : holdReason || "Booking confirmation handled."
+        ? "Rule-based auto-send failed; saved for review."
+        : holdReason || "Appointment setter flow handled."
     });
 
-    console.log(`Saved booking confirmation draft for talk_id=${incoming.talk_id}.`);
+    console.log(`Saved rule-based draft for talk_id=${incoming.talk_id}.`);
     return;
   }
 
@@ -2967,6 +3085,21 @@ app.post("/api/test-reply", async (req, res, next) => {
       origin: "instagram_business"
     };
     const memory = testMemoryFromThread(thread);
+    const ruleBasedReply = isBookingConfirmation(newMessage.text)
+      ? bookingConfirmationReply()
+      : appointmentSetterRuleReply(memory, newMessage);
+
+    if (ruleBasedReply) {
+      res.json({
+        ok: true,
+        lead_status: memory.lead_status,
+        reply: ruleBasedReply.reply,
+        needs_review: ruleBasedReply.needs_review,
+        source: "rule"
+      });
+      return;
+    }
+
     const aiReply = await generateReply({
       thread,
       newMessage,
@@ -2979,7 +3112,8 @@ app.post("/api/test-reply", async (req, res, next) => {
       ok: true,
       lead_status: memory.lead_status,
       reply: aiReply.reply,
-      needs_review: aiReply.needs_review
+      needs_review: aiReply.needs_review,
+      source: "ai"
     });
   } catch (error) {
     next(error);
