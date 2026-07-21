@@ -1007,6 +1007,28 @@ async function sendDueFollowUp(conversationKey) {
     return;
   }
 
+  if (!isAutoSendEnabled()) {
+    memory.follow_up.active = false;
+    memory.follow_up.due_at = null;
+    await writeStore(store);
+
+    await saveDraft({
+      conversation_key: conversationKey,
+      talk_id: memory.current_talk_id,
+      chat_id: memory.chat_id,
+      contact_id: memory.contact_id,
+      origin: memory.origin,
+      incoming_message_id: `follow-up-draft-${conversationKey}-${memory.follow_up.count + 1}`,
+      incoming_text: "Follow-up due",
+      reply: replyText,
+      needs_review: true,
+      reason: "AUTO_SEND is not true, so this follow-up was saved for review."
+    });
+
+    console.log(`Saved follow-up draft because AUTO_SEND is off for ${conversationKey}.`);
+    return;
+  }
+
   try {
     await sendReplyToKommo(memory.current_talk_id, replyText);
   } catch (error) {

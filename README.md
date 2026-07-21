@@ -35,7 +35,7 @@ Notes:
 - `AUTO_SEND=true` sends replies immediately only when the AI returns `needs_review: false`.
 - `AUTO_SEND=false` saves every generated reply as a pending draft.
 - `CONVERSATION_MEMORY_ENABLED=true` stores lightweight per-prospect memory in the local JSON file.
-- `FOLLOW_UPS_ENABLED=false` keeps automatic follow-up nudges disabled. Set it to `true` only after testing.
+- `FOLLOW_UPS_ENABLED=false` keeps follow-up nudges disabled. Set it to `true` only after testing.
 - The Kommo token needs these chat permissions: `External chat history` and `Sending to external chats`.
 - The OpenAI API key must have active API billing/credits. ChatGPT Plus/Pro billing is separate from API billing.
 
@@ -155,6 +155,8 @@ Follow-ups are disabled unless:
 ```bash
 FOLLOW_UPS_ENABLED=true
 ```
+
+If `AUTO_SEND=false`, due follow-ups are saved as editable drafts. If both `AUTO_SEND=true` and `FOLLOW_UPS_ENABLED=true`, safe follow-ups can send automatically.
 
 When enabled, the app schedules up to 3 gentle AI follow-up nudges after a sent reply asks a question:
 
