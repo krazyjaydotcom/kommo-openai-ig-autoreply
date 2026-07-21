@@ -24,6 +24,10 @@ const FOLLOW_UP_WINDOW_MS = 23 * 60 * 60 * 1000;
 const DEFAULT_STORE = {
   drafts: [],
   conversationSettings: {},
+  providerSettings: {
+    kommo: { enabled: true },
+    zernio: { enabled: true }
+  },
   conversations: {},
   dailyStats: {}
 };
@@ -131,6 +135,7 @@ function normalizeStore(store) {
       parsed.conversationSettings && typeof parsed.conversationSettings === "object"
         ? parsed.conversationSettings
         : {},
+    providerSettings: normalizeProviderSettings(parsed.providerSettings),
     conversations:
       parsed.conversations && typeof parsed.conversations === "object"
         ? parsed.conversations
@@ -140,6 +145,33 @@ function normalizeStore(store) {
         ? parsed.dailyStats
         : {}
   };
+}
+
+function normalizeProvider(provider) {
+  return provider === "zernio" ? "zernio" : "kommo";
+}
+
+function normalizeProviderSettings(settings) {
+  const raw = settings && typeof settings === "object" ? settings : {};
+
+  return {
+    kommo: {
+      enabled: raw.kommo?.enabled !== false
+    },
+    zernio: {
+      enabled: raw.zernio?.enabled !== false
+    }
+  };
+}
+
+function getProviderSettings(store) {
+  store.providerSettings = normalizeProviderSettings(store.providerSettings);
+  return store.providerSettings;
+}
+
+function isProviderEnabled(store, provider) {
+  const providerName = normalizeProvider(provider);
+  return getProviderSettings(store)[providerName].enabled !== false;
 }
 
 function getConversationSettings(store, talkId) {
@@ -1196,6 +1228,7 @@ async function processDueFollowUps() {
 
       return (
         memory.follow_up?.active &&
+        isProviderEnabled(store, memory.provider) &&
         !memory.ai_paused &&
         memory.current_talk_id &&
         dueAtMs > 0 &&
@@ -1221,6 +1254,14 @@ async function sendDueFollowUp(conversationKey) {
   const memory = store.conversations[conversationKey];
 
   if (!memory || !memory.follow_up?.active || memory.ai_paused) {
+    return;
+  }
+
+  if (!isProviderEnabled(store, memory.provider)) {
+    memory.follow_up.active = false;
+    memory.follow_up.due_at = null;
+    await writeStore(store);
+    console.log(`Follow-up skipped because ${normalizeProvider(memory.provider)} is disabled.`);
     return;
   }
 
@@ -1419,6 +1460,14 @@ async function processIncomingMessage(incoming, parsedPayload) {
 
   if (!isFreshEnough(incoming.created_at)) {
     console.log("Webhook ignored: message appears older than 24 hours.");
+    return;
+  }
+
+  const providerStore = await readStore();
+  const provider = normalizeProvider(incoming.provider);
+
+  if (!isProviderEnabled(providerStore, provider)) {
+    console.log(`Webhook ignored: ${provider} provider is disabled.`);
     return;
   }
 
@@ -1622,6 +1671,7 @@ app.get("/api/stats", async (_req, res, next) => {
     const store = await readStore();
     const day = todayKey();
     const stats = getDailyStats(store, day);
+    const providerSettings = getProviderSettings(store);
     const { prospect_keys: _prospectKeys, ...publicStats } = stats;
 
     res.json({
@@ -1634,8 +1684,49 @@ app.get("/api/stats", async (_req, res, next) => {
         auto_send: isAutoSendEnabled(),
         conversation_memory_enabled: isConversationMemoryEnabled(),
         follow_ups_enabled: isFollowUpsEnabled(),
-        zernio_configured: Boolean(process.env.ZERNIO_API_KEY)
+        zernio_configured: Boolean(process.env.ZERNIO_API_KEY),
+        provider_settings: providerSettings
       }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/providers", async (_req, res, next) => {
+  try {
+    const store = await readStore();
+    res.json({
+      providers: getProviderSettings(store),
+      configured: {
+        kommo: Boolean(process.env.KOMMO_ACCESS_TOKEN && process.env.KOMMO_SUBDOMAIN),
+        zernio: Boolean(process.env.ZERNIO_API_KEY)
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/providers", async (req, res, next) => {
+  try {
+    const provider = String(req.body.provider || "").toLowerCase();
+
+    if (!["kommo", "zernio"].includes(provider)) {
+      res.status(400).json({ ok: false, error: "Provider must be kommo or zernio." });
+      return;
+    }
+
+    const enabled = Boolean(req.body.enabled);
+    const store = await readStore();
+    const providerSettings = getProviderSettings(store);
+
+    providerSettings[provider].enabled = enabled;
+    await writeStore(store);
+
+    res.json({
+      ok: true,
+      providers: getProviderSettings(store)
     });
   } catch (error) {
     next(error);
@@ -1653,6 +1744,18 @@ app.post("/api/drafts/:id/approve", async (req, res, next) => {
     }
 
     const reply = String(req.body.reply || draft.reply || "").trim();
+    const provider = normalizeProvider(draft.provider);
+
+    if (!isProviderEnabled(store, provider)) {
+      const error = `${provider} is disabled in provider controls.`;
+      await updateDraft(draft.id, {
+        reply,
+        needs_review: true,
+        reason: `Send blocked: ${error}`
+      });
+      res.status(409).json({ ok: false, error });
+      return;
+    }
 
     try {
       await sendReply(draft, reply);
@@ -1795,6 +1898,34 @@ function renderHomePage() {
       padding: 4px 8px;
     }
 
+    .provider-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: -6px 0 16px;
+    }
+
+    .provider-toggle {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: 13px;
+      min-height: 34px;
+      padding: 0 12px;
+    }
+
+    .provider-toggle.is-on {
+      background: #e9f7ef;
+      border-color: #a9d8bd;
+      color: #0c6246;
+    }
+
+    .provider-toggle.is-off {
+      background: #fff1f1;
+      border-color: #e8b9b9;
+      color: #8f2424;
+    }
+
     .draft-list {
       display: grid;
       gap: 14px;
@@ -1909,12 +2040,14 @@ function renderHomePage() {
     </header>
     <section id="stats" class="stats-grid" aria-label="Daily tracker"></section>
     <section id="flags" class="flags" aria-label="Settings"></section>
+    <section id="providers" class="provider-controls" aria-label="Provider controls"></section>
     <section id="drafts" class="draft-list"></section>
   </main>
 
   <script>
     const draftsEl = document.getElementById("drafts");
     const flagsEl = document.getElementById("flags");
+    const providersEl = document.getElementById("providers");
     const statsEl = document.getElementById("stats");
     const statusEl = document.getElementById("status");
 
@@ -1972,12 +2105,50 @@ function renderHomePage() {
         ["Auto-send", settings.auto_send],
         ["Memory", settings.conversation_memory_enabled],
         ["Follow-ups", settings.follow_ups_enabled],
-        ["Zernio", settings.zernio_configured]
+        ["Zernio key", settings.zernio_configured]
       ].forEach(([label, enabled]) => {
         const flag = document.createElement("span");
         flag.className = "flag";
         flag.textContent = label + ": " + (enabled ? "on" : "off");
         flagsEl.appendChild(flag);
+      });
+
+      renderProviderControls(settings);
+    }
+
+    function renderProviderControls(settings) {
+      const providers = settings.provider_settings || {};
+      providersEl.innerHTML = "";
+
+      [
+        ["kommo", "Kommo"],
+        ["zernio", "Zernio"]
+      ].forEach(([provider, label]) => {
+        const enabled = !providers[provider] || providers[provider].enabled !== false;
+        const button = document.createElement("button");
+        button.className = "provider-toggle " + (enabled ? "is-on" : "is-off");
+        button.type = "button";
+        button.textContent = label + ": " + (enabled ? "on" : "off");
+
+        button.addEventListener("click", async () => {
+          button.disabled = true;
+          const nextEnabled = !enabled;
+          setStatus((nextEnabled ? "Enabling " : "Disabling ") + label + "...");
+          try {
+            await api("/api/providers", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ provider, enabled: nextEnabled })
+            });
+            await loadDrafts();
+            setStatus(label + " " + (nextEnabled ? "enabled." : "disabled."));
+          } catch (error) {
+            setStatus(error.message);
+            button.disabled = false;
+          }
+        });
+
+        providersEl.appendChild(button);
       });
     }
 

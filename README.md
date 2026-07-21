@@ -173,6 +173,20 @@ Training link counts use the current YouTube Academy URL:
 https://youtube.com/@palletprosacademy
 ```
 
+## Provider Controls
+
+The homepage has Kommo and Zernio on/off controls. They are stored in `data/store.json` with the rest of the local app state.
+
+When a provider is off:
+
+```text
+Incoming webhooks from that provider are ignored
+Draft Send is blocked for that provider
+Scheduled follow-ups for that provider are skipped
+```
+
+This is useful while moving from Kommo to Zernio. Leave Zernio on and turn Kommo off once your Zernio webhook is working.
+
 ## Follow-Ups
 
 Follow-ups are disabled unless:
