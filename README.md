@@ -45,6 +45,7 @@ Notes:
 - `ZERNIO_WEBHOOK_SECRET` verifies signed Zernio webhooks. If you do not configure it yet, `/webhook/zernio?secret=WEBHOOK_SECRET` can use the simple query-secret fallback.
 - `AUTO_SEND=true` sends replies immediately only when the AI returns `needs_review: false`.
 - `AUTO_SEND=false` saves every generated reply as a pending draft.
+- The homepage can override `AUTO_SEND` and the other feature flags without editing DigitalOcean env vars.
 - `HUMANIZE_REPLIES_ENABLED=true` adds relaxed Instagram DM style guidance to the AI prompt.
 - `TYPING_INDICATOR_ENABLED=true` asks Zernio to show typing before sending when the provider supports it.
 - `HUMAN_SEND_DELAY_ENABLED=true` adds a short randomized delay before Zernio sends.
@@ -200,6 +201,21 @@ Scheduled follow-ups for that provider are skipped
 ```
 
 This is useful while moving from Kommo to Zernio. Leave Zernio on and turn Kommo off once your Zernio webhook is working.
+
+## Feature Controls
+
+The homepage also has on/off controls for:
+
+```text
+Auto-send
+Follow-ups
+Humanize
+Typing
+Delay
+Memory
+```
+
+These controls override the matching env vars and are stored in `data/store.json`. This lets you test auto-reply without redeploying.
 
 ## Human Feel
 

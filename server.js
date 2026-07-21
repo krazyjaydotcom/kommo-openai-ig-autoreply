@@ -28,6 +28,7 @@ const DEFAULT_STORE = {
     kommo: { enabled: true },
     zernio: { enabled: true }
   },
+  featureSettings: {},
   conversations: {},
   dailyStats: {}
 };
@@ -74,28 +75,66 @@ const HUMAN_STYLE_RULES = `Style guidance:
 - Keep punctuation relaxed. Do not use an exclamation point in every reply.
 - Never say or imply you are an AI, bot, automation, or typing.`;
 
-function isAutoSendEnabled() {
-  return String(process.env.AUTO_SEND || "").toLowerCase() === "true";
+function envFlag(name, fallback) {
+  const raw = process.env[name];
+
+  if (raw === undefined || raw === "") {
+    return fallback;
+  }
+
+  return String(raw).toLowerCase() === "true";
 }
 
-function isHumanizeRepliesEnabled() {
-  return String(process.env.HUMANIZE_REPLIES_ENABLED || "true").toLowerCase() === "true";
+function featureEnabled(settings, key, envName, fallback) {
+  if (settings && typeof settings[key] === "boolean") {
+    return settings[key];
+  }
+
+  return envFlag(envName, fallback);
 }
 
-function isTypingIndicatorEnabled() {
-  return String(process.env.TYPING_INDICATOR_ENABLED || "true").toLowerCase() === "true";
+function isAutoSendEnabled(settings) {
+  return featureEnabled(settings, "auto_send", "AUTO_SEND", false);
 }
 
-function isHumanSendDelayEnabled() {
-  return String(process.env.HUMAN_SEND_DELAY_ENABLED || "true").toLowerCase() === "true";
+function isHumanizeRepliesEnabled(settings) {
+  return featureEnabled(
+    settings,
+    "humanize_replies",
+    "HUMANIZE_REPLIES_ENABLED",
+    true
+  );
 }
 
-function isConversationMemoryEnabled() {
-  return String(process.env.CONVERSATION_MEMORY_ENABLED || "true").toLowerCase() === "true";
+function isTypingIndicatorEnabled(settings) {
+  return featureEnabled(
+    settings,
+    "typing_indicator",
+    "TYPING_INDICATOR_ENABLED",
+    true
+  );
 }
 
-function isFollowUpsEnabled() {
-  return String(process.env.FOLLOW_UPS_ENABLED || "").toLowerCase() === "true";
+function isHumanSendDelayEnabled(settings) {
+  return featureEnabled(
+    settings,
+    "human_send_delay",
+    "HUMAN_SEND_DELAY_ENABLED",
+    true
+  );
+}
+
+function isConversationMemoryEnabled(settings) {
+  return featureEnabled(
+    settings,
+    "conversation_memory",
+    "CONVERSATION_MEMORY_ENABLED",
+    true
+  );
+}
+
+function isFollowUpsEnabled(settings) {
+  return featureEnabled(settings, "follow_ups", "FOLLOW_UPS_ENABLED", false);
 }
 
 function requireEnv(name) {
@@ -111,8 +150,8 @@ function numberEnv(name, fallback) {
   return Number.isFinite(value) ? value : fallback;
 }
 
-function systemPrompt() {
-  if (!isHumanizeRepliesEnabled()) {
+function systemPrompt(settings) {
+  if (!isHumanizeRepliesEnabled(settings)) {
     return HOUSE_RULES;
   }
 
@@ -170,6 +209,7 @@ function normalizeStore(store) {
         ? parsed.conversationSettings
         : {},
     providerSettings: normalizeProviderSettings(parsed.providerSettings),
+    featureSettings: normalizeFeatureSettings(parsed.featureSettings),
     conversations:
       parsed.conversations && typeof parsed.conversations === "object"
         ? parsed.conversations
@@ -183,6 +223,44 @@ function normalizeStore(store) {
 
 function normalizeProvider(provider) {
   return provider === "zernio" ? "zernio" : "kommo";
+}
+
+function normalizeFeatureSettings(settings) {
+  const raw = settings && typeof settings === "object" ? settings : {};
+
+  return {
+    auto_send: featureEnabled(raw, "auto_send", "AUTO_SEND", false),
+    follow_ups: featureEnabled(raw, "follow_ups", "FOLLOW_UPS_ENABLED", false),
+    humanize_replies: featureEnabled(
+      raw,
+      "humanize_replies",
+      "HUMANIZE_REPLIES_ENABLED",
+      true
+    ),
+    typing_indicator: featureEnabled(
+      raw,
+      "typing_indicator",
+      "TYPING_INDICATOR_ENABLED",
+      true
+    ),
+    human_send_delay: featureEnabled(
+      raw,
+      "human_send_delay",
+      "HUMAN_SEND_DELAY_ENABLED",
+      true
+    ),
+    conversation_memory: featureEnabled(
+      raw,
+      "conversation_memory",
+      "CONVERSATION_MEMORY_ENABLED",
+      true
+    )
+  };
+}
+
+function getFeatureSettings(store) {
+  store.featureSettings = normalizeFeatureSettings(store.featureSettings);
+  return store.featureSettings;
 }
 
 function normalizeProviderSettings(settings) {
@@ -237,8 +315,8 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function humanSendDelayMs(replyText) {
-  if (!isHumanSendDelayEnabled()) {
+function humanSendDelayMs(replyText, settings) {
+  if (!isHumanSendDelayEnabled(settings)) {
     return 0;
   }
 
@@ -416,8 +494,8 @@ function updateQuestionMemory(memory, text) {
   }
 }
 
-function scheduleFollowUpIfNeeded(memory, replyText, sentAtMs = Date.now()) {
-  if (!isFollowUpsEnabled() || !replyLooksLikeQuestion(replyText)) {
+function scheduleFollowUpIfNeeded(memory, replyText, sentAtMs = Date.now(), settings) {
+  if (!isFollowUpsEnabled(settings) || !replyLooksLikeQuestion(replyText)) {
     memory.follow_up.active = false;
     return;
   }
@@ -493,8 +571,8 @@ function linkStatsForText(text) {
   };
 }
 
-function memoryForPrompt(memory) {
-  if (!memory || !isConversationMemoryEnabled()) {
+function memoryForPrompt(memory, settings) {
+  if (!memory || !isConversationMemoryEnabled(settings)) {
     return null;
   }
 
@@ -1030,10 +1108,16 @@ async function getConversationThreadForIncoming(incoming) {
   return getConversationThread(incoming.talk_id);
 }
 
-async function generateReply({ thread, newMessage, contextWarning, memory }) {
+async function generateReply({
+  thread,
+  newMessage,
+  contextWarning,
+  memory,
+  featureSettings
+}) {
   const payload = {
     conversation_history: thread.slice(-30),
-    conversation_memory: memoryForPrompt(memory),
+    conversation_memory: memoryForPrompt(memory, featureSettings),
     new_message: newMessage.text,
     context_warning: contextWarning || null
   };
@@ -1049,7 +1133,7 @@ async function generateReply({ thread, newMessage, contextWarning, memory }) {
       temperature: 0.4,
       response_format: { type: "json_object" },
       messages: [
-        { role: "system", content: systemPrompt() },
+        { role: "system", content: systemPrompt(featureSettings) },
         {
           role: "user",
           content:
@@ -1101,7 +1185,7 @@ async function sendReplyToKommo(talkId, replyText) {
   );
 }
 
-async function sendReplyToZernio(messageLike, replyText) {
+async function sendReplyToZernio(messageLike, replyText, featureSettings) {
   const conversationId =
     messageLike.zernio_conversation_id ||
     messageLike.conversation_id ||
@@ -1121,7 +1205,7 @@ async function sendReplyToZernio(messageLike, replyText) {
     throw new Error("Cannot send an empty reply.");
   }
 
-  await prepareZernioSend(messageLike, replyText);
+  await prepareZernioSend(messageLike, replyText, featureSettings);
 
   return zernioRequest(
     `/inbox/conversations/${encodeURIComponent(conversationId)}/messages`,
@@ -1135,8 +1219,8 @@ async function sendReplyToZernio(messageLike, replyText) {
   );
 }
 
-async function sendZernioTypingIndicator(messageLike) {
-  if (!isTypingIndicatorEnabled()) {
+async function sendZernioTypingIndicator(messageLike, featureSettings) {
+  if (!isTypingIndicatorEnabled(featureSettings)) {
     return;
   }
 
@@ -1164,30 +1248,30 @@ async function sendZernioTypingIndicator(messageLike) {
   }
 }
 
-async function prepareZernioSend(messageLike, replyText) {
-  await sendZernioTypingIndicator(messageLike);
+async function prepareZernioSend(messageLike, replyText, featureSettings) {
+  await sendZernioTypingIndicator(messageLike, featureSettings);
 
-  const delayMs = humanSendDelayMs(replyText);
+  const delayMs = humanSendDelayMs(replyText, featureSettings);
 
   if (delayMs > 0) {
     await sleep(delayMs);
   }
 }
 
-async function sendReply(messageLike, replyText) {
+async function sendReply(messageLike, replyText, featureSettings) {
   if (messageLike.provider === "zernio") {
-    return sendReplyToZernio(messageLike, replyText);
+    return sendReplyToZernio(messageLike, replyText, featureSettings);
   }
 
   return sendReplyToKommo(messageLike.talk_id || messageLike.current_talk_id, replyText);
 }
 
-async function generateFollowUpReply(memory) {
+async function generateFollowUpReply(memory, featureSettings) {
   const followUpNumber = Number(memory.follow_up?.count || 0) + 1;
   const payload = {
     follow_up_number: followUpNumber,
     original_question: memory.follow_up?.question_text || "",
-    conversation_memory: memoryForPrompt(memory)
+    conversation_memory: memoryForPrompt(memory, featureSettings)
   };
 
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -1201,7 +1285,7 @@ async function generateFollowUpReply(memory) {
       temperature: 0.35,
       response_format: { type: "json_object" },
       messages: [
-        { role: "system", content: systemPrompt() },
+        { role: "system", content: systemPrompt(featureSettings) },
         {
           role: "user",
           content:
@@ -1236,8 +1320,8 @@ async function generateFollowUpReply(memory) {
   };
 }
 
-async function recordIncomingForMemory(incoming) {
-  if (!isConversationMemoryEnabled()) {
+async function recordIncomingForMemory(incoming, featureSettings) {
+  if (!isConversationMemoryEnabled(featureSettings)) {
     return { duplicate: false, memory: null, conversationKey: makeConversationKey(incoming) };
   }
 
@@ -1265,7 +1349,8 @@ async function recordIncomingForMemory(incoming) {
 
 async function recordOutgoingForMemory(messageLike, replyText, options = {}) {
   const store = await readStore();
-  const memory = isConversationMemoryEnabled()
+  const featureSettings = getFeatureSettings(store);
+  const memory = isConversationMemoryEnabled(featureSettings)
     ? getConversationMemory(store, messageLike)
     : null;
   const conversationKey = memory?.key || makeConversationKey(messageLike);
@@ -1284,7 +1369,7 @@ async function recordOutgoingForMemory(messageLike, replyText, options = {}) {
     memory.summary = `Last outbound: ${String(replyText || "").slice(0, 240)}`;
     updateLinkMemory(memory, replyText);
     updateQuestionMemory(memory, replyText);
-    scheduleFollowUpIfNeeded(memory, replyText, sentAtMs);
+    scheduleFollowUpIfNeeded(memory, replyText, sentAtMs, featureSettings);
   }
 
   recordDailyStat(store, conversationKey, {
@@ -1302,7 +1387,7 @@ async function recordOutgoingForMemory(messageLike, replyText, options = {}) {
 let followUpSweepRunning = false;
 
 async function processDueFollowUps() {
-  if (!isFollowUpsEnabled() || followUpSweepRunning) {
+  if (followUpSweepRunning) {
     return;
   }
 
@@ -1311,6 +1396,12 @@ async function processDueFollowUps() {
   try {
     const nowMs = Date.now();
     const store = await readStore();
+    const featureSettings = getFeatureSettings(store);
+
+    if (!isFollowUpsEnabled(featureSettings)) {
+      return;
+    }
+
     const dueConversations = Object.values(store.conversations).filter((memory) => {
       const dueAtMs = memory.follow_up?.due_at
         ? new Date(memory.follow_up.due_at).getTime()
@@ -1344,9 +1435,14 @@ async function processDueFollowUps() {
 
 async function sendDueFollowUp(conversationKey) {
   const store = await readStore();
+  const featureSettings = getFeatureSettings(store);
   const memory = store.conversations[conversationKey];
 
   if (!memory || !memory.follow_up?.active || memory.ai_paused) {
+    return;
+  }
+
+  if (!isFollowUpsEnabled(featureSettings)) {
     return;
   }
 
@@ -1386,7 +1482,7 @@ async function sendDueFollowUp(conversationKey) {
   let aiReply;
 
   try {
-    aiReply = await generateFollowUpReply(memory);
+    aiReply = await generateFollowUpReply(memory, featureSettings);
   } catch (error) {
     memory.follow_up.active = false;
     memory.follow_up.due_at = null;
@@ -1439,7 +1535,7 @@ async function sendDueFollowUp(conversationKey) {
     return;
   }
 
-  if (!isAutoSendEnabled()) {
+  if (!isAutoSendEnabled(featureSettings)) {
     memory.follow_up.active = false;
     memory.follow_up.due_at = null;
     await writeStore(store);
@@ -1465,7 +1561,7 @@ async function sendDueFollowUp(conversationKey) {
   }
 
   try {
-    await sendReply(memory, replyText);
+    await sendReply(memory, replyText, featureSettings);
   } catch (error) {
     memory.follow_up.active = false;
     memory.follow_up.due_at = null;
@@ -1557,6 +1653,7 @@ async function processIncomingMessage(incoming, parsedPayload) {
   }
 
   const providerStore = await readStore();
+  const featureSettings = getFeatureSettings(providerStore);
   const provider = normalizeProvider(incoming.provider);
 
   if (!isProviderEnabled(providerStore, provider)) {
@@ -1564,7 +1661,10 @@ async function processIncomingMessage(incoming, parsedPayload) {
     return;
   }
 
-  const { duplicate, memory, conversationKey } = await recordIncomingForMemory(incoming);
+  const { duplicate, memory, conversationKey } = await recordIncomingForMemory(
+    incoming,
+    featureSettings
+  );
 
   if (duplicate) {
     console.log(`Webhook ignored: duplicate message ${incoming.incoming_message_id}.`);
@@ -1592,7 +1692,8 @@ async function processIncomingMessage(incoming, parsedPayload) {
       thread: filteredThread,
       newMessage: incoming,
       contextWarning,
-      memory
+      memory,
+      featureSettings
     });
   } catch (error) {
     await saveDraft({
@@ -1624,13 +1725,13 @@ async function processIncomingMessage(incoming, parsedPayload) {
   await writeStore(store);
 
   const shouldAutoSend =
-    isAutoSendEnabled() &&
+    isAutoSendEnabled(featureSettings) &&
     !settings.paused &&
     aiReply.needs_review === false &&
     Boolean(aiReply.reply);
 
   if (shouldAutoSend) {
-    await sendReply(incoming, aiReply.reply);
+    await sendReply(incoming, aiReply.reply, featureSettings);
     await recordOutgoingForMemory(incoming, aiReply.reply, { source: "auto" });
     console.log(`Auto-sent reply for talk_id=${incoming.talk_id}.`);
     return;
@@ -1765,6 +1866,7 @@ app.get("/api/stats", async (_req, res, next) => {
     const day = todayKey();
     const stats = getDailyStats(store, day);
     const providerSettings = getProviderSettings(store);
+    const featureSettings = getFeatureSettings(store);
     const { prospect_keys: _prospectKeys, ...publicStats } = stats;
 
     res.json({
@@ -1774,15 +1876,58 @@ app.get("/api/stats", async (_req, res, next) => {
         prospects_touched: stats.prospect_keys.length
       },
       settings: {
-        auto_send: isAutoSendEnabled(),
-        humanize_replies_enabled: isHumanizeRepliesEnabled(),
-        typing_indicator_enabled: isTypingIndicatorEnabled(),
-        human_send_delay_enabled: isHumanSendDelayEnabled(),
-        conversation_memory_enabled: isConversationMemoryEnabled(),
-        follow_ups_enabled: isFollowUpsEnabled(),
+        auto_send: isAutoSendEnabled(featureSettings),
+        humanize_replies_enabled: isHumanizeRepliesEnabled(featureSettings),
+        typing_indicator_enabled: isTypingIndicatorEnabled(featureSettings),
+        human_send_delay_enabled: isHumanSendDelayEnabled(featureSettings),
+        conversation_memory_enabled: isConversationMemoryEnabled(featureSettings),
+        follow_ups_enabled: isFollowUpsEnabled(featureSettings),
         zernio_configured: Boolean(process.env.ZERNIO_API_KEY),
+        feature_settings: featureSettings,
         provider_settings: providerSettings
       }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/features", async (_req, res, next) => {
+  try {
+    const store = await readStore();
+    res.json({
+      features: getFeatureSettings(store)
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/features", async (req, res, next) => {
+  try {
+    const feature = String(req.body.feature || "").toLowerCase();
+    const allowedFeatures = [
+      "auto_send",
+      "follow_ups",
+      "humanize_replies",
+      "typing_indicator",
+      "human_send_delay",
+      "conversation_memory"
+    ];
+
+    if (!allowedFeatures.includes(feature)) {
+      res.status(400).json({ ok: false, error: "Unknown feature." });
+      return;
+    }
+
+    const store = await readStore();
+    const featureSettings = getFeatureSettings(store);
+    featureSettings[feature] = Boolean(req.body.enabled);
+    await writeStore(store);
+
+    res.json({
+      ok: true,
+      features: getFeatureSettings(store)
     });
   } catch (error) {
     next(error);
@@ -1841,6 +1986,7 @@ app.post("/api/drafts/:id/approve", async (req, res, next) => {
 
     const reply = String(req.body.reply || draft.reply || "").trim();
     const provider = normalizeProvider(draft.provider);
+    const featureSettings = getFeatureSettings(store);
 
     if (!isProviderEnabled(store, provider)) {
       const error = `${provider} is disabled in provider controls.`;
@@ -1854,7 +2000,7 @@ app.post("/api/drafts/:id/approve", async (req, res, next) => {
     }
 
     try {
-      await sendReply(draft, reply);
+      await sendReply(draft, reply, featureSettings);
     } catch (error) {
       await updateDraft(draft.id, {
         reply,
@@ -2137,11 +2283,13 @@ function renderHomePage() {
     <section id="stats" class="stats-grid" aria-label="Daily tracker"></section>
     <section id="flags" class="flags" aria-label="Settings"></section>
     <section id="providers" class="provider-controls" aria-label="Provider controls"></section>
+    <section id="features" class="provider-controls" aria-label="Feature controls"></section>
     <section id="drafts" class="draft-list"></section>
   </main>
 
   <script>
     const draftsEl = document.getElementById("drafts");
+    const featuresEl = document.getElementById("features");
     const flagsEl = document.getElementById("flags");
     const providersEl = document.getElementById("providers");
     const statsEl = document.getElementById("stats");
@@ -2213,6 +2361,7 @@ function renderHomePage() {
       });
 
       renderProviderControls(settings);
+      renderFeatureControls(settings);
     }
 
     function renderProviderControls(settings) {
@@ -2248,6 +2397,46 @@ function renderHomePage() {
         });
 
         providersEl.appendChild(button);
+      });
+    }
+
+    function renderFeatureControls(settings) {
+      const features = settings.feature_settings || {};
+      featuresEl.innerHTML = "";
+
+      [
+        ["auto_send", "Auto-send"],
+        ["follow_ups", "Follow-ups"],
+        ["humanize_replies", "Humanize"],
+        ["typing_indicator", "Typing"],
+        ["human_send_delay", "Delay"],
+        ["conversation_memory", "Memory"]
+      ].forEach(([feature, label]) => {
+        const enabled = Boolean(features[feature]);
+        const button = document.createElement("button");
+        button.className = "provider-toggle " + (enabled ? "is-on" : "is-off");
+        button.type = "button";
+        button.textContent = label + ": " + (enabled ? "on" : "off");
+
+        button.addEventListener("click", async () => {
+          button.disabled = true;
+          const nextEnabled = !enabled;
+          setStatus((nextEnabled ? "Enabling " : "Disabling ") + label + "...");
+          try {
+            await api("/api/features", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ feature, enabled: nextEnabled })
+            });
+            await loadDrafts();
+            setStatus(label + " " + (nextEnabled ? "enabled." : "disabled."));
+          } catch (error) {
+            setStatus(error.message);
+            button.disabled = false;
+          }
+        });
+
+        featuresEl.appendChild(button);
       });
     }
 
@@ -2368,7 +2557,10 @@ function renderHomePage() {
 }
 
 ensureStoreFile()
-  .then(() => {
+  .then(async () => {
+    const store = await readStore();
+    const featureSettings = getFeatureSettings(store);
+
     setInterval(() => {
       processDueFollowUps().catch((error) => {
         console.error("Follow-up interval failed:", error);
@@ -2377,9 +2569,9 @@ ensureStoreFile()
 
     app.listen(PORT, () => {
       console.log(`Kommo OpenAI IG auto-reply app listening on port ${PORT}`);
-      console.log(`AUTO_SEND=${isAutoSendEnabled()}`);
-      console.log(`CONVERSATION_MEMORY_ENABLED=${isConversationMemoryEnabled()}`);
-      console.log(`FOLLOW_UPS_ENABLED=${isFollowUpsEnabled()}`);
+      console.log(`AUTO_SEND=${isAutoSendEnabled(featureSettings)}`);
+      console.log(`CONVERSATION_MEMORY_ENABLED=${isConversationMemoryEnabled(featureSettings)}`);
+      console.log(`FOLLOW_UPS_ENABLED=${isFollowUpsEnabled(featureSettings)}`);
     });
   })
   .catch((error) => {
