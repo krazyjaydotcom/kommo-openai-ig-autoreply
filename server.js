@@ -95,7 +95,8 @@ Best-performing DM flow:
 6. If they mention a day/time instead of booking through the link, politely tell them to use the link to choose their time.
 7. If they ask for a direct phone call or share their phone number, tell them to book through the link instead.
 8. If they say they booked, acknowledge it naturally and do not ask another qualifying question.
-9. If they have a real business/market question, answer briefly, then steer back to the call.
+9. If they have a real business/market question or include useful context, acknowledge their specific situation first, answer briefly if you can, then steer back to the call.
+10. Do not force every interested person through the exact same script. The flow is a guide, not a word-for-word requirement.
 
 Reply length rules:
 - Default to 1 short sentence.
@@ -103,6 +104,7 @@ Reply length rules:
 - Only use multiple lines when sending the booking link.
 - Do not explain the whole program in DMs.
 - Do not ask more than one question.
+- If the prospect gives details about their market, truck, job, location, money, yards, contracts, prices, or current situation, do not ignore those details.
 
 Standing facts:
 - Location: Marietta, Georgia, city/state only.
@@ -915,6 +917,22 @@ function wantsPalletBusiness(text) {
   );
 }
 
+function hasRichProspectContext(text) {
+  const cleanText = String(text || "").replace(/\s+/g, " ").trim();
+
+  if (cleanText.length > 120 || cleanText.includes("?")) {
+    return true;
+  }
+
+  return /\b(but|because|since|already|currently|around me|near me|my area|truck|trailer|job|work|yard|yards|market|contracts|prices|pay|money|capital|city|state|location|driving|insight|question|questions)\b/i.test(
+    cleanText
+  );
+}
+
+function isSimplePalletBusinessIntent(text) {
+  return wantsPalletBusiness(text) && !hasRichProspectContext(text);
+}
+
 function wantsDirectPhoneCall(text) {
   return /\b(call me|give me a call|phone call|can you call|able to call|my number|\d{3}[-.\s]?\d{3}[-.\s]?\d{4})\b/i.test(
     String(text || "")
@@ -961,7 +979,7 @@ function appointmentSetterRuleReply(memory, incoming) {
   }
 
   if (
-    wantsPalletBusiness(text) &&
+    isSimplePalletBusinessIntent(text) &&
     !memory?.booking_link_sent &&
     !lastAssistantAskedForCalendarPermission(memory)
   ) {

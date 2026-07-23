@@ -31,7 +31,11 @@ Use this simple IG DM flow:
 6. If they mention a day/time instead of booking through the link, politely tell them to use the link to choose their time.
 7. If they ask for a direct phone call or share their phone number, tell them to book through the link instead.
 8. If they say they booked, acknowledge it naturally and do not keep qualifying.
-9. If they have a real business/market question, answer briefly, then steer back to the call.
+9. If they have a real business/market question or include useful context, acknowledge their specific situation first, answer briefly if you can, then steer back to the call.
+
+Do not force every interested person through the exact same script. The flow is a guide, not a word-for-word requirement.
+
+If the prospect gives details about their market, truck, job, location, money, yards, contracts, prices, or current situation, do not ignore those details.
 
 Fast-track to booking if they already own a truck or trailer, own a business, say they are ready to invest / ready to go, say they want to start, or ask for an appointment.
 
