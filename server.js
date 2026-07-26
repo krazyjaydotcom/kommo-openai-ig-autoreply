@@ -105,6 +105,9 @@ Reply length rules:
 - Do not explain the whole program in DMs.
 - Do not ask more than one question.
 - If the prospect gives details about their market, truck, job, location, money, yards, contracts, prices, or current situation, do not ignore those details.
+- If the prospect asks a question inside their message, answer that question before asking them to book or sending the calendar link.
+- If they ask multiple questions, answer the most important one briefly and then guide them to the call.
+- Do not repeat the same calendar ask, greeting, link message, or qualifying question in back-to-back replies.
 
 Standing facts:
 - Location: Marietta, Georgia, city/state only.
@@ -138,6 +141,9 @@ const CONTEXT_RULES = `Context rules:
 - Treat conversation_history and conversation_memory as the source of truth for where the conversation is.
 - If the person refers to something they already did or you already sent, infer it from the prior messages instead of asking "for what?" or restarting the conversation.
 - Do not repeat a greeting, link, or qualifying question that already happened unless the newest message clearly asks for it.
+- Before writing, compare against recent assistant messages and avoid reusing the same wording.
+- If the newest message contains a question, answer it directly and briefly before steering to the next step.
+- When a prospect gives context, mirror one specific detail so the reply feels like it was written for them.
 - If the history is missing, contradictory, or too thin to answer confidently, set needs_review true.`;
 
 const KNOWLEDGE_RULES = `Business knowledge rules:
@@ -488,6 +494,34 @@ function comparableText(value) {
 
 function appOutgoingSource(source) {
   return ["auto", "manual_approval", "follow_up"].includes(String(source || ""));
+}
+
+function recentAssistantMessages(memory, limit = 5) {
+  return (Array.isArray(memory?.last_messages) ? memory.last_messages : [])
+    .filter((message) => message.role === "assistant")
+    .slice(-limit);
+}
+
+function replyRepeatsRecentAssistant(memory, replyText) {
+  const reply = comparableText(replyText);
+
+  if (!reply || reply.length < 18) {
+    return false;
+  }
+
+  return recentAssistantMessages(memory).some((message) => {
+    const previous = comparableText(message.text);
+
+    if (!previous || previous.length < 18) {
+      return false;
+    }
+
+    return (
+      previous === reply ||
+      (reply.length > 60 && previous.includes(reply)) ||
+      (previous.length > 60 && reply.includes(previous))
+    );
+  });
 }
 
 function toMessageTimestampMs(createdAt) {
@@ -929,6 +963,17 @@ function hasRichProspectContext(text) {
   );
 }
 
+function prospectAskedQuestion(text) {
+  const cleanText = String(text || "").replace(/\s+/g, " ").trim();
+
+  return (
+    cleanText.includes("?") ||
+    /\b(how|what|where|when|why|who|can i|can you|do you|does it|is it|are there|would|could|should|price|cost|pay|make|need|start)\b/i.test(
+      cleanText
+    )
+  );
+}
+
 function isSimplePalletBusinessIntent(text) {
   return wantsPalletBusiness(text) && !hasRichProspectContext(text);
 }
@@ -962,19 +1007,27 @@ function appointmentSetterRuleReply(memory, incoming) {
     return null;
   }
 
-  if (wantsDirectPhoneCall(text)) {
+  if (wantsDirectPhoneCall(text) && !hasRichProspectContext(text)) {
     return appointmentSetterPhoneReply(memory);
   }
 
-  if (memory?.booking_link_sent && mentionsSpecificTimeInsteadOfBooking(text)) {
+  if (
+    memory?.booking_link_sent &&
+    mentionsSpecificTimeInsteadOfBooking(text) &&
+    !prospectAskedQuestion(text)
+  ) {
     return appointmentSetterUseLinkReply();
   }
 
-  if (lastAssistantAskedForCalendarPermission(memory) && yesToCalendarLink(text)) {
+  if (
+    lastAssistantAskedForCalendarPermission(memory) &&
+    yesToCalendarLink(text) &&
+    !hasRichProspectContext(text)
+  ) {
     return appointmentSetterCalendarLinkReply();
   }
 
-  if (wantsContentOnly(text) && !wantsPalletBusiness(text)) {
+  if (wantsContentOnly(text) && !wantsPalletBusiness(text) && !prospectAskedQuestion(text)) {
     return appointmentSetterContentReply();
   }
 
@@ -2718,6 +2771,13 @@ async function processIncomingMessage(incoming, parsedPayload) {
     aiReply.needs_review = true;
   }
 
+  let reviewReason = "";
+
+  if (replyRepeatsRecentAssistant(memory, aiReply.reply)) {
+    aiReply.needs_review = true;
+    reviewReason = "AI reply repeated a recent assistant message.";
+  }
+
   const store = await readStore();
   const settings = getConversationSettings(store, incoming.talk_id);
   const holdReason = conversationHoldReason(settings);
@@ -2751,6 +2811,7 @@ async function processIncomingMessage(incoming, parsedPayload) {
     needs_review: true,
     reason:
       contextWarning ||
+      reviewReason ||
       holdReason ||
       (aiReply.needs_review ? "AI requested review." : "AUTO_SEND is not true.")
   });
