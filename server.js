@@ -132,7 +132,8 @@ const HUMAN_STYLE_RULES = `Style guidance:
 - Match the person's energy without copying slang unnaturally.
 - Do not greet them again if the conversation is already started.
 - Avoid canned phrases like "Thank you for reaching out" or "I'd be happy to assist."
-- Prefer plain, confident phrases like "Got you", "Solid", "Great", "No problem", and "Sounds good" when they fit.
+- Prefer plain, confident phrases like "Got you", "Solid", "No problem", and "Sounds good" when they fit.
+- Do not overuse "Great", "Perfect", "Awesome", or repeated upbeat openers.
 - Avoid long coaching-style answers. This is an appointment-setting DM, not a sales page.
 - Keep punctuation relaxed. Do not use an exclamation point in every reply.
 - Never say or imply you are an AI, bot, automation, or typing.`;
@@ -144,6 +145,9 @@ const CONTEXT_RULES = `Context rules:
 - Before writing, compare against recent assistant messages and avoid reusing the same wording.
 - If the newest message contains a question, answer it directly and briefly before steering to the next step.
 - When a prospect gives context, mirror one specific detail so the reply feels like it was written for them.
+- Bare replies like "yes", "ok", "sounds good", "how?", or "interested" depend on the previous assistant question. Use the last assistant message to decide what they are agreeing to.
+- If a bare reply cannot be confidently tied to the previous assistant question, set needs_review true instead of guessing.
+- Warm the lead up with one simple reason, timeline, or obstacle question before sending a calendar link unless they clearly asked for the link or already agreed to a call.
 - If the history is missing, contradictory, or too thin to answer confidently, set needs_review true.`;
 
 const KNOWLEDGE_RULES = `Business knowledge rules:
@@ -330,6 +334,10 @@ async function writeStore(store) {
 
 function normalizeStore(store) {
   const parsed = store && typeof store === "object" ? store : {};
+  const conversations =
+    parsed.conversations && typeof parsed.conversations === "object"
+      ? parsed.conversations
+      : {};
 
   return {
     drafts: Array.isArray(parsed.drafts) ? parsed.drafts : [],
@@ -340,10 +348,7 @@ function normalizeStore(store) {
         : {},
     providerSettings: normalizeProviderSettings(parsed.providerSettings),
     featureSettings: normalizeFeatureSettings(parsed.featureSettings),
-    conversations:
-      parsed.conversations && typeof parsed.conversations === "object"
-        ? parsed.conversations
-        : {},
+    conversations: mergeSplitConversationMemories(conversations),
     dailyStats:
       parsed.dailyStats && typeof parsed.dailyStats === "object"
         ? parsed.dailyStats
@@ -524,6 +529,23 @@ function replyRepeatsRecentAssistant(memory, replyText) {
   });
 }
 
+function hasRecentAssistantContext(memory, thread = []) {
+  const memoryHasAssistant = recentAssistantMessages(memory, 3).length > 0;
+  const threadHasAssistant = (Array.isArray(thread) ? thread : [])
+    .slice(-8)
+    .some((message) => {
+      const direction = normalizeDirection(message.direction || "");
+      return (
+        message.role === "assistant" ||
+        message.sender === "assistant" ||
+        direction === "outgoing" ||
+        direction === "sent"
+      );
+    });
+
+  return memoryHasAssistant || threadHasAssistant;
+}
+
 function toMessageTimestampMs(createdAt) {
   if (!createdAt) {
     return Date.now();
@@ -579,8 +601,247 @@ function makeConversationKey({
   return `${subdomain}:${channel}:${person}`;
 }
 
+function isUsefulZernioContactId(contactId, accountId) {
+  const contactText = String(contactId || "").trim();
+  const accountText = String(accountId || "").trim();
+
+  return Boolean(contactText && (!accountText || contactText !== accountText));
+}
+
+function findExistingConversationKey(store, messageLike, proposedKey) {
+  const conversations =
+    store.conversations && typeof store.conversations === "object"
+      ? store.conversations
+      : {};
+  const provider = normalizeProvider(messageLike.provider);
+  const talkId = String(
+    messageLike.zernio_conversation_id || messageLike.talk_id || ""
+  );
+  const accountId = String(messageLike.zernio_account_id || "");
+  const origin = String(messageLike.origin || "");
+
+  if (!talkId) {
+    return proposedKey;
+  }
+
+  const matches = Object.entries(conversations).filter(([, memory]) => {
+    if (!memory || typeof memory !== "object") {
+      return false;
+    }
+
+    const memoryTalkId = String(
+      memory.zernio_conversation_id || memory.current_talk_id || ""
+    );
+
+    return (
+      normalizeProvider(memory.provider) === provider &&
+      memoryTalkId === talkId &&
+      (!accountId || !memory.zernio_account_id || memory.zernio_account_id === accountId) &&
+      (!origin || !memory.origin || memory.origin === origin)
+    );
+  });
+
+  const prospectMatch = matches.find(([, memory]) =>
+    isUsefulZernioContactId(memory.contact_id, accountId)
+  );
+
+  return (prospectMatch || matches[0] || [proposedKey])[0];
+}
+
+function mergeUniqueList(...lists) {
+  const seen = new Set();
+  const merged = [];
+
+  for (const list of lists) {
+    if (!Array.isArray(list)) {
+      continue;
+    }
+
+    for (const item of list) {
+      const comparable =
+        item && typeof item === "object" ? JSON.stringify(item) : String(item);
+      if (!seen.has(comparable)) {
+        seen.add(comparable);
+        merged.push(item);
+      }
+    }
+  }
+
+  return merged;
+}
+
+function messageSortTime(message) {
+  const parsed = Date.parse(String(message?.at || ""));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function newerValue(currentValue, currentAt, incomingValue, incomingAt) {
+  if (!incomingValue) {
+    return currentValue || "";
+  }
+
+  if (!currentValue) {
+    return incomingValue;
+  }
+
+  return messageSortTime({ at: incomingAt }) >= messageSortTime({ at: currentAt })
+    ? incomingValue
+    : currentValue;
+}
+
+function chooseMergedZernioKey(firstKey, firstMemory, secondKey, secondMemory) {
+  const firstUseful = isUsefulZernioContactId(
+    firstMemory.contact_id,
+    firstMemory.zernio_account_id
+  );
+  const secondUseful = isUsefulZernioContactId(
+    secondMemory.contact_id,
+    secondMemory.zernio_account_id
+  );
+
+  if (firstUseful && !secondUseful) {
+    return firstKey;
+  }
+
+  if (secondUseful && !firstUseful) {
+    return secondKey;
+  }
+
+  return firstKey;
+}
+
+function mergeConversationMemory(target, source) {
+  const mergedMessages = mergeUniqueList(target.last_messages, source.last_messages)
+    .sort((a, b) => messageSortTime(a) - messageSortTime(b))
+    .slice(-MAX_RECENT_MEMORY_MESSAGES);
+  const lastIncomingAt = newerValue(
+    target.last_incoming_at,
+    target.last_incoming_at,
+    source.last_incoming_at,
+    source.last_incoming_at
+  );
+  const lastOutgoingAt = newerValue(
+    target.last_outgoing_at,
+    target.last_outgoing_at,
+    source.last_outgoing_at,
+    source.last_outgoing_at
+  );
+  const sourceHasNewerOutgoing =
+    messageSortTime({ at: source.last_outgoing_at }) >
+    messageSortTime({ at: target.last_outgoing_at });
+
+  target.contact_id =
+    isUsefulZernioContactId(target.contact_id, target.zernio_account_id)
+      ? target.contact_id
+      : source.contact_id || target.contact_id || "";
+  target.chat_id = target.chat_id || source.chat_id || "";
+  target.origin = target.origin || source.origin || "";
+  target.current_talk_id = target.current_talk_id || source.current_talk_id || "";
+  target.zernio_account_id =
+    target.zernio_account_id || source.zernio_account_id || "";
+  target.zernio_conversation_id =
+    target.zernio_conversation_id || source.zernio_conversation_id || "";
+  target.last_messages = mergedMessages;
+  target.processed_message_ids = mergeUniqueList(
+    target.processed_message_ids,
+    source.processed_message_ids
+  ).slice(-MAX_PROCESSED_MESSAGE_IDS);
+  target.questions_asked = mergeUniqueList(target.questions_asked, source.questions_asked);
+  target.youtube_link_sent = Boolean(target.youtube_link_sent || source.youtube_link_sent);
+  target.training_link_sent = Boolean(
+    target.training_link_sent || source.training_link_sent
+  );
+  target.booking_link_sent = Boolean(target.booking_link_sent || source.booking_link_sent);
+  target.booking_confirmed = Boolean(target.booking_confirmed || source.booking_confirmed);
+  target.ai_paused = Boolean(target.ai_paused || source.ai_paused);
+  target.manual_takeover_until =
+    newerValue(
+      target.manual_takeover_until,
+      target.manual_takeover_until,
+      source.manual_takeover_until,
+      source.manual_takeover_until
+    ) || null;
+  target.manual_takeover_since =
+    target.manual_takeover_since || source.manual_takeover_since || null;
+  target.pending_app_outgoing = mergeUniqueList(
+    target.pending_app_outgoing,
+    source.pending_app_outgoing
+  );
+  target.last_incoming_at = lastIncomingAt || null;
+  target.last_outgoing_at = lastOutgoingAt || null;
+  target.last_outgoing_source = sourceHasNewerOutgoing
+    ? source.last_outgoing_source || target.last_outgoing_source || ""
+    : target.last_outgoing_source || source.last_outgoing_source || "";
+
+  if (
+    source.follow_up?.active &&
+    (!target.follow_up?.active ||
+      messageSortTime({ at: source.follow_up.due_at }) <
+        messageSortTime({ at: target.follow_up.due_at }))
+  ) {
+    target.follow_up = { ...source.follow_up };
+  }
+
+  refreshMemorySummary(target);
+  target.lead_status = classifyLeadStatus(target);
+
+  return target;
+}
+
+function mergeSplitConversationMemories(conversations) {
+  const merged = {};
+  const byZernioTalk = new Map();
+
+  for (const [key, memory] of Object.entries(conversations || {})) {
+    if (!memory || typeof memory !== "object") {
+      continue;
+    }
+
+    const talkId = String(memory.zernio_conversation_id || memory.current_talk_id || "");
+    const mergeKey =
+      normalizeProvider(memory.provider) === "zernio" && talkId
+        ? [
+            "zernio",
+            memory.zernio_account_id || "",
+            memory.origin || "",
+            talkId
+          ].join(":")
+        : "";
+
+    if (!mergeKey || !byZernioTalk.has(mergeKey)) {
+      const targetKey = key;
+      merged[targetKey] = memory;
+      if (mergeKey) {
+        byZernioTalk.set(mergeKey, targetKey);
+      }
+      continue;
+    }
+
+    const existingKey = byZernioTalk.get(mergeKey);
+    const existingMemory = merged[existingKey];
+    const targetKey = chooseMergedZernioKey(existingKey, existingMemory, key, memory);
+
+    if (targetKey === existingKey) {
+      mergeConversationMemory(existingMemory, memory);
+      existingMemory.key = existingKey;
+      continue;
+    }
+
+    const replacementMemory = mergeConversationMemory(memory, existingMemory);
+    replacementMemory.key = key;
+    delete merged[existingKey];
+    merged[key] = replacementMemory;
+    byZernioTalk.set(mergeKey, key);
+  }
+
+  return merged;
+}
+
 function getConversationMemory(store, messageLike) {
-  const key = messageLike.conversation_key || makeConversationKey(messageLike);
+  const proposedKey = messageLike.conversation_key || makeConversationKey(messageLike);
+  const key = store.conversations?.[proposedKey]
+    ? proposedKey
+    : findExistingConversationKey(store, messageLike, proposedKey);
 
   if (!store.conversations[key]) {
     store.conversations[key] = {
@@ -622,7 +883,12 @@ function getConversationMemory(store, messageLike) {
   const memory = store.conversations[key];
   memory.key = key;
   memory.provider = messageLike.provider || memory.provider || "kommo";
-  memory.contact_id = messageLike.contact_id || memory.contact_id || "";
+  memory.contact_id =
+    messageLike.provider === "zernio"
+      ? isUsefulZernioContactId(messageLike.contact_id, messageLike.zernio_account_id)
+        ? messageLike.contact_id
+        : memory.contact_id || ""
+      : messageLike.contact_id || memory.contact_id || "";
   memory.chat_id = messageLike.chat_id || memory.chat_id || "";
   memory.origin = messageLike.origin || memory.origin || "";
   memory.current_talk_id = messageLike.talk_id || memory.current_talk_id || "";
@@ -886,7 +1152,7 @@ function updateQuestionMemory(memory, text) {
 function appointmentSetterCalendarAskReply() {
   return {
     reply:
-      "Great. Let's get on a Zoom call this week. That way we can research your market, answer any questions you have, and see if you'd be a good fit for the program.\n\nDo you mind if I send you a link to my calendar?",
+      "Got you. A quick Zoom is probably the best next step so I can see your market and point you the right way.\n\nWant me to send the calendar link?",
     needs_review: false,
     handled: true
   };
@@ -894,9 +1160,8 @@ function appointmentSetterCalendarAskReply() {
 
 function appointmentSetterCalendarLinkReply() {
   const messages = [
-    "Great. Give me one sec and I'll grab that link for you.",
-    `Here's the link to my calendar: ${BOOKING_URL}`,
-    "I'll be by my phone for the next 5 min. Choose a date/time that works well for you and I'll verify it on my end."
+    `Bet. Here's the calendar: ${BOOKING_URL}`,
+    "Pick a time that works for you and I'll verify it on my end."
   ];
 
   return {
@@ -909,7 +1174,7 @@ function appointmentSetterCalendarLinkReply() {
 
 function appointmentSetterUseLinkReply() {
   return {
-    reply: "Ok. Please use the link to choose your time.",
+    reply: "Sounds good. Use that calendar link to grab the weekday time that works best for you.",
     needs_review: false,
     handled: true
   };
@@ -918,8 +1183,8 @@ function appointmentSetterUseLinkReply() {
 function appointmentSetterPhoneReply(memory) {
   return {
     reply: memory?.booking_link_sent
-      ? "Please book your time using the link I sent earlier."
-      : `The best way is to book a time here: ${BOOKING_URL}`,
+      ? "Use the link I sent and grab the weekday time that works best for you."
+      : `The cleanest next step is to grab a weekday time here: ${BOOKING_URL}`,
     needs_review: false,
     handled: true
   };
@@ -927,7 +1192,15 @@ function appointmentSetterPhoneReply(memory) {
 
 function appointmentSetterContentReply() {
   return {
-    reply: `Got you. Check out the free content here: ${YOUTUBE_URL}`,
+    reply: `Got you. The YouTube is probably the best place to start: ${YOUTUBE_URL}`,
+    needs_review: false,
+    handled: true
+  };
+}
+
+function appointmentSetterWarmQualifierReply() {
+  return {
+    reply: "Got you. What's making you want to get into the pallet business right now?",
     needs_review: false,
     handled: true
   };
@@ -976,6 +1249,24 @@ function prospectAskedQuestion(text) {
 
 function isSimplePalletBusinessIntent(text) {
   return wantsPalletBusiness(text) && !hasRichProspectContext(text);
+}
+
+function isAmbiguousShortReply(text) {
+  const cleanText = String(text || "")
+    .toLowerCase()
+    .replace(/[^\w\s']/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return /^(yes|yea|yeah|yep|yup|ok|okay|k|sure|bet|cool|sounds good|interested|how|info|more info|send it|let s do it|lets do it)$/.test(
+    cleanText
+  );
+}
+
+function askedWarmQualifier(memory) {
+  return (Array.isArray(memory?.questions_asked) ? memory.questions_asked : []).includes(
+    "why_start"
+  );
 }
 
 function wantsDirectPhoneCall(text) {
@@ -1036,7 +1327,9 @@ function appointmentSetterRuleReply(memory, incoming) {
     !memory?.booking_link_sent &&
     !lastAssistantAskedForCalendarPermission(memory)
   ) {
-    return appointmentSetterCalendarAskReply();
+    return askedWarmQualifier(memory)
+      ? appointmentSetterCalendarAskReply()
+      : appointmentSetterWarmQualifierReply();
   }
 
   return null;
@@ -1657,6 +1950,35 @@ function extractZernioIncomingMessage(payload) {
     "sender.id",
     "senderId"
   ]);
+  const recipientId = pickValue(payload, [
+    "data.recipient.contactId",
+    "data.recipient.id",
+    "data.recipientId",
+    "data.recipient_id",
+    "data.receiver.contactId",
+    "data.receiver.id",
+    "data.receiverId",
+    "data.receiver_id",
+    "data.contactId",
+    "data.contact_id",
+    "data.customer.id",
+    "data.customerId",
+    "data.customer_id",
+    "message.recipient.contactId",
+    "message.recipient.id",
+    "message.recipientId",
+    "message.recipient_id",
+    "message.receiver.contactId",
+    "message.receiver.id",
+    "message.receiverId",
+    "message.receiver_id",
+    "message.contactId",
+    "message.contact_id",
+    "recipient.id",
+    "recipientId",
+    "contactId",
+    "contact_id"
+  ]);
   const timestamp = pickValue(payload, [
     "data.timestamp",
     "data.createdAt",
@@ -1670,17 +1992,25 @@ function extractZernioIncomingMessage(payload) {
   const stableMessageId = eventId || messageId || `${conversationId || "unknown"}:${timestamp || Date.now()}`;
   const textValue =
     text && typeof text === "object" ? text.text || text.message || "" : text;
+  const normalizedDirection = normalizeDirection(direction);
+  const accountText = accountId ? String(accountId) : "";
+  const senderText = senderId ? String(senderId) : "";
+  const recipientText = recipientId ? String(recipientId) : "";
+  const contactId =
+    normalizedDirection === "outgoing" || senderText === accountText
+      ? recipientText || (senderText !== accountText ? senderText : "")
+      : senderText || recipientText;
 
   return {
     provider: "zernio",
     talk_id: conversationId ? String(conversationId) : "",
     chat_id: conversationId ? String(conversationId) : "",
-    contact_id: senderId ? String(senderId) : "",
+    contact_id: contactId ? String(contactId) : "",
     zernio_conversation_id: conversationId ? String(conversationId) : "",
     zernio_account_id: accountId ? String(accountId) : "",
     incoming_message_id: stableMessageId ? String(stableMessageId) : "",
     text: textValue ? String(textValue).trim() : "",
-    direction: normalizeDirection(direction),
+    direction: normalizedDirection,
     message_type: "text",
     origin: platform ? String(platform).toLowerCase() : "",
     event_type: eventType ? String(eventType) : "",
@@ -2122,57 +2452,15 @@ async function sendReplySequence(messageLike, replyLike, featureSettings) {
 
 async function generateFollowUpReply(memory, featureSettings) {
   const followUpNumber = Number(memory.follow_up?.count || 0) + 1;
-  const businessKnowledge = await loadKnowledgeBase();
-  const payload = {
-    follow_up_number: followUpNumber,
-    original_question: memory.follow_up?.question_text || "",
-    conversation_memory: memoryForPrompt(memory, featureSettings),
-    business_knowledge: businessKnowledge || null
-  };
-
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${requireEnv("OPENAI_API_KEY")}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model: process.env.OPENAI_MODEL || DEFAULT_OPENAI_MODEL,
-      temperature: 0.35,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: systemPrompt(featureSettings) },
-        {
-          role: "user",
-          content:
-            "The prospect has not answered after the assistant asked a question. " +
-            "Write a gentle, short follow-up nudge for Instagram. Do not sound pushy. " +
-            "Do not ask more than one question. Use business_knowledge for Pallet Pros voice. Return JSON only.\n" +
-            JSON.stringify(payload, null, 2)
-        }
-      ]
-    })
-  });
-
-  const responseText = await response.text();
-  const responseBody = safeJsonParse(responseText);
-
-  if (!response.ok) {
-    throw new Error(
-      `OpenAI API ${response.status} ${response.statusText}: ${responseText}`
-    );
-  }
-
-  const content = responseBody?.choices?.[0]?.message?.content || "";
-  const parsed = safeJsonParse(content);
-
-  if (!parsed || typeof parsed.reply !== "string") {
-    throw new Error(`OpenAI returned unexpected follow-up content: ${content}`);
-  }
+  const replies = [
+    "Still interested in getting this started?",
+    "No pressure, just checking if this is still something you want to look into.",
+    "I'll leave it with you for now. If you want the next step, just message me back."
+  ];
 
   return {
-    reply: parsed.reply.trim(),
-    needs_review: parsed.needs_review !== false
+    reply: replies[Math.min(followUpNumber, replies.length) - 1],
+    needs_review: false
   };
 }
 
@@ -2767,11 +3055,21 @@ async function processIncomingMessage(incoming, parsedPayload) {
     return;
   }
 
+  let reviewReason = "";
+
   if (contextWarning) {
     aiReply.needs_review = true;
+    reviewReason = contextWarning;
   }
 
-  let reviewReason = "";
+  if (
+    !reviewReason &&
+    isAmbiguousShortReply(incoming.text) &&
+    !hasRecentAssistantContext(memory, filteredThread)
+  ) {
+    aiReply.needs_review = true;
+    reviewReason = "Ambiguous short reply without enough prior assistant context.";
+  }
 
   if (replyRepeatsRecentAssistant(memory, aiReply.reply)) {
     aiReply.needs_review = true;
@@ -2810,7 +3108,6 @@ async function processIncomingMessage(incoming, parsedPayload) {
     reply: aiReply.reply,
     needs_review: true,
     reason:
-      contextWarning ||
       reviewReason ||
       holdReason ||
       (aiReply.needs_review ? "AI requested review." : "AUTO_SEND is not true.")
