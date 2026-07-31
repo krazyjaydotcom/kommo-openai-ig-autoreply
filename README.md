@@ -101,6 +101,30 @@ The app records the click in `data/store.json`, marks the matching conversation 
 https://www.tidycal.com/palletprosga/discovery?lead_id=IG_USER_ID
 ```
 
+The dashboard also has a manual `Send Booking Link` action for each conversation. It sends the same tracked `go.palletprosacademy.com` URL, not the raw DigitalOcean URL.
+
+## Booking Confirmation Webhook
+
+If your post-booking/application page can fire a webhook after a call is scheduled, send it here:
+
+```text
+https://YOUR-DIGITALOCEAN-APP-URL/api/webhooks/booking-confirmed
+```
+
+The payload or query string should include one of these fields:
+
+```text
+lead_id
+ig_user_id
+id
+```
+
+When the app receives it, it records the booking event, marks the matching lead as `Appointment Scheduled`, and updates the conversion analytics.
+
+## Instagram Avatar Metadata
+
+The webhook parser saves `username`, `profile_pic`, `profilePic`, `avatar`, or `avatar_url` if Zernio includes them. You can optionally set `META_GRAPH_ACCESS_TOKEN` and `META_GRAPH_VERSION` so the app can make a best-effort Meta Graph lookup for `username` and `profile_pic` when the sender ID is available.
+
 ## Webhook URL
 
 Paste this into Zernio:

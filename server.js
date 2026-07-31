@@ -18,6 +18,9 @@ const YOUTUBE_URL = "https://youtube.com/@palletprosacademy";
 const BOOKING_URL = "https://www.tidycal.com/palletprosga/discovery";
 const TRACKED_BOOKING_BASE_URL =
   process.env.TRACKED_BOOKING_BASE_URL || "https://go.palletprosacademy.com/discovery";
+const META_GRAPH_VERSION = process.env.META_GRAPH_VERSION || "v20.0";
+const META_GRAPH_ACCESS_TOKEN =
+  process.env.META_GRAPH_ACCESS_TOKEN || process.env.INSTAGRAM_ACCESS_TOKEN || "";
 const TRAINING_PLAYLIST_URL =
   "https://www.youtube.com/playlist?list=PLPFyOjF-83nJ0B5xCreYqoQzcGx-SQsvs";
 const MAX_KNOWLEDGE_CHARS = 12_000;
@@ -51,6 +54,8 @@ const DEFAULT_STORE = {
   },
   conversations: {},
   linkClicks: [],
+  bookingEvents: [],
+  profileCache: {},
   dailyStats: {}
 };
 
@@ -344,6 +349,11 @@ function normalizeStore(store) {
     featureSettings: normalizeFeatureSettings(parsed.featureSettings),
     conversations: mergeSplitConversationMemories(conversations),
     linkClicks: Array.isArray(parsed.linkClicks) ? parsed.linkClicks : [],
+    bookingEvents: Array.isArray(parsed.bookingEvents) ? parsed.bookingEvents : [],
+    profileCache:
+      parsed.profileCache && typeof parsed.profileCache === "object"
+        ? parsed.profileCache
+        : {},
     dailyStats:
       parsed.dailyStats && typeof parsed.dailyStats === "object"
         ? parsed.dailyStats
@@ -575,6 +585,58 @@ function todayKey(date = new Date()) {
   return date.toISOString().slice(0, 10);
 }
 
+function resolveTimeframe(value) {
+  const key = String(value || "24h").toLowerCase();
+  return ["24h", "7d", "30d", "90d", "ytd", "all"].includes(key) ? key : "24h";
+}
+
+function timeframeStartDate(timeframe, now = new Date()) {
+  const resolved = resolveTimeframe(timeframe);
+
+  if (resolved === "all") {
+    return null;
+  }
+
+  if (resolved === "ytd") {
+    return new Date(Date.UTC(now.getUTCFullYear(), 0, 1));
+  }
+
+  const hours = {
+    "24h": 24,
+    "7d": 24 * 7,
+    "30d": 24 * 30,
+    "90d": 24 * 90
+  }[resolved];
+
+  return new Date(now.getTime() - hours * 60 * 60 * 1000);
+}
+
+function isDateInTimeframe(value, timeframe, now = new Date()) {
+  if (resolveTimeframe(timeframe) === "all") {
+    return true;
+  }
+
+  const date = value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) {
+    return false;
+  }
+
+  return date >= timeframeStartDate(timeframe, now) && date <= now;
+}
+
+function latestConversationTime(memory) {
+  const times = [
+    memory?.last_incoming_at,
+    memory?.last_outgoing_at,
+    memory?.booking_link_clicked_at,
+    memory?.booking_confirmed_at
+  ]
+    .map((value) => Date.parse(String(value || "")))
+    .filter((value) => Number.isFinite(value));
+
+  return times.length ? new Date(Math.max(...times)).toISOString() : "";
+}
+
 function makeConversationKey({
   provider,
   contact_id,
@@ -726,6 +788,11 @@ function mergeConversationMemory(target, source) {
     isUsefulZernioContactId(target.contact_id, target.zernio_account_id)
       ? target.contact_id
       : source.contact_id || target.contact_id || "";
+  target.username = target.username || source.username || "";
+  target.avatar_url =
+    cacheableAvatarUrl(target.avatar_url) || cacheableAvatarUrl(source.avatar_url);
+  target.profile_last_checked_at =
+    target.profile_last_checked_at || source.profile_last_checked_at || null;
   target.chat_id = target.chat_id || source.chat_id || "";
   target.origin = target.origin || source.origin || "";
   target.current_talk_id = target.current_talk_id || source.current_talk_id || "";
@@ -744,7 +811,24 @@ function mergeConversationMemory(target, source) {
     target.training_link_sent || source.training_link_sent
   );
   target.booking_link_sent = Boolean(target.booking_link_sent || source.booking_link_sent);
+  target.booking_link_clicked = Boolean(
+    target.booking_link_clicked || source.booking_link_clicked
+  );
+  target.booking_link_clicked_at =
+    newerValue(
+      target.booking_link_clicked_at,
+      target.booking_link_clicked_at,
+      source.booking_link_clicked_at,
+      source.booking_link_clicked_at
+    ) || null;
   target.booking_confirmed = Boolean(target.booking_confirmed || source.booking_confirmed);
+  target.booking_confirmed_at =
+    newerValue(
+      target.booking_confirmed_at,
+      target.booking_confirmed_at,
+      source.booking_confirmed_at,
+      source.booking_confirmed_at
+    ) || null;
   target.ai_paused = Boolean(target.ai_paused || source.ai_paused);
   target.manual_takeover_until =
     newerValue(
@@ -840,6 +924,9 @@ function getConversationMemory(store, messageLike) {
       key,
       provider: normalizeProvider(messageLike.provider),
       contact_id: messageLike.contact_id || "",
+      username: messageLike.username || "",
+      avatar_url: messageLike.avatar_url || "",
+      profile_last_checked_at: null,
       chat_id: messageLike.chat_id || "",
       origin: messageLike.origin || "",
       current_talk_id: messageLike.talk_id || "",
@@ -883,6 +970,11 @@ function getConversationMemory(store, messageLike) {
         ? messageLike.contact_id
         : memory.contact_id || ""
       : messageLike.contact_id || memory.contact_id || "";
+  memory.username =
+    String(messageLike.username || "").trim().replace(/^@/, "") || memory.username || "";
+  memory.avatar_url =
+    cacheableAvatarUrl(messageLike.avatar_url) || cacheableAvatarUrl(memory.avatar_url);
+  memory.profile_last_checked_at = memory.profile_last_checked_at || null;
   memory.chat_id = messageLike.chat_id || memory.chat_id || "";
   memory.origin = messageLike.origin || memory.origin || "";
   memory.current_talk_id = messageLike.talk_id || memory.current_talk_id || "";
@@ -909,6 +1001,7 @@ function getConversationMemory(store, messageLike) {
   memory.booking_link_clicked = Boolean(memory.booking_link_clicked);
   memory.booking_link_clicked_at = memory.booking_link_clicked_at || null;
   memory.booking_confirmed = Boolean(memory.booking_confirmed);
+  memory.booking_confirmed_at = memory.booking_confirmed_at || null;
   memory.lead_status = classifyLeadStatus(memory);
   memory.manual_takeover_until = memory.manual_takeover_until || null;
   memory.manual_takeover_since = memory.manual_takeover_since || null;
@@ -1444,6 +1537,7 @@ function getDailyStats(store, day = todayKey()) {
       youtube_links_sent: 0,
       booking_links_sent: 0,
       booking_link_clicks: 0,
+      appointments_scheduled: 0,
       followups_sent: 0
     };
   }
@@ -1512,6 +1606,70 @@ async function recordBookingLinkClick(req) {
   return leadId;
 }
 
+function leadMatchesMemory(memory, leadId) {
+  const id = String(leadId || "").trim();
+  if (!id || !memory || typeof memory !== "object") {
+    return false;
+  }
+
+  return [
+    memory.contact_id,
+    memory.chat_id,
+    memory.current_talk_id,
+    memory.zernio_conversation_id
+  ]
+    .map((value) => String(value || ""))
+    .includes(id);
+}
+
+async function recordAppointmentScheduled({ leadId, source = "booking_webhook", payload = {} }) {
+  const cleanLeadId = String(leadId || "").trim().slice(0, 160);
+  const bookedAt = new Date().toISOString();
+  const store = await readStore();
+  let matched = false;
+
+  store.bookingEvents.push({
+    id: crypto.randomUUID(),
+    lead_id: cleanLeadId,
+    booked_at: bookedAt,
+    source,
+    payload: JSON.stringify(payload || {}).slice(0, 3000)
+  });
+  store.bookingEvents = store.bookingEvents.slice(-1000);
+
+  if (cleanLeadId) {
+    for (const memory of Object.values(store.conversations || {})) {
+      if (!leadMatchesMemory(memory, cleanLeadId)) {
+        continue;
+      }
+
+      matched = true;
+      const wasConfirmed = Boolean(memory.booking_confirmed);
+      memory.booking_confirmed = true;
+      memory.booking_confirmed_at = memory.booking_confirmed_at || bookedAt;
+      memory.booking_link_clicked = true;
+      memory.booking_link_clicked_at = memory.booking_link_clicked_at || bookedAt;
+      memory.lead_status = "booked";
+      refreshMemorySummary(memory);
+
+      if (!wasConfirmed) {
+        recordDailyStat(store, memory.key || `booking:${cleanLeadId}`, {
+          appointments_scheduled: 1
+        });
+      }
+    }
+  }
+
+  if (!matched) {
+    recordDailyStat(store, cleanLeadId ? `booking:${cleanLeadId}` : "booking:unknown", {
+      appointments_scheduled: 1
+    });
+  }
+
+  await writeStore(store);
+  return { lead_id: cleanLeadId, matched, booked_at: bookedAt };
+}
+
 function getAllTimeStats(store) {
   const totals = {
     prospects_touched: 0,
@@ -1524,6 +1682,7 @@ function getAllTimeStats(store) {
     youtube_links_sent: 0,
     booking_links_sent: 0,
     booking_link_clicks: 0,
+    appointments_scheduled: 0,
     followups_sent: 0
   };
   const prospectKeys = new Set();
@@ -1546,6 +1705,7 @@ function getAllTimeStats(store) {
       "youtube_links_sent",
       "booking_links_sent",
       "booking_link_clicks",
+      "appointments_scheduled",
       "followups_sent"
     ]) {
       totals[key] += Number(normalizedStats[key] || 0);
@@ -1555,6 +1715,100 @@ function getAllTimeStats(store) {
   totals.prospect_keys = [...prospectKeys];
   totals.prospects_touched = totals.prospect_keys.length;
   return totals;
+}
+
+function emptyStats() {
+  return {
+    prospects_touched: 0,
+    prospect_keys: [],
+    ai_replies_sent: 0,
+    manual_approvals_sent: 0,
+    auto_replies_sent: 0,
+    drafts_created: 0,
+    training_links_sent: 0,
+    youtube_links_sent: 0,
+    booking_links_sent: 0,
+    booking_link_clicks: 0,
+    appointments_scheduled: 0,
+    followups_sent: 0
+  };
+}
+
+function statsForTimeframe(store, timeframe) {
+  if (resolveTimeframe(timeframe) === "all") {
+    return getAllTimeStats(store);
+  }
+
+  const now = new Date();
+  const totals = emptyStats();
+  const prospectKeys = new Set();
+
+  for (const [day, stats] of Object.entries(store.dailyStats || {})) {
+    const dayDate = new Date(`${day}T23:59:59.999Z`);
+    if (Number.isNaN(dayDate.getTime()) || !isDateInTimeframe(dayDate.toISOString(), timeframe, now)) {
+      continue;
+    }
+
+    const normalizedStats = stats && typeof stats === "object" ? stats : {};
+    for (const key of Array.isArray(normalizedStats.prospect_keys)
+      ? normalizedStats.prospect_keys
+      : []) {
+      prospectKeys.add(key);
+    }
+
+    for (const key of [
+      "ai_replies_sent",
+      "manual_approvals_sent",
+      "auto_replies_sent",
+      "drafts_created",
+      "training_links_sent",
+      "youtube_links_sent",
+      "booking_links_sent",
+      "booking_link_clicks",
+      "appointments_scheduled",
+      "followups_sent"
+    ]) {
+      totals[key] += Number(normalizedStats[key] || 0);
+    }
+  }
+
+  totals.prospect_keys = [...prospectKeys];
+  totals.prospects_touched = totals.prospect_keys.length;
+  return totals;
+}
+
+function conversationInTimeframe(memory, timeframe) {
+  return isDateInTimeframe(latestConversationTime(memory), timeframe);
+}
+
+function conversationHasAssistantReply(memory) {
+  return (Array.isArray(memory?.last_messages) ? memory.last_messages : []).some(
+    (message) => message.role === "assistant"
+  );
+}
+
+function conversationKpisForTimeframe(store, timeframe) {
+  const conversations = Object.values(store.conversations || {}).filter((memory) =>
+    conversationInTimeframe(memory, timeframe)
+  );
+  const totalLeads = conversations.length;
+  const aiReplied = conversations.filter(conversationHasAssistantReply).length;
+  const linkSent = conversations.filter((memory) => memory.booking_link_sent).length;
+  const linkClicked = conversations.filter((memory) => memory.booking_link_clicked).length;
+  const callBooked = conversations.filter((memory) => memory.booking_confirmed).length;
+
+  return {
+    total_leads: totalLeads,
+    ai_replied: aiReplied,
+    booking_links_sent: linkSent,
+    booking_link_clicks: linkClicked,
+    appointments_scheduled: callBooked,
+    link_sent_rate: totalLeads ? Math.round((linkSent / totalLeads) * 1000) / 10 : 0,
+    click_through_rate: linkSent ? Math.round((linkClicked / linkSent) * 1000) / 10 : 0,
+    booking_conversion_rate: linkClicked
+      ? Math.round((callBooked / linkClicked) * 1000) / 10
+      : 0
+  };
 }
 
 function recordDailyStat(store, conversationKey, increments = {}) {
@@ -1680,6 +1934,8 @@ function publicConversation(memory, settings = {}) {
     key: memory.key,
     provider: normalizeProvider(memory.provider),
     contact_id: memory.contact_id || "",
+    username: memory.username || "",
+    avatar_url: cacheableAvatarUrl(memory.avatar_url),
     talk_id: memory.current_talk_id || "",
     origin: memory.origin || "",
     lead_status: memory.lead_status || classifyLeadStatus(memory),
@@ -1697,6 +1953,7 @@ function publicConversation(memory, settings = {}) {
     booking_link_clicked_at: memory.booking_link_clicked_at || null,
     training_link_sent: Boolean(memory.training_link_sent),
     booking_confirmed: Boolean(memory.booking_confirmed),
+    booking_confirmed_at: memory.booking_confirmed_at || null,
     follow_up: memory.follow_up || {}
   };
 }
@@ -1929,6 +2186,35 @@ function extractZernioIncomingMessage(payload) {
     "sender.id",
     "senderId"
   ]);
+  const username = pickValue(payload, [
+    "data.sender.username",
+    "data.sender.handle",
+    "data.customer.username",
+    "data.customer.handle",
+    "message.sender.username",
+    "message.sender.handle",
+    "sender.username",
+    "sender.handle",
+    "username",
+    "handle"
+  ]);
+  const avatarUrl = pickValue(payload, [
+    "data.sender.profile_pic",
+    "data.sender.profilePic",
+    "data.sender.avatar",
+    "data.customer.profile_pic",
+    "data.customer.profilePic",
+    "data.customer.avatar",
+    "message.sender.profile_pic",
+    "message.sender.profilePic",
+    "message.sender.avatar",
+    "sender.profile_pic",
+    "sender.profilePic",
+    "sender.avatar",
+    "profile_pic",
+    "avatar",
+    "avatar_url"
+  ]);
   const recipientId = pickValue(payload, [
     "data.recipient.contactId",
     "data.recipient.id",
@@ -1985,6 +2271,8 @@ function extractZernioIncomingMessage(payload) {
     talk_id: conversationId ? String(conversationId) : "",
     chat_id: conversationId ? String(conversationId) : "",
     contact_id: contactId ? String(contactId) : "",
+    username: username ? String(username).trim().replace(/^@/, "") : "",
+    avatar_url: cacheableAvatarUrl(avatarUrl),
     zernio_conversation_id: conversationId ? String(conversationId) : "",
     zernio_account_id: accountId ? String(accountId) : "",
     incoming_message_id: stableMessageId ? String(stableMessageId) : "",
@@ -2055,6 +2343,106 @@ function firstTextValue(...values) {
   }
 
   return "";
+}
+
+function cacheableAvatarUrl(value) {
+  const text = String(value || "").trim();
+  if (!text) {
+    return "";
+  }
+
+  try {
+    const url = new URL(text);
+    return ["http:", "https:"].includes(url.protocol) ? url.toString() : "";
+  } catch {
+    return "";
+  }
+}
+
+async function fetchInstagramProfile(senderId) {
+  const id = String(senderId || "").trim();
+  if (!id || !META_GRAPH_ACCESS_TOKEN) {
+    return null;
+  }
+
+  const url = new URL(`https://graph.facebook.com/${META_GRAPH_VERSION}/${encodeURIComponent(id)}`);
+  url.searchParams.set("fields", "username,profile_pic");
+  url.searchParams.set("access_token", META_GRAPH_ACCESS_TOKEN);
+
+  try {
+    const response = await fetch(url);
+    const body = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      console.warn(
+        `Meta profile lookup failed for ${id}: ${response.status} ${JSON.stringify(body).slice(0, 300)}`
+      );
+      return null;
+    }
+
+    return {
+      username: String(body.username || "").trim(),
+      avatar_url: cacheableAvatarUrl(body.profile_pic)
+    };
+  } catch (error) {
+    console.warn(`Meta profile lookup failed for ${id}: ${error.message}`);
+    return null;
+  }
+}
+
+async function hydrateLeadProfile(store, memory, messageLike) {
+  const leadId = String(messageLike.contact_id || memory.contact_id || "").trim();
+  if (!leadId) {
+    return;
+  }
+
+  store.profileCache = store.profileCache && typeof store.profileCache === "object"
+    ? store.profileCache
+    : {};
+
+  const directUsername = String(messageLike.username || "").trim().replace(/^@/, "");
+  const directAvatar = cacheableAvatarUrl(messageLike.avatar_url);
+
+  if (directUsername || directAvatar) {
+    const cached = store.profileCache[leadId] || {};
+    store.profileCache[leadId] = {
+      ...cached,
+      username: directUsername || cached.username || "",
+      avatar_url: directAvatar || cached.avatar_url || "",
+      updated_at: new Date().toISOString(),
+      source: directAvatar ? "webhook" : cached.source || "webhook"
+    };
+  }
+
+  const cached = store.profileCache[leadId];
+  if (cached) {
+    memory.username = memory.username || cached.username || "";
+    memory.avatar_url =
+      cacheableAvatarUrl(memory.avatar_url) || cacheableAvatarUrl(cached.avatar_url);
+  }
+
+  const lastCheckedMs = Date.parse(String(memory.profile_last_checked_at || ""));
+  const recentlyChecked =
+    Number.isFinite(lastCheckedMs) && Date.now() - lastCheckedMs < 24 * 60 * 60 * 1000;
+
+  if ((memory.username && memory.avatar_url) || recentlyChecked || !META_GRAPH_ACCESS_TOKEN) {
+    return;
+  }
+
+  memory.profile_last_checked_at = new Date().toISOString();
+  const profile = await fetchInstagramProfile(leadId);
+  if (!profile) {
+    return;
+  }
+
+  store.profileCache[leadId] = {
+    username: profile.username || memory.username || "",
+    avatar_url: profile.avatar_url || memory.avatar_url || "",
+    updated_at: new Date().toISOString(),
+    source: "meta"
+  };
+  memory.username = profile.username || memory.username || "";
+  memory.avatar_url = profile.avatar_url || memory.avatar_url || "";
 }
 
 function parseMessageTimestamp(value) {
@@ -2365,14 +2753,20 @@ async function recordIncomingForMemory(incoming, featureSettings) {
 
   const store = await readStore();
   const memory = getConversationMemory(store, incoming);
+  await hydrateLeadProfile(store, memory, incoming);
   const duplicate = markProcessedMessage(memory, incoming.incoming_message_id);
 
   if (!duplicate) {
     const incomingAt = new Date(toMessageTimestampMs(incoming.created_at)).toISOString();
     memory.last_incoming_at = incomingAt;
     if (isBookingConfirmation(incoming.text)) {
+      const wasConfirmed = Boolean(memory.booking_confirmed);
       memory.booking_confirmed = true;
       memory.booking_link_sent = true;
+      memory.booking_confirmed_at = incomingAt;
+      if (!wasConfirmed) {
+        recordDailyStat(store, memory.key, { appointments_scheduled: 1 });
+      }
     }
     cancelFollowUp(memory);
     addMemoryMessage(memory, {
@@ -3072,7 +3466,7 @@ app.post(
 app.use(express.json({ limit: "1mb" }));
 
 app.get("/", (_req, res) => {
-  res.type("html").send(renderHomePage());
+  res.type("html").send(renderModernHomePage());
 });
 
 app.get("/discovery", async (req, res, next) => {
@@ -3088,6 +3482,10 @@ app.get("/discovery", async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+app.get("/dashboard", (_req, res) => {
+  res.type("html").send(renderModernHomePage());
 });
 
 app.get("/manifest.webmanifest", (_req, res) => {
@@ -3142,12 +3540,15 @@ app.get("/api/drafts", async (_req, res, next) => {
   }
 });
 
-app.get("/api/stats", async (_req, res, next) => {
+app.get("/api/stats", async (req, res, next) => {
   try {
     const store = await readStore();
+    const timeframe = resolveTimeframe(req.query.timeframe);
     const day = todayKey();
     const stats = getDailyStats(store, day);
     const allTimeStats = getAllTimeStats(store);
+    const timeframeStats = statsForTimeframe(store, timeframe);
+    const funnel = conversationKpisForTimeframe(store, timeframe);
     const providerSettings = getProviderSettings(store);
     const featureSettings = getFeatureSettings(store);
     const businessKnowledge = await loadKnowledgeBase();
@@ -3155,9 +3556,12 @@ app.get("/api/stats", async (_req, res, next) => {
 
     res.json({
       day,
+      timeframe,
       stats: publicStats(stats),
       today_stats: publicStats(stats),
       all_time_stats: publicStats(allTimeStats),
+      timeframe_stats: publicStats(timeframeStats),
+      funnel,
       settings: {
         auto_send: isAutoSendEnabled(featureSettings),
         humanize_replies_enabled: isHumanizeRepliesEnabled(featureSettings),
@@ -3251,6 +3655,40 @@ app.post("/api/delay", async (req, res, next) => {
       delay: humanSendDelayBounds(getFeatureSettings(store)),
       features: getFeatureSettings(store)
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/webhooks/booking-confirmed", async (req, res, next) => {
+  try {
+    const leadId =
+      pickValue(req.body || {}, [
+        "lead_id",
+        "ig_user_id",
+        "IG_USER_ID",
+        "data.lead_id",
+        "data.ig_user_id",
+        "query.lead_id",
+        "url_params.lead_id",
+        "contact.lead_id",
+        "metadata.lead_id"
+      ]) ||
+      req.query.lead_id ||
+      req.query.id;
+
+    if (!leadId) {
+      res.status(400).json({ ok: false, error: "Missing lead_id or id." });
+      return;
+    }
+
+    const event = await recordAppointmentScheduled({
+      leadId,
+      source: "booking_confirmed_webhook",
+      payload: req.body || {}
+    });
+
+    res.json({ ok: true, event });
   } catch (error) {
     next(error);
   }
@@ -3383,10 +3821,12 @@ app.post("/api/drafts/:id/reject", async (req, res, next) => {
   }
 });
 
-app.get("/api/conversations", async (_req, res, next) => {
+app.get("/api/conversations", async (req, res, next) => {
   try {
     const store = await readStore();
+    const timeframe = resolveTimeframe(req.query.timeframe || "all");
     const conversations = Object.values(store.conversations)
+      .filter((memory) => conversationInTimeframe(memory, timeframe))
       .map((memory) =>
         publicConversation(
           memory,
@@ -3400,7 +3840,7 @@ app.get("/api/conversations", async (_req, res, next) => {
       });
 
     await writeStore(store);
-    res.json({ conversations });
+    res.json({ conversations, timeframe });
   } catch (error) {
     next(error);
   }
@@ -3451,6 +3891,53 @@ app.post("/api/conversations/:key/resume", async (req, res, next) => {
 
     await writeStore(store);
     res.json({ ok: true, conversation: publicConversation(memory, settings) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/conversations/:key/send-booking-link", async (req, res, next) => {
+  try {
+    const store = await readStore();
+    const memory = store.conversations[req.params.key];
+
+    if (!memory) {
+      res.status(404).json({ ok: false, error: "Conversation not found" });
+      return;
+    }
+
+    const messageLike = {
+      provider: memory.provider,
+      contact_id: memory.contact_id,
+      chat_id: memory.chat_id,
+      talk_id: memory.current_talk_id,
+      zernio_conversation_id: memory.zernio_conversation_id,
+      zernio_account_id: memory.zernio_account_id,
+      origin: memory.origin
+    };
+    const reply =
+      "Bet. Here's the calendar:\n" +
+      trackedBookingUrl(messageLike) +
+      "\n\nChoose a weekday time that works for you.";
+    const featureSettings = getFeatureSettings(store);
+
+    try {
+      await sendReply(messageLike, reply, featureSettings);
+    } catch (error) {
+      res.status(502).json({ ok: false, error: error.message });
+      return;
+    }
+
+    await recordOutgoingForMemory(messageLike, reply, { source: "manual_booking_link" });
+    const updatedStore = await readStore();
+    const updatedMemory = updatedStore.conversations[req.params.key] || memory;
+    const settings = getConversationSettings(updatedStore, updatedMemory.current_talk_id);
+
+    res.json({
+      ok: true,
+      reply,
+      conversation: publicConversation(updatedMemory, settings)
+    });
   } catch (error) {
     next(error);
   }
@@ -4589,6 +5076,1181 @@ function renderHomePage() {
 
     loadDrafts();
     setInterval(() => loadDrafts({ silent: true }), 10000);
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    }
+  </script>
+</body>
+</html>`;
+}
+
+function renderModernHomePage() {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#09110f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="DM Setter">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/app-icon.svg" type="image/svg+xml">
+  <title>Pallet Pros AI Setter</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #07100e;
+      --bg-2: #0c1715;
+      --panel: rgba(18, 31, 29, 0.78);
+      --panel-strong: rgba(24, 39, 36, 0.92);
+      --panel-soft: rgba(255, 255, 255, 0.06);
+      --border: rgba(255, 255, 255, 0.12);
+      --border-strong: rgba(144, 242, 215, 0.32);
+      --text: #f6fbf8;
+      --muted: #9fb2ad;
+      --dim: #6f827d;
+      --green: #39df9f;
+      --teal: #45d6d0;
+      --violet: #9c7cff;
+      --gold: #f4c95d;
+      --red: #ff6b7a;
+      --blue: #69a7ff;
+      --shadow: 0 22px 70px rgba(0, 0, 0, 0.34);
+      --radius: 16px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html {
+      min-height: 100%;
+      background:
+        radial-gradient(circle at 12% 8%, rgba(69, 214, 208, 0.2), transparent 28%),
+        radial-gradient(circle at 88% 18%, rgba(156, 124, 255, 0.18), transparent 28%),
+        linear-gradient(145deg, var(--bg), #101b1a 52%, #09110f);
+      -webkit-text-size-adjust: 100%;
+    }
+
+    body {
+      min-height: 100%;
+      margin: 0;
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+      letter-spacing: 0;
+    }
+
+    button,
+    input,
+    textarea,
+    select {
+      font: inherit;
+    }
+
+    button {
+      border: 0;
+      cursor: pointer;
+      transition: transform 140ms ease, border-color 140ms ease, background 140ms ease, opacity 140ms ease;
+    }
+
+    button:hover:not(:disabled) {
+      transform: translateY(-1px);
+    }
+
+    button:disabled {
+      cursor: wait;
+      opacity: 0.58;
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: 248px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      border-right: 1px solid var(--border);
+      background: rgba(4, 11, 10, 0.64);
+      backdrop-filter: blur(22px);
+      padding: 22px 16px;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+    }
+
+    .brand {
+      align-items: center;
+      display: flex;
+      gap: 12px;
+      margin-bottom: 28px;
+    }
+
+    .brand-mark {
+      align-items: center;
+      background: linear-gradient(135deg, rgba(69, 214, 208, 0.24), rgba(156, 124, 255, 0.28));
+      border: 1px solid var(--border-strong);
+      border-radius: 14px;
+      display: grid;
+      font-size: 18px;
+      font-weight: 900;
+      height: 46px;
+      justify-items: center;
+      width: 46px;
+    }
+
+    .brand strong {
+      display: block;
+      font-size: 15px;
+      line-height: 1.15;
+    }
+
+    .brand span {
+      color: var(--muted);
+      display: block;
+      font-size: 12px;
+      margin-top: 3px;
+    }
+
+    .nav {
+      display: grid;
+      gap: 8px;
+    }
+
+    .nav a,
+    .bottom-nav a {
+      align-items: center;
+      border: 1px solid transparent;
+      border-radius: 14px;
+      color: var(--muted);
+      display: flex;
+      gap: 10px;
+      min-height: 48px;
+      padding: 0 13px;
+      text-decoration: none;
+    }
+
+    .nav a.active,
+    .nav a:hover,
+    .bottom-nav a.active {
+      background: rgba(255, 255, 255, 0.07);
+      border-color: var(--border);
+      color: var(--text);
+    }
+
+    .main {
+      min-width: 0;
+      padding: 24px 26px 46px;
+    }
+
+    .topbar {
+      align-items: flex-start;
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 20px;
+    }
+
+    .eyebrow {
+      color: var(--teal);
+      font-size: 12px;
+      font-weight: 800;
+      margin: 0 0 7px;
+      text-transform: uppercase;
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin-top: 0;
+    }
+
+    h1 {
+      font-size: clamp(30px, 5vw, 54px);
+      line-height: 0.98;
+      margin-bottom: 9px;
+    }
+
+    .subhead {
+      color: var(--muted);
+      max-width: 780px;
+      margin-bottom: 0;
+    }
+
+    .status-stack {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: flex-end;
+      min-width: 275px;
+    }
+
+    .status-pill {
+      align-items: center;
+      background: rgba(57, 223, 159, 0.1);
+      border: 1px solid rgba(57, 223, 159, 0.28);
+      border-radius: 999px;
+      color: #dffdf2;
+      display: inline-flex;
+      font-size: 12px;
+      font-weight: 800;
+      gap: 8px;
+      min-height: 36px;
+      padding: 0 12px;
+      white-space: nowrap;
+    }
+
+    .status-pill::before {
+      background: var(--green);
+      border-radius: 50%;
+      box-shadow: 0 0 16px rgba(57, 223, 159, 0.8);
+      content: "";
+      height: 8px;
+      width: 8px;
+    }
+
+    .timeframe {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 18px;
+      padding: 7px;
+    }
+
+    .timeframe button {
+      background: transparent;
+      border-radius: 12px;
+      color: var(--muted);
+      min-height: 40px;
+      padding: 0 15px;
+    }
+
+    .timeframe button.active {
+      background: linear-gradient(135deg, rgba(69, 214, 208, 0.9), rgba(156, 124, 255, 0.86));
+      color: #06100f;
+      font-weight: 900;
+    }
+
+    .grid {
+      display: grid;
+      gap: 14px;
+    }
+
+    .kpis {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      margin-bottom: 16px;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(24px);
+    }
+
+    .kpi {
+      min-height: 142px;
+      overflow: hidden;
+      padding: 17px;
+      position: relative;
+    }
+
+    .kpi::after {
+      background: linear-gradient(135deg, rgba(69, 214, 208, 0.26), rgba(156, 124, 255, 0.14));
+      border-radius: 50%;
+      content: "";
+      height: 110px;
+      position: absolute;
+      right: -34px;
+      top: -34px;
+      width: 110px;
+    }
+
+    .kpi span {
+      color: var(--muted);
+      display: block;
+      font-size: 13px;
+      font-weight: 800;
+      margin-bottom: 16px;
+    }
+
+    .kpi strong {
+      display: block;
+      font-size: 34px;
+      line-height: 1;
+      position: relative;
+      z-index: 1;
+    }
+
+    .kpi small {
+      color: var(--teal);
+      display: block;
+      font-size: 12px;
+      font-weight: 800;
+      margin-top: 8px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .content-grid {
+      align-items: start;
+      grid-template-columns: minmax(0, 1.15fr) minmax(340px, 0.85fr);
+    }
+
+    .panel {
+      padding: 18px;
+    }
+
+    .panel-head {
+      align-items: center;
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+
+    .panel h2 {
+      font-size: 18px;
+      margin: 0;
+    }
+
+    .panel-note {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .funnel {
+      display: grid;
+      gap: 12px;
+    }
+
+    .funnel-row {
+      display: grid;
+      gap: 8px;
+    }
+
+    .funnel-label {
+      align-items: center;
+      display: flex;
+      justify-content: space-between;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .bar {
+      background: rgba(255, 255, 255, 0.07);
+      border-radius: 999px;
+      height: 12px;
+      overflow: hidden;
+    }
+
+    .bar span {
+      background: linear-gradient(90deg, var(--teal), var(--violet));
+      border-radius: inherit;
+      display: block;
+      height: 100%;
+      min-width: 4px;
+      transition: width 240ms ease;
+    }
+
+    .activity {
+      display: grid;
+      gap: 10px;
+      max-height: 720px;
+      overflow: auto;
+      padding-right: 3px;
+    }
+
+    .lead {
+      background: rgba(255, 255, 255, 0.055);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      display: grid;
+      gap: 12px;
+      padding: 14px;
+    }
+
+    .lead-top {
+      align-items: center;
+      display: grid;
+      gap: 12px;
+      grid-template-columns: 48px minmax(0, 1fr) auto;
+    }
+
+    .avatar {
+      align-items: center;
+      background: linear-gradient(135deg, rgba(69, 214, 208, 0.42), rgba(244, 201, 93, 0.26));
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 50%;
+      display: grid;
+      font-weight: 900;
+      height: 48px;
+      justify-items: center;
+      overflow: hidden;
+      width: 48px;
+    }
+
+    .avatar img {
+      height: 100%;
+      object-fit: cover;
+      width: 100%;
+    }
+
+    .lead-name {
+      display: block;
+      font-size: 15px;
+      font-weight: 900;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .lead-meta,
+    .lead-message {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .lead-message {
+      line-height: 1.4;
+    }
+
+    .tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .tag {
+      background: rgba(255, 255, 255, 0.07);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      color: var(--muted);
+      display: inline-flex;
+      font-size: 11px;
+      font-weight: 900;
+      min-height: 26px;
+      padding: 5px 8px;
+      text-transform: uppercase;
+    }
+
+    .tag.green { color: #c9ffe9; border-color: rgba(57, 223, 159, 0.35); }
+    .tag.gold { color: #ffe7a3; border-color: rgba(244, 201, 93, 0.4); }
+    .tag.blue { color: #d7e8ff; border-color: rgba(105, 167, 255, 0.42); }
+    .tag.red { color: #ffd7dd; border-color: rgba(255, 107, 122, 0.42); }
+    .tag.violet { color: #e6ddff; border-color: rgba(156, 124, 255, 0.42); }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .action {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 900;
+      min-height: 40px;
+      padding: 0 11px;
+    }
+
+    .action.primary {
+      background: rgba(57, 223, 159, 0.16);
+      border-color: rgba(57, 223, 159, 0.35);
+    }
+
+    .action.warn {
+      background: rgba(244, 201, 93, 0.12);
+      border-color: rgba(244, 201, 93, 0.38);
+    }
+
+    .controls {
+      display: grid;
+      gap: 10px;
+    }
+
+    .control-row {
+      align-items: center;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .toggle {
+      background: rgba(255, 255, 255, 0.07);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 900;
+      min-height: 40px;
+      padding: 0 12px;
+    }
+
+    .toggle.on {
+      background: rgba(57, 223, 159, 0.14);
+      border-color: rgba(57, 223, 159, 0.36);
+      color: #dffdf2;
+    }
+
+    .toggle.off {
+      background: rgba(255, 107, 122, 0.1);
+      border-color: rgba(255, 107, 122, 0.32);
+      color: #ffd8de;
+    }
+
+    .test-grid {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: 1fr 1fr;
+      margin-top: 12px;
+    }
+
+    textarea {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      color: var(--text);
+      min-height: 118px;
+      padding: 12px;
+      resize: vertical;
+      width: 100%;
+    }
+
+    textarea:focus {
+      border-color: rgba(69, 214, 208, 0.6);
+      outline: none;
+    }
+
+    .result {
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 10px;
+      white-space: pre-wrap;
+    }
+
+    .drafts {
+      display: grid;
+      gap: 10px;
+    }
+
+    .empty {
+      border: 1px dashed var(--border);
+      border-radius: 16px;
+      color: var(--muted);
+      padding: 22px;
+      text-align: center;
+    }
+
+    .toast {
+      color: var(--muted);
+      font-size: 13px;
+      min-height: 19px;
+    }
+
+    .bottom-nav {
+      display: none;
+    }
+
+    @media (prefers-color-scheme: light) {
+      :root {
+        color-scheme: light;
+        --bg: #edf5f2;
+        --bg-2: #f8fbfa;
+        --panel: rgba(255, 255, 255, 0.78);
+        --panel-strong: rgba(255, 255, 255, 0.92);
+        --panel-soft: rgba(9, 17, 15, 0.06);
+        --border: rgba(9, 17, 15, 0.12);
+        --text: #07100e;
+        --muted: #52635f;
+        --dim: #73847f;
+      }
+    }
+
+    @media (max-width: 1020px) {
+      .app {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        display: none;
+      }
+
+      .main {
+        padding: 18px 14px 90px;
+      }
+
+      .topbar {
+        display: grid;
+      }
+
+      .status-stack {
+        justify-content: flex-start;
+        min-width: 0;
+      }
+
+      .kpis,
+      .content-grid,
+      .test-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .bottom-nav {
+        background: rgba(4, 11, 10, 0.72);
+        backdrop-filter: blur(20px);
+        border: 1px solid var(--border);
+        border-radius: 18px 18px 0 0;
+        bottom: 0;
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        left: 0;
+        padding: 7px 8px max(7px, env(safe-area-inset-bottom));
+        position: fixed;
+        right: 0;
+        z-index: 20;
+      }
+
+      .bottom-nav a {
+        border-radius: 14px;
+        display: grid;
+        font-size: 11px;
+        gap: 2px;
+        justify-items: center;
+        min-height: 52px;
+        padding: 5px 3px;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .main {
+        padding-left: 10px;
+        padding-right: 10px;
+      }
+
+      .timeframe {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+      }
+
+      .timeframe button {
+        min-height: 44px;
+        padding: 0 8px;
+      }
+
+      .kpi {
+        min-height: 118px;
+      }
+
+      .lead-top {
+        grid-template-columns: 48px minmax(0, 1fr);
+      }
+
+      .lead-top .tag {
+        grid-column: 1 / -1;
+        width: fit-content;
+      }
+
+      .actions {
+        display: grid;
+        grid-template-columns: 1fr;
+      }
+
+      .action {
+        min-height: 48px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">AS</div>
+        <div><strong>Pallet Pros</strong><span>AI Setter v2</span></div>
+      </div>
+      <nav class="nav" aria-label="Primary">
+        <a class="active" href="#dashboard">Dashboard</a>
+        <a href="#activity">Live Logs</a>
+        <a href="#settings">Prompt Settings</a>
+        <a href="#analytics">Analytics</a>
+      </nav>
+    </aside>
+
+    <main class="main">
+      <section class="topbar" id="dashboard">
+        <div>
+          <p class="eyebrow">Instagram auto-reply and analytics</p>
+          <h1>Your Lead Pulse</h1>
+          <p class="subhead">Track incoming IG leads, AI responses, calendar-link clicks, and booked discovery calls from one mobile-ready command center.</p>
+        </div>
+        <div>
+          <div class="status-stack">
+            <span class="status-pill" id="bot-status">OpenAI Bot: Checking</span>
+            <span class="status-pill" id="webhook-status">IG Webhook: Checking</span>
+          </div>
+          <div class="toast" id="status"></div>
+        </div>
+      </section>
+
+      <section class="timeframe" aria-label="Timeframe selector">
+        <button type="button" data-range="24h" class="active">24 Hours</button>
+        <button type="button" data-range="7d">7 Days</button>
+        <button type="button" data-range="30d">30 Days</button>
+        <button type="button" data-range="90d">90 Days</button>
+        <button type="button" data-range="ytd">YTD</button>
+        <button type="button" data-range="all">All Time</button>
+      </section>
+
+      <section class="grid kpis" id="kpis" aria-label="KPI summary"></section>
+
+      <section class="grid content-grid">
+        <section class="card panel" id="analytics">
+          <div class="panel-head">
+            <h2>Conversion Funnel</h2>
+            <span class="panel-note" id="range-label">24 Hours</span>
+          </div>
+          <div class="funnel" id="funnel"></div>
+        </section>
+
+        <section class="card panel" id="settings">
+          <div class="panel-head">
+            <h2>Operations</h2>
+            <span class="panel-note">Live controls</span>
+          </div>
+          <div class="controls">
+            <div class="control-row" id="features"></div>
+            <div class="control-row" id="flags"></div>
+          </div>
+        </section>
+      </section>
+
+      <section class="grid content-grid" style="margin-top:14px;">
+        <section class="card panel" id="activity">
+          <div class="panel-head">
+            <h2>Real-Time Activity Feed</h2>
+            <span class="panel-note" id="activity-count"></span>
+          </div>
+          <div class="activity" id="conversations"></div>
+        </section>
+
+        <section class="card panel">
+          <div class="panel-head">
+            <h2>Test Reply</h2>
+            <span class="panel-note">Preview only</span>
+          </div>
+          <div class="test-grid">
+            <textarea id="test-transcript" aria-label="Test transcript" placeholder="Prospect: I want to learn pallets&#10;You: Is this something you want to pursue?"></textarea>
+            <textarea id="test-new-message" aria-label="Newest test message" placeholder="Newest prospect message"></textarea>
+          </div>
+          <div class="actions" style="margin-top:10px;">
+            <button id="test-button" class="action primary" type="button">Preview Reply</button>
+          </div>
+          <div id="test-result" class="result"></div>
+        </section>
+      </section>
+
+      <section class="card panel" style="margin-top:14px;">
+        <div class="panel-head">
+          <h2>Pending Drafts</h2>
+          <span class="panel-note">Approval queue</span>
+        </div>
+        <div id="drafts" class="drafts"></div>
+      </section>
+    </main>
+  </div>
+
+  <nav class="bottom-nav" aria-label="Mobile navigation">
+    <a class="active" href="#dashboard">Dash</a>
+    <a href="#activity">Logs</a>
+    <a href="#settings">Settings</a>
+    <a href="#analytics">Stats</a>
+  </nav>
+
+  <script>
+    const state = { timeframe: "24h", conversations: [] };
+    const conversationsEl = document.getElementById("conversations");
+    const draftsEl = document.getElementById("drafts");
+    const featuresEl = document.getElementById("features");
+    const flagsEl = document.getElementById("flags");
+    const kpisEl = document.getElementById("kpis");
+    const funnelEl = document.getElementById("funnel");
+    const statusEl = document.getElementById("status");
+    const botStatusEl = document.getElementById("bot-status");
+    const webhookStatusEl = document.getElementById("webhook-status");
+    const rangeLabelEl = document.getElementById("range-label");
+    const activityCountEl = document.getElementById("activity-count");
+    const testButton = document.getElementById("test-button");
+    const testTranscript = document.getElementById("test-transcript");
+    const testNewMessage = document.getElementById("test-new-message");
+    const testResult = document.getElementById("test-result");
+
+    function setStatus(message) {
+      statusEl.textContent = message || "";
+    }
+
+    function timeframeLabel(value) {
+      return {
+        "24h": "24 Hours",
+        "7d": "7 Days",
+        "30d": "30 Days",
+        "90d": "90 Days",
+        ytd: "Year to Date",
+        all: "All Time"
+      }[value] || "24 Hours";
+    }
+
+    function formatDate(value) {
+      if (!value) return "No timestamp";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return "No timestamp";
+      return date.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    }
+
+    function percent(value) {
+      const number = Number(value || 0);
+      return number.toFixed(number % 1 ? 1 : 0) + "%";
+    }
+
+    function initials(conversation) {
+      const source = conversation.username || conversation.contact_id || conversation.talk_id || "IG";
+      return String(source).replace(/[^a-z0-9]/gi, "").slice(0, 2).toUpperCase() || "IG";
+    }
+
+    async function api(path, options) {
+      const response = await fetch(path, options);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Request failed");
+      return data;
+    }
+
+    function renderKpis(data) {
+      const funnel = data.funnel || {};
+      const totalDms = Math.max(Number((data.timeframe_stats || {}).prospects_touched || 0), Number(funnel.total_leads || 0));
+      const cards = [
+        ["Total IG Leads Captured", funnel.total_leads || totalDms || 0, timeframeLabel(state.timeframe)],
+        ["Booking Links Sent", funnel.booking_links_sent || 0, percent(funnel.link_sent_rate || 0) + " of leads"],
+        ["Booking Link Clicks", funnel.booking_link_clicks || 0, percent(funnel.click_through_rate || 0) + " CTR"],
+        ["Discovery Calls Scheduled", funnel.appointments_scheduled || 0, percent(funnel.booking_conversion_rate || 0) + " conversion"]
+      ];
+      kpisEl.innerHTML = "";
+      cards.forEach(([label, value, detail]) => {
+        const card = document.createElement("article");
+        card.className = "card kpi";
+        const title = document.createElement("span");
+        title.textContent = label;
+        const metric = document.createElement("strong");
+        metric.textContent = value;
+        const small = document.createElement("small");
+        small.textContent = detail;
+        card.append(title, metric, small);
+        kpisEl.appendChild(card);
+      });
+    }
+
+    function renderFunnel(data) {
+      const funnel = data.funnel || {};
+      const stages = [
+        ["IG Leads", funnel.total_leads || 0],
+        ["AI Replied", funnel.ai_replied || 0],
+        ["Link Sent", funnel.booking_links_sent || 0],
+        ["Link Clicked", funnel.booking_link_clicks || 0],
+        ["Call Booked", funnel.appointments_scheduled || 0]
+      ];
+      const max = Math.max(...stages.map(([, value]) => Number(value || 0)), 1);
+      funnelEl.innerHTML = "";
+      stages.forEach(([label, value]) => {
+        const row = document.createElement("div");
+        row.className = "funnel-row";
+        const top = document.createElement("div");
+        top.className = "funnel-label";
+        top.innerHTML = "<span>" + label + "</span><strong>" + value + "</strong>";
+        const bar = document.createElement("div");
+        bar.className = "bar";
+        const fill = document.createElement("span");
+        fill.style.width = Math.max(4, Math.round((Number(value || 0) / max) * 100)) + "%";
+        bar.appendChild(fill);
+        row.append(top, bar);
+        funnelEl.appendChild(row);
+      });
+    }
+
+    function renderStatuses(settings) {
+      botStatusEl.textContent = "OpenAI Bot: " + (settings.auto_send ? "Active" : "Draft Mode");
+      webhookStatusEl.textContent = "IG Webhook: " + (settings.zernio_configured ? "Operational" : "Needs Key");
+      flagsEl.innerHTML = "";
+      [
+        ["Memory", settings.conversation_memory_enabled],
+        ["Follow-ups", settings.follow_ups_enabled],
+        ["Typing", settings.typing_indicator_enabled],
+        ["Knowledge", settings.knowledge_base_configured]
+      ].forEach(([label, value]) => {
+        const tag = document.createElement("span");
+        tag.className = "tag " + (value ? "green" : "red");
+        tag.textContent = label + ": " + (value ? "on" : "off");
+        flagsEl.appendChild(tag);
+      });
+      renderFeatureControls(settings.feature_settings || {});
+    }
+
+    function renderFeatureControls(features) {
+      featuresEl.innerHTML = "";
+      [
+        ["auto_send", "Auto-send"],
+        ["follow_ups", "Auto-follow-up"],
+        ["humanize_replies", "Human tone"],
+        ["conversation_memory", "Context memory"]
+      ].forEach(([feature, label]) => {
+        const enabled = Boolean(features[feature]);
+        const button = document.createElement("button");
+        button.className = "toggle " + (enabled ? "on" : "off");
+        button.type = "button";
+        button.textContent = label + ": " + (enabled ? "on" : "off");
+        button.addEventListener("click", async () => {
+          button.disabled = true;
+          setStatus("Saving " + label + "...");
+          try {
+            await api("/api/features", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ feature, enabled: !enabled })
+            });
+            await loadAll(true);
+            setStatus(label + " saved.");
+          } catch (error) {
+            setStatus(error.message);
+            button.disabled = false;
+          }
+        });
+        featuresEl.appendChild(button);
+      });
+    }
+
+    function statusTags(conversation) {
+      const tags = [];
+      if (conversation.last_outgoing_at) tags.push(["AI Replied", "green"]);
+      if (conversation.booking_link_sent) tags.push(["Link Sent", "blue"]);
+      if (conversation.booking_link_clicked) tags.push(["Link Clicked", "gold"]);
+      if (conversation.booking_confirmed) tags.push(["Appointment Scheduled", "violet"]);
+      if (conversation.ai_paused || conversation.manual_takeover_active) tags.push(["Paused", "red"]);
+      return tags.length ? tags : [["New Lead", "blue"]];
+    }
+
+    function renderConversation(conversation) {
+      const card = document.createElement("article");
+      card.className = "lead";
+      const top = document.createElement("div");
+      top.className = "lead-top";
+      const avatar = document.createElement("div");
+      avatar.className = "avatar";
+      if (conversation.avatar_url) {
+        const image = document.createElement("img");
+        image.src = conversation.avatar_url;
+        image.alt = "";
+        image.loading = "lazy";
+        image.onerror = () => {
+          avatar.textContent = initials(conversation);
+        };
+        avatar.appendChild(image);
+      } else {
+        avatar.textContent = initials(conversation);
+      }
+
+      const info = document.createElement("div");
+      const name = document.createElement("strong");
+      name.className = "lead-name";
+      name.textContent = conversation.username ? "@" + conversation.username : conversation.contact_id || conversation.talk_id || "Instagram lead";
+      const meta = document.createElement("div");
+      meta.className = "lead-meta";
+      meta.textContent = formatDate(conversation.last_incoming_at || conversation.last_outgoing_at) + " · " + (conversation.origin || "instagram");
+      info.append(name, meta);
+
+      const status = document.createElement("span");
+      status.className = "tag " + (conversation.lead_status === "booked" ? "violet" : conversation.lead_status === "hot" ? "gold" : "blue");
+      status.textContent = String(conversation.lead_status || "cold").replace("_", " ");
+      top.append(avatar, info, status);
+
+      const tags = document.createElement("div");
+      tags.className = "tags";
+      statusTags(conversation).forEach(([label, color]) => {
+        const tag = document.createElement("span");
+        tag.className = "tag " + color;
+        tag.textContent = label;
+        tags.appendChild(tag);
+      });
+
+      const message = document.createElement("div");
+      message.className = "lead-message";
+      const lastText = conversation.last_message && conversation.last_message.text ? conversation.last_message.text : conversation.summary || "No recent message yet.";
+      message.textContent = lastText;
+
+      const actions = document.createElement("div");
+      actions.className = "actions";
+      const paused = Boolean(conversation.ai_paused || conversation.manual_takeover_active);
+      const pauseButton = document.createElement("button");
+      pauseButton.className = "action warn";
+      pauseButton.type = "button";
+      pauseButton.textContent = paused ? "Resume AI" : "Pause AI";
+      pauseButton.addEventListener("click", async () => {
+        pauseButton.disabled = true;
+        try {
+          await api("/api/conversations/" + encodeURIComponent(conversation.key) + (paused ? "/resume" : "/pause"), { method: "POST" });
+          await loadAll(true);
+          setStatus(paused ? "AI resumed." : "AI paused for this lead.");
+        } catch (error) {
+          setStatus(error.message);
+          pauseButton.disabled = false;
+        }
+      });
+
+      const linkButton = document.createElement("button");
+      linkButton.className = "action primary";
+      linkButton.type = "button";
+      linkButton.textContent = "Send Booking Link";
+      linkButton.addEventListener("click", async () => {
+        linkButton.disabled = true;
+        setStatus("Sending tracked booking link...");
+        try {
+          await api("/api/conversations/" + encodeURIComponent(conversation.key) + "/send-booking-link", { method: "POST" });
+          await loadAll(true);
+          setStatus("Tracked booking link sent.");
+        } catch (error) {
+          setStatus(error.message);
+          linkButton.disabled = false;
+        }
+      });
+
+      actions.append(pauseButton, linkButton);
+      card.append(top, tags, message, actions);
+      return card;
+    }
+
+    function renderConversations(conversations) {
+      conversationsEl.innerHTML = "";
+      const visible = (conversations || []).slice(0, 20);
+      activityCountEl.textContent = visible.length + " visible";
+      if (!visible.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "No Instagram activity in this timeframe yet.";
+        conversationsEl.appendChild(empty);
+        return;
+      }
+      visible.forEach((conversation) => conversationsEl.appendChild(renderConversation(conversation)));
+    }
+
+    function renderDrafts(drafts) {
+      draftsEl.innerHTML = "";
+      if (!drafts || !drafts.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "No pending drafts.";
+        draftsEl.appendChild(empty);
+        return;
+      }
+      drafts.slice(0, 8).forEach((draft) => {
+        const card = document.createElement("article");
+        card.className = "lead";
+        const text = document.createElement("div");
+        text.className = "lead-message";
+        text.textContent = draft.reply || "Draft is empty.";
+        const actions = document.createElement("div");
+        actions.className = "actions";
+        const send = document.createElement("button");
+        send.className = "action primary";
+        send.type = "button";
+        send.textContent = "Send";
+        send.addEventListener("click", async () => {
+          send.disabled = true;
+          try {
+            await api("/api/drafts/" + encodeURIComponent(draft.id) + "/approve", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ reply: draft.reply })
+            });
+            await loadAll(true);
+            setStatus("Draft sent.");
+          } catch (error) {
+            setStatus(error.message);
+            send.disabled = false;
+          }
+        });
+        const discard = document.createElement("button");
+        discard.className = "action";
+        discard.type = "button";
+        discard.textContent = "Discard";
+        discard.addEventListener("click", async () => {
+          discard.disabled = true;
+          try {
+            await api("/api/drafts/" + encodeURIComponent(draft.id) + "/reject", { method: "POST" });
+            await loadAll(true);
+            setStatus("Draft discarded.");
+          } catch (error) {
+            setStatus(error.message);
+            discard.disabled = false;
+          }
+        });
+        actions.append(send, discard);
+        card.append(text, actions);
+        draftsEl.appendChild(card);
+      });
+    }
+
+    async function loadAll(silent) {
+      if (!silent) setStatus("Refreshing...");
+      try {
+        const query = "?timeframe=" + encodeURIComponent(state.timeframe);
+        const [stats, conversations, drafts] = await Promise.all([
+          api("/api/stats" + query),
+          api("/api/conversations" + query),
+          api("/api/drafts")
+        ]);
+        rangeLabelEl.textContent = timeframeLabel(state.timeframe);
+        renderKpis(stats);
+        renderFunnel(stats);
+        renderStatuses(stats.settings || {});
+        renderConversations(conversations.conversations || []);
+        renderDrafts(drafts.drafts || []);
+        if (!silent) setStatus("Live.");
+      } catch (error) {
+        setStatus(error.message);
+      }
+    }
+
+    document.querySelectorAll("[data-range]").forEach((button) => {
+      button.addEventListener("click", () => {
+        state.timeframe = button.dataset.range;
+        document.querySelectorAll("[data-range]").forEach((item) => item.classList.toggle("active", item === button));
+        loadAll();
+      });
+    });
+
+    testButton.addEventListener("click", async () => {
+      testButton.disabled = true;
+      testResult.textContent = "";
+      setStatus("Generating preview...");
+      try {
+        const data = await api("/api/test-reply", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ transcript: testTranscript.value, new_message: testNewMessage.value })
+        });
+        testResult.textContent = "Lead status: " + String(data.lead_status || "cold").replace("_", " ") + "\\nNeeds review: " + (data.needs_review ? "yes" : "no") + "\\n\\n" + data.reply;
+        setStatus("Preview ready.");
+      } catch (error) {
+        setStatus(error.message);
+      } finally {
+        testButton.disabled = false;
+      }
+    });
+
+    loadAll();
+    setInterval(() => loadAll(true), 10000);
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("/sw.js").catch(() => {});
     }
