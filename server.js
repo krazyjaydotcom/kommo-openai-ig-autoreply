@@ -43,7 +43,10 @@ const DEFAULT_STORE = {
   providerSettings: {
     zernio: { enabled: true }
   },
-  featureSettings: {},
+  featureSettings: {
+    auto_send: true,
+    follow_ups: true
+  },
   conversations: {},
   dailyStats: {}
 };

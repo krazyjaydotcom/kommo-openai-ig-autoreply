@@ -22,14 +22,14 @@ ZERNIO_API_KEY=your-zernio-api-key
 ZERNIO_ACCOUNT_ID=your-zernio-account-id
 ZERNIO_WEBHOOK_SECRET=choose-a-long-random-zernio-secret
 WEBHOOK_SECRET=choose-a-long-random-secret
-AUTO_SEND=false
+AUTO_SEND=true
 HUMANIZE_REPLIES_ENABLED=true
 TYPING_INDICATOR_ENABLED=true
 HUMAN_SEND_DELAY_ENABLED=true
 HUMAN_SEND_DELAY_MIN_MS=6500
 HUMAN_SEND_DELAY_MAX_MS=18000
 CONVERSATION_MEMORY_ENABLED=true
-FOLLOW_UPS_ENABLED=false
+FOLLOW_UPS_ENABLED=true
 PALLET_PROS_KNOWLEDGE=
 MANUAL_TAKEOVER_MINUTES=8
 PORT=3000
@@ -45,7 +45,7 @@ Notes:
 - If you do not configure signed Zernio webhooks yet, `/webhook/zernio?secret=WEBHOOK_SECRET` can use the simple query-secret fallback.
 - `AUTO_SEND=true` sends replies immediately only when the AI returns `needs_review: false`.
 - `AUTO_SEND=false` saves every generated reply as a pending draft.
-- `FOLLOW_UPS_ENABLED=false` keeps follow-up nudges disabled. Set it to `true` only after testing.
+- `FOLLOW_UPS_ENABLED=true` sends or drafts follow-up nudges based on your auto-send setting.
 - `PALLET_PROS_KNOWLEDGE` is optional. If set, it overrides `knowledge/pallet-pros.md`.
 - The OpenAI API key must have active API billing/credits. ChatGPT Plus/Pro billing is separate from API billing.
 
@@ -61,14 +61,14 @@ $env:ZERNIO_API_KEY="your-zernio-api-key"
 $env:ZERNIO_ACCOUNT_ID="your-zernio-account-id"
 $env:ZERNIO_WEBHOOK_SECRET="choose-a-long-random-zernio-secret"
 $env:WEBHOOK_SECRET="choose-a-long-random-secret"
-$env:AUTO_SEND="false"
+$env:AUTO_SEND="true"
 $env:HUMANIZE_REPLIES_ENABLED="true"
 $env:TYPING_INDICATOR_ENABLED="true"
 $env:HUMAN_SEND_DELAY_ENABLED="true"
 $env:HUMAN_SEND_DELAY_MIN_MS="6500"
 $env:HUMAN_SEND_DELAY_MAX_MS="18000"
 $env:CONVERSATION_MEMORY_ENABLED="true"
-$env:FOLLOW_UPS_ENABLED="false"
+$env:FOLLOW_UPS_ENABLED="true"
 $env:PALLET_PROS_KNOWLEDGE=""
 $env:MANUAL_TAKEOVER_MINUTES="8"
 $env:PORT="3000"
