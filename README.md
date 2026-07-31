@@ -22,6 +22,7 @@ ZERNIO_API_KEY=your-zernio-api-key
 ZERNIO_ACCOUNT_ID=your-zernio-account-id
 ZERNIO_WEBHOOK_SECRET=choose-a-long-random-zernio-secret
 WEBHOOK_SECRET=choose-a-long-random-secret
+TRACKED_BOOKING_BASE_URL=https://go.palletprosacademy.com/discovery
 AUTO_SEND=true
 HUMANIZE_REPLIES_ENABLED=true
 TYPING_INDICATOR_ENABLED=true
@@ -43,6 +44,7 @@ Notes:
 - `ZERNIO_ACCOUNT_ID` is optional when Zernio includes `accountId` in webhook payloads, but it is useful as a fallback for pulling history and sending replies.
 - `ZERNIO_WEBHOOK_SECRET` verifies signed Zernio webhooks.
 - If you do not configure signed Zernio webhooks yet, `/webhook/zernio?secret=WEBHOOK_SECRET` can use the simple query-secret fallback.
+- `TRACKED_BOOKING_BASE_URL` is the public click-tracking route for your custom domain.
 - `AUTO_SEND=true` sends replies immediately only when the AI returns `needs_review: false`.
 - `AUTO_SEND=false` saves every generated reply as a pending draft.
 - `FOLLOW_UPS_ENABLED=true` sends or drafts follow-up nudges based on your auto-send setting.
@@ -61,6 +63,7 @@ $env:ZERNIO_API_KEY="your-zernio-api-key"
 $env:ZERNIO_ACCOUNT_ID="your-zernio-account-id"
 $env:ZERNIO_WEBHOOK_SECRET="choose-a-long-random-zernio-secret"
 $env:WEBHOOK_SECRET="choose-a-long-random-secret"
+$env:TRACKED_BOOKING_BASE_URL="https://go.palletprosacademy.com/discovery"
 $env:AUTO_SEND="true"
 $env:HUMANIZE_REPLIES_ENABLED="true"
 $env:TYPING_INDICATOR_ENABLED="true"
@@ -83,6 +86,20 @@ http://localhost:3000/
 ```
 
 On mobile, open the deployed site in Safari or Chrome and choose `Add to Home Screen` from the browser menu. The app includes a manifest, icon, and service worker route so it can launch like a lightweight phone app.
+
+## Tracked Discovery Route
+
+Point your custom subdomain to the DigitalOcean app, then use:
+
+```text
+https://go.palletprosacademy.com/discovery?id=IG_USER_ID
+```
+
+The app records the click in `data/store.json`, marks the matching conversation as a booking-link click when it can match the ID, increments the booking-link click counter, and redirects the prospect to:
+
+```text
+https://www.tidycal.com/palletprosga/discovery?lead_id=IG_USER_ID
+```
 
 ## Webhook URL
 

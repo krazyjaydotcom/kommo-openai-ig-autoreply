@@ -16,6 +16,8 @@ const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
 const ZERNIO_BASE_URL = "https://zernio.com/api/v1";
 const YOUTUBE_URL = "https://youtube.com/@palletprosacademy";
 const BOOKING_URL = "https://www.tidycal.com/palletprosga/discovery";
+const TRACKED_BOOKING_BASE_URL =
+  process.env.TRACKED_BOOKING_BASE_URL || "https://go.palletprosacademy.com/discovery";
 const TRAINING_PLAYLIST_URL =
   "https://www.youtube.com/playlist?list=PLPFyOjF-83nJ0B5xCreYqoQzcGx-SQsvs";
 const MAX_KNOWLEDGE_CHARS = 12_000;
@@ -48,6 +50,7 @@ const DEFAULT_STORE = {
     follow_ups: true
   },
   conversations: {},
+  linkClicks: [],
   dailyStats: {}
 };
 
@@ -340,6 +343,7 @@ function normalizeStore(store) {
     providerSettings: normalizeProviderSettings(parsed.providerSettings),
     featureSettings: normalizeFeatureSettings(parsed.featureSettings),
     conversations: mergeSplitConversationMemories(conversations),
+    linkClicks: Array.isArray(parsed.linkClicks) ? parsed.linkClicks : [],
     dailyStats:
       parsed.dailyStats && typeof parsed.dailyStats === "object"
         ? parsed.dailyStats
@@ -848,6 +852,8 @@ function getConversationMemory(store, messageLike) {
       youtube_link_sent: false,
       training_link_sent: false,
       booking_link_sent: false,
+      booking_link_clicked: false,
+      booking_link_clicked_at: null,
       booking_confirmed: false,
       lead_status: "cold",
       ai_paused: false,
@@ -900,6 +906,8 @@ function getConversationMemory(store, messageLike) {
   memory.follow_up.question_sent_at = memory.follow_up.question_sent_at || null;
   memory.follow_up.due_at = memory.follow_up.due_at || null;
   memory.follow_up.last_sent_at = memory.follow_up.last_sent_at || null;
+  memory.booking_link_clicked = Boolean(memory.booking_link_clicked);
+  memory.booking_link_clicked_at = memory.booking_link_clicked_at || null;
   memory.booking_confirmed = Boolean(memory.booking_confirmed);
   memory.lead_status = classifyLeadStatus(memory);
   memory.manual_takeover_until = memory.manual_takeover_until || null;
@@ -996,6 +1004,10 @@ function buildConversationSummary(memory) {
     state.push("booking link was already sent");
   }
 
+  if (memory.booking_link_clicked) {
+    state.push("booking link was clicked");
+  }
+
   if (memory.booking_confirmed) {
     state.push("prospect said they booked/scheduled");
   }
@@ -1035,6 +1047,7 @@ function classifyLeadStatus(memory) {
   }
 
   if (
+    memory?.booking_link_clicked ||
     memory?.booking_link_sent ||
     /\b(ready to invest|ready to start|ready to go|book a call|hop on a call|discovery call|own a truck|have a truck|own a trailer|have a trailer|own a business)\b/.test(
       recentText
@@ -1128,7 +1141,7 @@ function updateLinkMemory(memory, text) {
     memory.training_link_sent = true;
   }
 
-  if (replyText.includes(BOOKING_URL)) {
+  if (replyText.includes(BOOKING_URL) || replyText.includes(TRACKED_BOOKING_BASE_URL)) {
     memory.booking_link_sent = true;
   }
 }
@@ -1150,9 +1163,37 @@ function appointmentSetterCalendarAskReply() {
   };
 }
 
-function appointmentSetterCalendarLinkReply() {
+function leadTrackingId(messageLike = {}) {
+  return String(
+    messageLike.contact_id ||
+      messageLike.ig_user_id ||
+      messageLike.zernio_contact_id ||
+      messageLike.chat_id ||
+      ""
+  ).trim();
+}
+
+function trackedBookingUrl(messageLike = {}) {
+  const leadId = leadTrackingId(messageLike);
+  const params = new URLSearchParams();
+
+  if (leadId) {
+    params.set("id", leadId);
+  }
+
+  return params.toString()
+    ? `${TRACKED_BOOKING_BASE_URL}?${params.toString()}`
+    : TRACKED_BOOKING_BASE_URL;
+}
+
+function withTrackedBookingUrl(replyText, messageLike = {}) {
+  return String(replyText || "").replaceAll(BOOKING_URL, trackedBookingUrl(messageLike));
+}
+
+function appointmentSetterCalendarLinkReply(messageLike) {
+  const calendarUrl = trackedBookingUrl(messageLike);
   const messages = [
-    `Bet. Here's the calendar: ${BOOKING_URL}`,
+    `Bet. Here's the calendar: ${calendarUrl}`,
     "Pick a time that works for you and I'll verify it on my end."
   ];
 
@@ -1172,11 +1213,11 @@ function appointmentSetterUseLinkReply() {
   };
 }
 
-function appointmentSetterPhoneReply(memory) {
+function appointmentSetterPhoneReply(memory, messageLike) {
   return {
     reply: memory?.booking_link_sent
       ? "Use the link I sent and grab the weekday time that works best for you."
-      : `The cleanest next step is to grab a weekday time here: ${BOOKING_URL}`,
+      : `The cleanest next step is to grab a weekday time here: ${trackedBookingUrl(messageLike)}`,
     needs_review: false,
     handled: true
   };
@@ -1291,7 +1332,7 @@ function appointmentSetterRuleReply(memory, incoming) {
   }
 
   if (wantsDirectPhoneCall(text) && !hasRichProspectContext(text)) {
-    return appointmentSetterPhoneReply(memory);
+    return appointmentSetterPhoneReply(memory, incoming);
   }
 
   if (
@@ -1307,7 +1348,7 @@ function appointmentSetterRuleReply(memory, incoming) {
     yesToCalendarLink(text) &&
     !hasRichProspectContext(text)
   ) {
-    return appointmentSetterCalendarLinkReply();
+    return appointmentSetterCalendarLinkReply(incoming);
   }
 
   if (wantsContentOnly(text) && !wantsPalletBusiness(text) && !prospectAskedQuestion(text)) {
@@ -1402,6 +1443,7 @@ function getDailyStats(store, day = todayKey()) {
       training_links_sent: 0,
       youtube_links_sent: 0,
       booking_links_sent: 0,
+      booking_link_clicks: 0,
       followups_sent: 0
     };
   }
@@ -1422,6 +1464,54 @@ function publicStats(stats) {
   };
 }
 
+async function recordBookingLinkClick(req) {
+  const leadId = String(req.query.id || req.query.lead_id || "").trim().slice(0, 160);
+  const clickedAt = new Date().toISOString();
+  const store = await readStore();
+
+  store.linkClicks.push({
+    id: crypto.randomUUID(),
+    lead_id: leadId,
+    clicked_at: clickedAt,
+    user_agent: String(req.headers["user-agent"] || "").slice(0, 300),
+    ip:
+      String(req.headers["x-forwarded-for"] || "")
+        .split(",")[0]
+        .trim()
+        .slice(0, 64) || String(req.socket?.remoteAddress || "").slice(0, 64)
+  });
+  store.linkClicks = store.linkClicks.slice(-1000);
+
+  if (leadId) {
+    for (const memory of Object.values(store.conversations || {})) {
+      if (!memory || typeof memory !== "object") {
+        continue;
+      }
+
+      const identifiers = [
+        memory.contact_id,
+        memory.chat_id,
+        memory.current_talk_id,
+        memory.zernio_conversation_id
+      ].map((value) => String(value || ""));
+
+      if (identifiers.includes(leadId)) {
+        memory.booking_link_clicked = true;
+        memory.booking_link_clicked_at = clickedAt;
+        memory.lead_status = "hot";
+        refreshMemorySummary(memory);
+      }
+    }
+  }
+
+  recordDailyStat(store, leadId ? `click:${leadId}` : "click:unknown", {
+    booking_link_clicks: 1
+  });
+
+  await writeStore(store);
+  return leadId;
+}
+
 function getAllTimeStats(store) {
   const totals = {
     prospects_touched: 0,
@@ -1433,6 +1523,7 @@ function getAllTimeStats(store) {
     training_links_sent: 0,
     youtube_links_sent: 0,
     booking_links_sent: 0,
+    booking_link_clicks: 0,
     followups_sent: 0
   };
   const prospectKeys = new Set();
@@ -1454,6 +1545,7 @@ function getAllTimeStats(store) {
       "training_links_sent",
       "youtube_links_sent",
       "booking_links_sent",
+      "booking_link_clicks",
       "followups_sent"
     ]) {
       totals[key] += Number(normalizedStats[key] || 0);
@@ -1490,7 +1582,8 @@ function linkStatsForText(text) {
     replyText.includes(YOUTUBE_URL) ||
     replyText.includes(TRAINING_PLAYLIST_URL) ||
     replyText.includes("youtube.com/");
-  const hasBooking = replyText.includes(BOOKING_URL);
+  const hasBooking =
+    replyText.includes(BOOKING_URL) || replyText.includes(TRACKED_BOOKING_BASE_URL);
 
   return {
     training_links_sent: hasYoutube ? 1 : 0,
@@ -1514,6 +1607,8 @@ function memoryForPrompt(memory, settings) {
     youtube_link_sent: Boolean(memory.youtube_link_sent),
     training_link_sent: Boolean(memory.training_link_sent),
     booking_link_sent: Boolean(memory.booking_link_sent),
+    booking_link_clicked: Boolean(memory.booking_link_clicked),
+    booking_link_clicked_at: memory.booking_link_clicked_at || null,
     booking_confirmed: Boolean(memory.booking_confirmed),
     follow_up_count: Number(memory.follow_up?.count || 0)
   };
@@ -1598,6 +1693,8 @@ function publicConversation(memory, settings = {}) {
     manual_takeover_until:
       settings.manual_takeover_until || memory.manual_takeover_until || null,
     booking_link_sent: Boolean(memory.booking_link_sent),
+    booking_link_clicked: Boolean(memory.booking_link_clicked),
+    booking_link_clicked_at: memory.booking_link_clicked_at || null,
     training_link_sent: Boolean(memory.training_link_sent),
     booking_confirmed: Boolean(memory.booking_confirmed),
     follow_up: memory.follow_up || {}
@@ -2831,6 +2928,7 @@ async function processIncomingMessage(incoming, parsedPayload) {
       memory,
       featureSettings
     });
+    aiReply.reply = withTrackedBookingUrl(aiReply.reply, incoming);
   } catch (error) {
     await saveDraft({
       provider: normalizeProvider(incoming.provider),
@@ -2975,6 +3073,21 @@ app.use(express.json({ limit: "1mb" }));
 
 app.get("/", (_req, res) => {
   res.type("html").send(renderHomePage());
+});
+
+app.get("/discovery", async (req, res, next) => {
+  try {
+    const leadId = await recordBookingLinkClick(req);
+    const redirectUrl = new URL(BOOKING_URL);
+
+    if (leadId) {
+      redirectUrl.searchParams.set("lead_id", leadId);
+    }
+
+    res.redirect(302, redirectUrl.toString());
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.get("/manifest.webmanifest", (_req, res) => {
@@ -4031,10 +4144,12 @@ function renderHomePage() {
         ["AI replies", allTime.ai_replies_sent || 0, "all-time"],
         ["Training/YouTube", allTime.youtube_links_sent || 0, "all-time"],
         ["Booking links", allTime.booking_links_sent || 0, "all-time"],
+        ["Link clicks", allTime.booking_link_clicks || 0, "all-time"],
         ["Prospects", today.prospects_touched || 0, "today"],
         ["AI replies", today.ai_replies_sent || 0, "today"],
         ["Drafts", today.drafts_created || 0, "today"],
-        ["Follow-ups", today.followups_sent || 0, "today"]
+        ["Follow-ups", today.followups_sent || 0, "today"],
+        ["Link clicks", today.booking_link_clicks || 0, "today"]
       ];
 
       statsEl.innerHTML = "";
