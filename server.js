@@ -2974,6 +2974,45 @@ app.get("/", (_req, res) => {
   res.type("html").send(renderHomePage());
 });
 
+app.get("/manifest.webmanifest", (_req, res) => {
+  res.type("application/manifest+json").send(
+    JSON.stringify({
+      name: "Pallet Pros DM Setter",
+      short_name: "DM Setter",
+      description: "Zernio and OpenAI Instagram DM appointment setter.",
+      start_url: "/",
+      scope: "/",
+      display: "standalone",
+      background_color: "#f7f8fb",
+      theme_color: "#11231f",
+      icons: [
+        {
+          src: "/app-icon.svg",
+          sizes: "any",
+          type: "image/svg+xml",
+          purpose: "any maskable"
+        }
+      ]
+    })
+  );
+});
+
+app.get("/app-icon.svg", (_req, res) => {
+  res.type("image/svg+xml").send(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="112" fill="#11231f"/>
+  <path d="M126 154h260c22 0 40 18 40 40v112c0 22-18 40-40 40H232l-74 62c-13 11-32 2-32-15v-47h-14c-22 0-40-18-40-40V194c0-22 18-40 40-40h14z" fill="#f5c15c"/>
+  <path d="M154 220h205M154 272h146" stroke="#11231f" stroke-width="28" stroke-linecap="round"/>
+</svg>`);
+});
+
+app.get("/sw.js", (_req, res) => {
+  res
+    .type("application/javascript")
+    .send(`self.addEventListener("install", event => self.skipWaiting());
+self.addEventListener("activate", event => event.waitUntil(self.clients.claim()));
+self.addEventListener("fetch", () => {});`);
+});
+
 app.get("/api/drafts", async (_req, res, next) => {
   try {
     const store = await readStore();
@@ -3396,75 +3435,148 @@ function renderHomePage() {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Zernio DM Drafts</title>
+  <meta name="theme-color" content="#11231f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="DM Setter">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/app-icon.svg" type="image/svg+xml">
+  <title>Pallet Pros DM Setter</title>
   <style>
     :root {
       color-scheme: light;
-      --bg: #f6f7f9;
+      --bg: #f7f8fb;
       --panel: #ffffff;
-      --text: #1c2430;
-      --muted: #657084;
-      --border: #d9dee8;
-      --send: #13795b;
+      --panel-soft: #f1f5f3;
+      --ink: #11231f;
+      --text: #1d2b31;
+      --muted: #65747b;
+      --border: #d9e1e4;
+      --line: #eef2f4;
+      --send: #11745b;
       --discard: #9b2c2c;
-      --focus: #2557d6;
+      --pause: #8a5a16;
+      --focus: #2364d2;
+      --accent: #f5c15c;
+      --blue: #2f6fb2;
+      --shadow: 0 16px 40px rgba(17, 35, 31, 0.08);
     }
 
     * { box-sizing: border-box; }
+
+    html {
+      background: var(--bg);
+      -webkit-text-size-adjust: 100%;
+    }
 
     body {
       margin: 0;
       background: var(--bg);
       color: var(--text);
-      font-family: Arial, Helvetica, sans-serif;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
       line-height: 1.45;
     }
 
     main {
-      width: min(980px, calc(100% - 32px));
-      margin: 32px auto;
+      width: min(1120px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 22px 0 42px;
     }
 
     header {
+      background: var(--ink);
+      border: 1px solid #223a34;
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+      color: #f8faf9;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 16px;
       margin-bottom: 18px;
+      min-height: 132px;
+      padding: 22px;
+    }
+
+    .eyebrow {
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      margin: 0 0 6px;
+      text-transform: uppercase;
     }
 
     h1 {
       margin: 0;
-      font-size: 24px;
-      font-weight: 700;
+      font-size: clamp(28px, 4vw, 44px);
+      font-weight: 800;
       letter-spacing: 0;
+      line-height: 1.04;
+    }
+
+    .header-copy {
+      color: #bed0ca;
+      margin: 10px 0 0;
+      max-width: 680px;
+    }
+
+    .status-card {
+      align-items: flex-end;
+      display: grid;
+      gap: 8px;
+      justify-items: end;
+      min-width: 180px;
     }
 
     #status {
       min-height: 22px;
-      color: var(--muted);
+      color: #dce7e3;
       font-size: 14px;
       text-align: right;
     }
 
+    .live-pill {
+      align-items: center;
+      background: rgba(245, 193, 92, 0.14);
+      border: 1px solid rgba(245, 193, 92, 0.34);
+      border-radius: 999px;
+      color: #ffe4aa;
+      display: inline-flex;
+      font-size: 12px;
+      font-weight: 800;
+      gap: 8px;
+      min-height: 34px;
+      padding: 0 12px;
+      white-space: nowrap;
+    }
+
+    .live-pill::before {
+      background: #49d17c;
+      border-radius: 999px;
+      content: "";
+      height: 8px;
+      width: 8px;
+    }
+
     .stats-grid {
       display: grid;
-      gap: 10px;
+      gap: 12px;
       grid-template-columns: repeat(4, minmax(0, 1fr));
-      margin-bottom: 14px;
+      margin-bottom: 16px;
     }
 
     .stat {
       background: var(--panel);
       border: 1px solid var(--border);
-      border-radius: 8px;
-      min-height: 78px;
-      padding: 12px;
+      border-radius: 14px;
+      box-shadow: 0 8px 22px rgba(17, 35, 31, 0.05);
+      min-height: 88px;
+      padding: 14px;
     }
 
     .stat strong {
       display: block;
-      font-size: 22px;
+      font-size: 28px;
       line-height: 1.15;
     }
 
@@ -3476,10 +3588,12 @@ function renderHomePage() {
     }
 
     .stat small {
-      color: #40516d;
+      color: var(--blue);
       display: block;
       font-size: 11px;
       margin-top: 2px;
+      text-transform: uppercase;
+      font-weight: 800;
     }
 
     .flags {
@@ -3488,32 +3602,34 @@ function renderHomePage() {
       flex-wrap: wrap;
       font-size: 12px;
       gap: 8px;
-      margin: -4px 0 16px;
+      margin: 0 0 14px;
     }
 
     .flag {
-      background: #eef1f6;
+      background: #eef4f1;
+      border: 1px solid #dce8e3;
       border-radius: 999px;
-      padding: 4px 8px;
+      color: #344d46;
+      padding: 6px 10px;
     }
 
     .provider-controls {
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
-      margin: -6px 0 16px;
+      margin: 0 0 14px;
     }
 
     .delay-controls {
       align-items: center;
       background: var(--panel);
       border: 1px solid var(--border);
-      border-radius: 8px;
+      border-radius: 14px;
       display: flex;
       flex-wrap: wrap;
-      gap: 8px;
-      margin: -6px 0 16px;
-      padding: 10px;
+      gap: 10px;
+      margin: 0 0 18px;
+      padding: 12px;
     }
 
     .delay-controls label {
@@ -3524,10 +3640,10 @@ function renderHomePage() {
 
     .delay-controls input {
       border: 1px solid var(--border);
-      border-radius: 8px;
+      border-radius: 10px;
       color: var(--text);
       font: inherit;
-      min-height: 36px;
+      min-height: 42px;
       padding: 0 10px;
       width: 92px;
     }
@@ -3536,11 +3652,12 @@ function renderHomePage() {
       align-items: center;
       display: flex;
       justify-content: space-between;
+      gap: 14px;
       margin: 24px 0 10px;
     }
 
     .section-title h2 {
-      font-size: 18px;
+      font-size: 20px;
       margin: 0;
     }
 
@@ -3554,13 +3671,13 @@ function renderHomePage() {
       border: 1px solid var(--border);
       color: var(--text);
       font-size: 13px;
-      min-height: 34px;
-      padding: 0 12px;
+      min-height: 40px;
+      padding: 0 14px;
     }
 
     .provider-toggle.is-on {
-      background: #e9f7ef;
-      border-color: #a9d8bd;
+      background: #dff5eb;
+      border-color: #9ed7bd;
       color: #0c6246;
     }
 
@@ -3580,29 +3697,31 @@ function renderHomePage() {
     .test-panel {
       background: var(--panel);
       border: 1px solid var(--border);
-      border-radius: 8px;
+      border-radius: 14px;
+      box-shadow: 0 8px 24px rgba(17, 35, 31, 0.05);
       padding: 16px;
     }
 
     .conversation-list {
       display: grid;
-      gap: 10px;
+      gap: 12px;
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
     .conversation {
       display: grid;
       gap: 10px;
+      min-height: 180px;
     }
 
     .pill {
-      background: #eef1f6;
+      background: #eef4f1;
       border-radius: 999px;
       color: #40516d;
       display: inline-flex;
       font-size: 12px;
       font-weight: 700;
-      padding: 3px 8px;
+      padding: 4px 9px;
       text-transform: uppercase;
     }
 
@@ -3627,12 +3746,12 @@ function renderHomePage() {
 
     .feedback,
     .secondary {
-      background: #40516d;
-      min-height: 34px;
+      background: #344b57;
+      min-height: 38px;
       padding: 0 12px;
     }
 
-    .pause { background: #75520f; }
+    .pause { background: var(--pause); }
     .resume { background: #13795b; }
 
     .test-grid {
@@ -3651,10 +3770,12 @@ function renderHomePage() {
     }
 
     .incoming {
-      border-left: 3px solid var(--border);
+      background: var(--panel-soft);
+      border-left: 4px solid var(--accent);
+      border-radius: 10px;
       color: #364154;
       margin: 0 0 12px;
-      padding: 8px 0 8px 12px;
+      padding: 10px 12px;
       white-space: pre-wrap;
     }
 
@@ -3664,7 +3785,7 @@ function renderHomePage() {
       min-height: 112px;
       resize: vertical;
       border: 1px solid var(--border);
-      border-radius: 8px;
+      border-radius: 12px;
       color: var(--text);
       font: inherit;
       padding: 10px 12px;
@@ -3684,12 +3805,18 @@ function renderHomePage() {
 
     button {
       border: 0;
-      border-radius: 8px;
+      border-radius: 10px;
       color: #ffffff;
       cursor: pointer;
       font-weight: 700;
-      min-height: 40px;
+      min-height: 42px;
       padding: 0 16px;
+      transition: transform 120ms ease, opacity 120ms ease, box-shadow 120ms ease;
+    }
+
+    button:hover:not(:disabled) {
+      box-shadow: 0 8px 18px rgba(17, 35, 31, 0.12);
+      transform: translateY(-1px);
     }
 
     button:disabled {
@@ -3703,22 +3830,49 @@ function renderHomePage() {
     .empty {
       background: var(--panel);
       border: 1px solid var(--border);
-      border-radius: 8px;
+      border-radius: 14px;
       color: var(--muted);
       padding: 24px;
       text-align: center;
     }
 
+    .install-note {
+      background: #fff7e7;
+      border: 1px solid #f2d398;
+      border-radius: 14px;
+      color: #6d4d12;
+      font-size: 13px;
+      margin: 0 0 18px;
+      padding: 12px 14px;
+    }
+
     @media (max-width: 760px) {
       main {
-        width: min(100% - 16px, 980px);
-        margin: 14px auto 28px;
+        width: min(100% - 20px, 980px);
+        padding: 10px 0 28px;
       }
 
       header,
       .section-title {
         align-items: flex-start;
         flex-direction: column;
+      }
+
+      header {
+        border-radius: 16px;
+        min-height: auto;
+        padding: 18px;
+      }
+
+      .header-copy {
+        font-size: 14px;
+      }
+
+      .status-card {
+        align-items: flex-start;
+        justify-items: start;
+        min-width: 0;
+        width: 100%;
       }
 
       #status {
@@ -3739,6 +3893,11 @@ function renderHomePage() {
         grid-template-columns: 1fr 1fr;
       }
 
+      .delay-controls input {
+        flex: 1 1 86px;
+        min-width: 0;
+      }
+
       .provider-toggle,
       .feedback {
         flex: 1 1 calc(50% - 8px);
@@ -3747,7 +3906,11 @@ function renderHomePage() {
 
     @media (max-width: 420px) {
       h1 {
-        font-size: 21px;
+        font-size: 28px;
+      }
+
+      .stats-grid {
+        gap: 8px;
       }
 
       .stat {
@@ -3763,15 +3926,27 @@ function renderHomePage() {
         min-height: 44px;
         padding: 0 12px;
       }
+
+      .actions {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
 </head>
 <body>
   <main>
     <header>
-      <h1>Pending Drafts</h1>
-      <div id="status"></div>
+      <div>
+        <p class="eyebrow">Pallet Pros Academy</p>
+        <h1>DM Setter</h1>
+        <p class="header-copy">Watch drafts, auto-send status, follow-ups, and recent Instagram conversations from one mobile-friendly cockpit.</p>
+      </div>
+      <div class="status-card">
+        <span class="live-pill">Zernio live</span>
+        <div id="status"></div>
+      </div>
     </header>
+    <section class="install-note">On your phone, open this site in the browser menu and choose Add to Home Screen to install it like an app.</section>
     <section id="stats" class="stats-grid" aria-label="Daily tracker"></section>
     <section id="flags" class="flags" aria-label="Settings"></section>
     <section id="features" class="provider-controls" aria-label="Feature controls"></section>
@@ -4259,7 +4434,7 @@ function renderHomePage() {
           data.drafts.forEach((draft) => draftsEl.appendChild(renderDraft(draft)));
         }
 
-        setStatus(data.drafts.length + " pending · live refresh on");
+        setStatus(data.drafts.length + " pending - live refresh on");
       } catch (error) {
         draftsEl.innerHTML = "";
         setStatus(error.message);
@@ -4296,6 +4471,9 @@ function renderHomePage() {
 
     loadDrafts();
     setInterval(() => loadDrafts({ silent: true }), 10000);
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    }
   </script>
 </body>
 </html>`;

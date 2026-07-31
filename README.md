@@ -82,6 +82,8 @@ Open:
 http://localhost:3000/
 ```
 
+On mobile, open the deployed site in Safari or Chrome and choose `Add to Home Screen` from the browser menu. The app includes a manifest, icon, and service worker route so it can launch like a lightweight phone app.
+
 ## Webhook URL
 
 Paste this into Zernio:
