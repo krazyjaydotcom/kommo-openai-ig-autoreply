@@ -1,8 +1,8 @@
 {
-  "name": "kommo-openai-ig-autoreply",
+  "name": "zernio-openai-ig-autoreply",
   "version": "1.0.0",
   "private": true,
-  "description": "Minimal one-person Kommo CRM + OpenAI Instagram DM auto-reply tool.",
+  "description": "Minimal one-person Zernio + OpenAI Instagram DM auto-reply tool.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

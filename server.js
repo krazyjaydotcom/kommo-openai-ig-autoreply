@@ -41,7 +41,6 @@ const DEFAULT_STORE = {
   feedback: [],
   conversationSettings: {},
   providerSettings: {
-    kommo: { enabled: true },
     zernio: { enabled: true }
   },
   featureSettings: {},
@@ -58,8 +57,8 @@ Rules:
 4. Only respond to fresh lead messages, ideally within 24 hours.
 5. If the person is only curious, joking, or just wants content, send them to:
    https://youtube.com/@palletprosacademy
-6. If the person is interested in starting a pallet business, move them toward a Zoom/discovery call quickly.
-7. Do not over-qualify in DMs. Use the simple DM flow below unless the person asks a specific question.
+6. If the person asks a question or gives context, answer the question first and acknowledge the context before steering.
+7. Do not over-qualify in DMs. Use the simple DM flow below, but let the conversation breathe when the person is asking real questions.
 8. If they are warm enough to book, send:
    https://www.tidycal.com/palletprosga/discovery
 9. If they ask for a call, do not suggest weekend calls.
@@ -80,7 +79,7 @@ Disqualify or redirect immediately to https://youtube.com/@palletprosacademy and
 - Is clearly just here for free content or curiosity.
 - Is asking for load-finding or freight-dispatch help. This program does not find loads for drivers. It teaches the pallet business model and how to run it successfully.
 
-Fast-track to booking if the person already:
+Treat the lead as warmer if the person already:
 - Owns a truck or trailer.
 - Owns a business.
 - Says they are ready to invest or ready to go.
@@ -88,15 +87,17 @@ Fast-track to booking if the person already:
 
 Best-performing DM flow:
 1. First touch, if there is no prior context: "Thanks for the follow. Are you here for the content, or are you looking to start your own pallet business?"
-2. If they say they want to start, learn, get into pallets, or are interested: tell them a Zoom/discovery call is the next step because you can research their market, answer questions, and see if they are a good fit.
-3. Before sending the calendar link, ask permission in one short question: "Do you mind if I send you a link to my calendar?"
-4. If they say yes, send the booking link and tell them to choose a date/time that works for them.
-5. If they ask for a call, appointment, consultation, details, or scheduling directly, it is okay to send the booking link without asking permission again.
-6. If they mention a day/time instead of booking through the link, politely tell them to use the link to choose their time.
-7. If they ask for a direct phone call or share their phone number, tell them to book through the link instead.
-8. If they say they booked, acknowledge it naturally and do not ask another qualifying question.
-9. If they have a real business/market question or include useful context, acknowledge their specific situation first, answer briefly if you can, then steer back to the call.
-10. Do not force every interested person through the exact same script. The flow is a guide, not a word-for-word requirement.
+2. If they ask questions, answer briefly and naturally. Do not ignore the question just to push the call.
+3. If they give useful context, mirror one specific detail so they feel heard.
+4. When it makes sense, ask one open-ended question like: "Is this business something you'd be interested in pursuing?"
+5. If they say yes or clearly show they want to pursue it, invite them to a Zoom/discovery call so you can research their area, answer their questions, and see if Pallet Pros Academy would be a good fit for their goals.
+6. Before sending the calendar link, ask permission in one short question: "Do you mind if I send you a link to my calendar?"
+7. If they say yes, send the booking link and tell them to choose a date/time that works for them.
+8. If they ask for a call, appointment, consultation, details, or scheduling directly, it is okay to send the booking link without asking permission again.
+9. If they mention a day/time instead of booking through the link, politely tell them to use the link to choose their time.
+10. If they ask for a direct phone call or share their phone number, tell them to book through the link instead.
+11. If they say they booked, acknowledge it naturally and do not ask another qualifying question.
+12. Do not force every interested person through the exact same script. The flow is a guide, not a word-for-word requirement.
 
 Reply length rules:
 - Default to 1 short sentence.
@@ -291,19 +292,6 @@ function systemPrompt(settings) {
     .join("\n\n");
 }
 
-function normalizeSubdomain(rawSubdomain) {
-  return rawSubdomain
-    .replace(/^https?:\/\//i, "")
-    .replace(/\/.*$/, "")
-    .replace(/\.kommo\.com$/i, "")
-    .trim();
-}
-
-function kommoBaseUrl() {
-  const subdomain = normalizeSubdomain(requireEnv("KOMMO_SUBDOMAIN"));
-  return `https://${subdomain}.kommo.com`;
-}
-
 async function ensureStoreFile() {
   await fs.mkdir(DATA_DIR, { recursive: true });
 
@@ -357,7 +345,7 @@ function normalizeStore(store) {
 }
 
 function normalizeProvider(provider) {
-  return provider === "zernio" ? "zernio" : "kommo";
+  return String(provider || "").toLowerCase() === "test" ? "test" : "zernio";
 }
 
 function normalizeFeatureSettings(settings) {
@@ -423,9 +411,6 @@ function normalizeProviderSettings(settings) {
   const raw = settings && typeof settings === "object" ? settings : {};
 
   return {
-    kommo: {
-      enabled: raw.kommo?.enabled !== false
-    },
     zernio: {
       enabled: raw.zernio?.enabled !== false
     }
@@ -439,7 +424,10 @@ function getProviderSettings(store) {
 
 function isProviderEnabled(store, provider) {
   const providerName = normalizeProvider(provider);
-  return getProviderSettings(store)[providerName].enabled !== false;
+  if (providerName === "test") {
+    return true;
+  }
+  return getProviderSettings(store).zernio.enabled !== false;
 }
 
 function getConversationSettings(store, talkId) {
@@ -591,14 +579,11 @@ function makeConversationKey({
   const channel = origin || "unknown";
   const person = contact_id || chat_id || talk_id || "unknown";
 
-  if (provider === "zernio") {
-    return `zernio:${zernio_account_id || "unknown"}:${channel}:${person}`;
+  if (normalizeProvider(provider) === "test") {
+    return `test:${channel}:${person}`;
   }
 
-  const subdomain = process.env.KOMMO_SUBDOMAIN
-    ? normalizeSubdomain(process.env.KOMMO_SUBDOMAIN)
-    : "unknown";
-  return `${subdomain}:${channel}:${person}`;
+  return `zernio:${zernio_account_id || "unknown"}:${channel}:${person}`;
 }
 
 function isUsefulZernioContactId(contactId, accountId) {
@@ -846,7 +831,7 @@ function getConversationMemory(store, messageLike) {
   if (!store.conversations[key]) {
     store.conversations[key] = {
       key,
-      provider: messageLike.provider || "kommo",
+      provider: normalizeProvider(messageLike.provider),
       contact_id: messageLike.contact_id || "",
       chat_id: messageLike.chat_id || "",
       origin: messageLike.origin || "",
@@ -882,9 +867,9 @@ function getConversationMemory(store, messageLike) {
 
   const memory = store.conversations[key];
   memory.key = key;
-  memory.provider = messageLike.provider || memory.provider || "kommo";
+  memory.provider = normalizeProvider(messageLike.provider || memory.provider);
   memory.contact_id =
-    messageLike.provider === "zernio"
+    normalizeProvider(messageLike.provider) === "zernio"
       ? isUsefulZernioContactId(messageLike.contact_id, messageLike.zernio_account_id)
         ? messageLike.contact_id
         : memory.contact_id || ""
@@ -1105,6 +1090,10 @@ function detectQuestionKeys(text) {
     keys.push("why_start");
   }
 
+  if (/interested.*pursu|pursu.*business|mostly checking.*out/.test(lower)) {
+    keys.push("would_pursue");
+  }
+
   if (/when.*start|timeline|how soon|start.*when/.test(lower)) {
     keys.push("when_start");
   }
@@ -1152,7 +1141,7 @@ function updateQuestionMemory(memory, text) {
 function appointmentSetterCalendarAskReply() {
   return {
     reply:
-      "Got you. A quick Zoom is probably the best next step so I can see your market and point you the right way.\n\nWant me to send the calendar link?",
+      "That's exactly what the Zoom is for. We can research your area, answer your questions, and see if the academy fits your goals.\n\nDo you mind if I send the calendar link?",
     needs_review: false,
     handled: true
   };
@@ -1200,7 +1189,7 @@ function appointmentSetterContentReply() {
 
 function appointmentSetterWarmQualifierReply() {
   return {
-    reply: "Got you. What's making you want to get into the pallet business right now?",
+    reply: "Got you. Is this business something you'd be interested in pursuing, or are you mostly checking it out right now?",
     needs_review: false,
     handled: true
   };
@@ -1264,8 +1253,8 @@ function isAmbiguousShortReply(text) {
 }
 
 function askedWarmQualifier(memory) {
-  return (Array.isArray(memory?.questions_asked) ? memory.questions_asked : []).includes(
-    "why_start"
+  return (Array.isArray(memory?.questions_asked) ? memory.questions_asked : []).some(
+    (key) => ["why_start", "would_pursue"].includes(key)
   );
 }
 
@@ -1591,7 +1580,7 @@ function publicConversation(memory, settings = {}) {
 
   return {
     key: memory.key,
-    provider: memory.provider || "kommo",
+    provider: normalizeProvider(memory.provider),
     contact_id: memory.contact_id || "",
     talk_id: memory.current_talk_id || "",
     origin: memory.origin || "",
@@ -1773,116 +1762,6 @@ function normalizeDirection(value) {
   return direction;
 }
 
-function extractIncomingMessage(payload) {
-  const talkId = pickValue(payload, [
-    "add.0.talk_id",
-    "add[0][talk_id]",
-    "message[add][0][talk_id]",
-    "incoming_message[add][0][talk_id]",
-    "messages[add][0][talk_id]",
-    "talk_id",
-    "talk.id",
-    "message.conversation.id",
-    "message[conversation][id]",
-    "conversation_id"
-  ]);
-
-  const text = pickValue(payload, [
-    "add.0.text",
-    "add[0][text]",
-    "message[add][0][text]",
-    "incoming_message[add][0][text]",
-    "messages[add][0][text]",
-    "message.message.text",
-    "message[message][text]",
-    "message[text]",
-    "text"
-  ]);
-
-  const direction = pickValue(payload, [
-    "add.0.type",
-    "add[0][type]",
-    "message[add][0][type]",
-    "incoming_message[add][0][type]",
-    "messages[add][0][type]",
-    "type"
-  ]);
-
-  const messageType = pickValue(payload, [
-    "add.0.message_type",
-    "add[0][message_type]",
-    "message[add][0][message_type]",
-    "incoming_message[add][0][message_type]",
-    "messages[add][0][message_type]",
-    "message.message.type",
-    "message[message][type]",
-    "message_type"
-  ]);
-
-  const origin = pickValue(payload, [
-    "add.0.origin",
-    "add[0][origin]",
-    "message[add][0][origin]",
-    "incoming_message[add][0][origin]",
-    "messages[add][0][origin]",
-    "origin"
-  ]);
-
-  const createdAt = pickValue(payload, [
-    "add.0.created_at",
-    "add[0][created_at]",
-    "message[add][0][created_at]",
-    "incoming_message[add][0][created_at]",
-    "messages[add][0][created_at]",
-    "message.timestamp",
-    "message[timestamp]",
-    "time",
-    "created_at"
-  ]);
-
-  const incomingMessageId = pickValue(payload, [
-    "add.0.id",
-    "add[0][id]",
-    "message[add][0][id]",
-    "incoming_message[add][0][id]",
-    "messages[add][0][id]",
-    "message.message.id",
-    "message[message][id]",
-    "id"
-  ]);
-
-  const chatId = pickValue(payload, [
-    "add.0.chat_id",
-    "add[0][chat_id]",
-    "message[add][0][chat_id]",
-    "incoming_message[add][0][chat_id]",
-    "messages[add][0][chat_id]",
-    "chat_id"
-  ]);
-
-  const contactId = pickValue(payload, [
-    "add.0.contact_id",
-    "add[0][contact_id]",
-    "message[add][0][contact_id]",
-    "incoming_message[add][0][contact_id]",
-    "messages[add][0][contact_id]",
-    "contact_id"
-  ]);
-
-  return {
-    provider: "kommo",
-    talk_id: talkId ? String(talkId) : "",
-    chat_id: chatId ? String(chatId) : "",
-    contact_id: contactId ? String(contactId) : "",
-    incoming_message_id: incomingMessageId ? String(incomingMessageId) : "",
-    text: text ? String(text).trim() : "",
-    direction: normalizeDirection(direction),
-    message_type: messageType ? String(messageType).toLowerCase() : "",
-    origin: origin ? String(origin).toLowerCase() : "",
-    created_at: createdAt ? Number(createdAt) || null : null
-  };
-}
-
 function extractZernioIncomingMessage(payload) {
   const eventId = pickValue(payload, ["id", "event_id", "eventId"]);
   const eventType = pickValue(payload, ["event", "type", "event_type"]);
@@ -2036,31 +1915,6 @@ function isInstagramOrigin(origin) {
   return origin.includes("instagram") || origin.includes("insta") || origin === "ig";
 }
 
-async function kommoRequest(pathname, options = {}) {
-  const response = await fetch(`${kommoBaseUrl()}${pathname}`, {
-    ...options,
-    headers: {
-      Authorization: `Bearer ${requireEnv("KOMMO_ACCESS_TOKEN")}`,
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      ...(options.headers || {})
-    }
-  });
-
-  const text = await response.text();
-  const body = text ? safeJsonParse(text) || text : null;
-
-  if (!response.ok) {
-    throw new Error(
-      `Kommo API ${response.status} ${response.statusText}: ${
-        typeof body === "string" ? body : JSON.stringify(body)
-      }`
-    );
-  }
-
-  return body;
-}
-
 async function zernioRequest(pathname, options = {}) {
   const response = await fetch(`${ZERNIO_BASE_URL}${pathname}`, {
     ...options,
@@ -2084,31 +1938,6 @@ async function zernioRequest(pathname, options = {}) {
   }
 
   return body;
-}
-
-function normalizeKommoMessages(responseBody) {
-  const messages =
-    responseBody?._embedded?.messages ||
-    responseBody?._embedded?.items ||
-    responseBody?.messages ||
-    [];
-
-  return messages
-    .map((message) => {
-      const role =
-        message.type === "incoming" || message.author?.type === "external"
-          ? "user"
-          : "assistant";
-
-      return {
-        id: message.id || "",
-        role,
-        text: String(message.text || message.message?.text || "").trim(),
-        created_at: message.created_at || message.timestamp || null
-      };
-    })
-    .filter((message) => message.text)
-    .sort((a, b) => Number(a.created_at || 0) - Number(b.created_at || 0));
 }
 
 function firstTextValue(...values) {
@@ -2191,19 +2020,6 @@ function normalizeZernioMessages(responseBody) {
     .sort((a, b) => Number(a.created_at || 0) - Number(b.created_at || 0));
 }
 
-async function getConversationThread(talkId) {
-  if (!talkId) {
-    return [];
-  }
-
-  const responseBody = await kommoRequest(
-    `/api/v4/talks/${encodeURIComponent(talkId)}/messages?limit=50`,
-    { method: "GET", headers: { Accept: "application/hal+json" } }
-  );
-
-  return normalizeKommoMessages(responseBody);
-}
-
 async function getZernioConversationThread(conversationId, accountId) {
   if (!conversationId) {
     return [];
@@ -2234,14 +2050,14 @@ async function getZernioConversationThread(conversationId, accountId) {
 }
 
 async function getConversationThreadForIncoming(incoming) {
-  if (incoming.provider === "zernio") {
-    return getZernioConversationThread(
-      incoming.zernio_conversation_id || incoming.talk_id,
-      incoming.zernio_account_id
-    );
+  if (normalizeProvider(incoming.provider) === "test") {
+    return [];
   }
 
-  return getConversationThread(incoming.talk_id);
+  return getZernioConversationThread(
+    incoming.zernio_conversation_id || incoming.talk_id,
+    incoming.zernio_account_id
+  );
 }
 
 async function generateReply({
@@ -2258,7 +2074,7 @@ async function generateReply({
     conversation_memory: promptMemory,
     business_knowledge: businessKnowledge || null,
     context_status: {
-      provider: newMessage.provider || "kommo",
+      provider: normalizeProvider(newMessage.provider),
       history_messages_loaded: thread.length,
       memory_messages_loaded: promptMemory?.recent_messages?.length || 0,
       business_knowledge_loaded: Boolean(businessKnowledge)
@@ -2311,24 +2127,6 @@ async function generateReply({
     reply: parsed.reply.trim(),
     needs_review: parsed.needs_review !== false
   };
-}
-
-async function sendReplyToKommo(talkId, replyText) {
-  if (!talkId) {
-    throw new Error("Cannot send reply without a Kommo talk_id.");
-  }
-
-  if (!replyText || !replyText.trim()) {
-    throw new Error("Cannot send an empty reply.");
-  }
-
-  return kommoRequest(
-    `/api/v4/talks/${encodeURIComponent(talkId)}/send_message`,
-    {
-      method: "POST",
-      body: JSON.stringify({ text: replyText.trim() })
-    }
-  );
 }
 
 async function sendReplyToZernio(messageLike, replyText, featureSettings) {
@@ -2407,11 +2205,7 @@ async function prepareZernioSend(messageLike, replyText, featureSettings) {
 async function sendReply(messageLike, replyText, featureSettings) {
   await recordPendingAppOutgoing(messageLike, replyText);
 
-  if (messageLike.provider === "zernio") {
-    return sendReplyToZernio(messageLike, replyText, featureSettings);
-  }
-
-  return sendReplyToKommo(messageLike.talk_id || messageLike.current_talk_id, replyText);
+  return sendReplyToZernio(messageLike, replyText, featureSettings);
 }
 
 function replyMessages(replyLike) {
@@ -2775,7 +2569,7 @@ async function sendDueFollowUp(conversationKey) {
     await writeStore(store);
 
     await saveDraft({
-      provider: memory.provider || "kommo",
+      provider: normalizeProvider(memory.provider),
       conversation_key: conversationKey,
       talk_id: memory.current_talk_id,
       chat_id: memory.chat_id,
@@ -2802,7 +2596,7 @@ async function sendDueFollowUp(conversationKey) {
     await writeStore(store);
 
     await saveDraft({
-      provider: memory.provider || "kommo",
+      provider: normalizeProvider(memory.provider),
       conversation_key: conversationKey,
       talk_id: memory.current_talk_id,
       chat_id: memory.chat_id,
@@ -2827,7 +2621,7 @@ async function sendDueFollowUp(conversationKey) {
     await writeStore(store);
 
     await saveDraft({
-      provider: memory.provider || "kommo",
+      provider: normalizeProvider(memory.provider),
       conversation_key: conversationKey,
       talk_id: memory.current_talk_id,
       chat_id: memory.chat_id,
@@ -2854,7 +2648,7 @@ async function sendDueFollowUp(conversationKey) {
     await writeStore(store);
 
     await saveDraft({
-      provider: memory.provider || "kommo",
+      provider: normalizeProvider(memory.provider),
       conversation_key: conversationKey,
       talk_id: memory.current_talk_id,
       chat_id: memory.chat_id,
@@ -2989,7 +2783,7 @@ async function processIncomingMessage(incoming, parsedPayload) {
     }
 
     await saveDraft({
-      provider: incoming.provider || "kommo",
+      provider: normalizeProvider(incoming.provider),
       conversation_key: conversationKey,
       talk_id: incoming.talk_id,
       chat_id: incoming.chat_id,
@@ -3016,7 +2810,7 @@ async function processIncomingMessage(incoming, parsedPayload) {
   try {
     thread = await getConversationThreadForIncoming(incoming);
   } catch (error) {
-    contextWarning = `Could not pull ${incoming.provider || "kommo"} thread: ${error.message}`;
+    contextWarning = `Could not pull ${normalizeProvider(incoming.provider)} thread: ${error.message}`;
     console.error(contextWarning);
   }
 
@@ -3036,7 +2830,7 @@ async function processIncomingMessage(incoming, parsedPayload) {
     });
   } catch (error) {
     await saveDraft({
-      provider: incoming.provider || "kommo",
+      provider: normalizeProvider(incoming.provider),
       conversation_key: conversationKey,
       talk_id: incoming.talk_id,
       chat_id: incoming.chat_id,
@@ -3095,7 +2889,7 @@ async function processIncomingMessage(incoming, parsedPayload) {
   }
 
   await saveDraft({
-    provider: incoming.provider || "kommo",
+    provider: normalizeProvider(incoming.provider),
     conversation_key: conversationKey,
     talk_id: incoming.talk_id,
     chat_id: incoming.chat_id,
@@ -3115,40 +2909,6 @@ async function processIncomingMessage(incoming, parsedPayload) {
 
   console.log(`Saved pending draft for talk_id=${incoming.talk_id}.`);
 }
-
-app.post(
-  "/webhook/kommo",
-  express.raw({ type: "*/*", limit: "2mb" }),
-  (req, res) => {
-    if (!process.env.WEBHOOK_SECRET) {
-      res.status(500).json({ ok: false, error: "WEBHOOK_SECRET is not configured" });
-      return;
-    }
-
-    if (req.query.secret !== process.env.WEBHOOK_SECRET) {
-      res.status(403).json({ ok: false, error: "Invalid webhook secret" });
-      return;
-    }
-
-    const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.from("");
-    const parsedPayload = parseWebhookPayload(rawBody, req.headers["content-type"]);
-    const incoming = extractIncomingMessage(parsedPayload);
-
-    console.log("Kommo webhook content-type:", req.headers["content-type"] || "");
-    console.log("Kommo webhook raw payload:");
-    console.log(rawBody.toString("utf8"));
-    console.log("Kommo webhook parsed payload:");
-    console.log(JSON.stringify(parsedPayload, null, 2));
-    console.log("Kommo webhook extracted message:");
-    console.log(JSON.stringify(incoming, null, 2));
-
-    res.status(202).json({ ok: true });
-
-    processIncomingMessage(incoming, parsedPayload).catch((error) => {
-      console.error("Webhook processing failed:", error);
-    });
-  }
-);
 
 app.post(
   "/webhook/zernio",
@@ -3374,7 +3134,6 @@ app.get("/api/providers", async (_req, res, next) => {
     res.json({
       providers: getProviderSettings(store),
       configured: {
-        kommo: Boolean(process.env.KOMMO_ACCESS_TOKEN && process.env.KOMMO_SUBDOMAIN),
         zernio: Boolean(process.env.ZERNIO_API_KEY)
       }
     });
@@ -3387,8 +3146,8 @@ app.post("/api/providers", async (req, res, next) => {
   try {
     const provider = String(req.body.provider || "").toLowerCase();
 
-    if (!["kommo", "zernio"].includes(provider)) {
-      res.status(400).json({ ok: false, error: "Provider must be kommo or zernio." });
+    if (provider !== "zernio") {
+      res.status(400).json({ ok: false, error: "Provider must be zernio." });
       return;
     }
 
@@ -3637,7 +3396,7 @@ function renderHomePage() {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Kommo Drafts</title>
+  <title>Zernio DM Drafts</title>
   <style>
     :root {
       color-scheme: light;
@@ -4015,7 +3774,6 @@ function renderHomePage() {
     </header>
     <section id="stats" class="stats-grid" aria-label="Daily tracker"></section>
     <section id="flags" class="flags" aria-label="Settings"></section>
-    <section id="providers" class="provider-controls" aria-label="Provider controls"></section>
     <section id="features" class="provider-controls" aria-label="Feature controls"></section>
     <section id="delay-controls" class="delay-controls" aria-label="Send delay controls"></section>
     <section class="section-title">
@@ -4050,7 +3808,6 @@ function renderHomePage() {
     const delayControlsEl = document.getElementById("delay-controls");
     const featuresEl = document.getElementById("features");
     const flagsEl = document.getElementById("flags");
-    const providersEl = document.getElementById("providers");
     const statsEl = document.getElementById("stats");
     const statusEl = document.getElementById("status");
     const testButton = document.getElementById("test-button");
@@ -4156,45 +3913,8 @@ function renderHomePage() {
         flagsEl.appendChild(flag);
       });
 
-      renderProviderControls(settings);
       renderFeatureControls(settings);
       renderDelayControls(settings);
-    }
-
-    function renderProviderControls(settings) {
-      const providers = settings.provider_settings || {};
-      providersEl.innerHTML = "";
-
-      [
-        ["kommo", "Kommo"],
-        ["zernio", "Zernio"]
-      ].forEach(([provider, label]) => {
-        const enabled = !providers[provider] || providers[provider].enabled !== false;
-        const button = document.createElement("button");
-        button.className = "provider-toggle " + (enabled ? "is-on" : "is-off");
-        button.type = "button";
-        button.textContent = label + ": " + (enabled ? "on" : "off");
-
-        button.addEventListener("click", async () => {
-          button.disabled = true;
-          const nextEnabled = !enabled;
-          setStatus((nextEnabled ? "Enabling " : "Disabling ") + label + "...");
-          try {
-            await api("/api/providers", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ provider, enabled: nextEnabled })
-            });
-            await loadDrafts();
-            setStatus(label + " " + (nextEnabled ? "enabled." : "disabled."));
-          } catch (error) {
-            setStatus(error.message);
-            button.disabled = false;
-          }
-        });
-
-        providersEl.appendChild(button);
-      });
     }
 
     function renderFeatureControls(settings) {
@@ -4434,7 +4154,7 @@ function renderHomePage() {
       meta.className = "meta";
 
       const fields = [
-        draft.provider ? draft.provider : "kommo",
+        draft.provider ? draft.provider : "zernio",
         draft.talk_id ? "Talk " + draft.talk_id : "Talk unknown",
         draft.origin ? draft.origin : "",
         draft.created_at ? formatDate(draft.created_at) : "",
@@ -4593,7 +4313,7 @@ ensureStoreFile()
     }, FOLLOW_UP_CHECK_MS);
 
     app.listen(PORT, () => {
-      console.log(`Kommo OpenAI IG auto-reply app listening on port ${PORT}`);
+      console.log(`Zernio OpenAI IG auto-reply app listening on port ${PORT}`);
       console.log(`AUTO_SEND=${isAutoSendEnabled(featureSettings)}`);
       console.log(`CONVERSATION_MEMORY_ENABLED=${isConversationMemoryEnabled(featureSettings)}`);
       console.log(`FOLLOW_UPS_ENABLED=${isFollowUpsEnabled(featureSettings)}`);
