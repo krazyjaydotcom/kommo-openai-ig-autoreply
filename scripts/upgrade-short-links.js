@@ -63,7 +63,7 @@ replaceOnce(
   }
 
   return params.toString()
-    ? \`${TRACKED_BOOKING_BASE_URL}?\${params.toString()}\`
+    ? \`\${TRACKED_BOOKING_BASE_URL}?\${params.toString()}\`
     : TRACKED_BOOKING_BASE_URL;
 }`,
 `function trackedBookingUrl(messageLike = {}) {
