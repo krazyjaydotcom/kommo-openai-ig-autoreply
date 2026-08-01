@@ -1,0 +1,52 @@
+name: Validate conversation engine upgrade
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - agent/natural-conversation-engine
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate source scripts
+        run: npm run check
+
+      - name: Apply targeted migration
+        run: node scripts/upgrade-conversation-engine.js
+
+      - name: Validate upgraded server syntax
+        run: node --check server.js
+
+      - name: Validate critical safeguards
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'INCOMING_DEBOUNCE_MS' server.js
+          grep -q 'incomingStillCurrent' server.js
+          grep -q 'replySafetyReview' server.js
+          grep -q 'Booking link blocked because' server.js
+          grep -q '20 \* 60 \* 60 \* 1000' server.js
+          grep -q 'DEFAULT_MANUAL_TAKEOVER_MINUTES = 240' server.js
+          ! grep -q '45 \* 60 \* 1000' server.js
+          ! grep -q 'Still interested in getting this started' server.js
+          ! grep -q 'slice(-5)' server.js
