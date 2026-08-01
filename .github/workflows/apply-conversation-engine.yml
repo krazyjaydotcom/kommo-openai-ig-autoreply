@@ -1,0 +1,63 @@
+name: Apply conversation engine upgrade
+
+on:
+  push:
+    branches:
+      - agent/natural-conversation-engine
+    paths:
+      - scripts/upgrade-conversation-engine.js
+      - .github/workflows/apply-conversation-engine.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  upgrade-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/natural-conversation-engine
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply targeted migration
+        run: node scripts/upgrade-conversation-engine.js
+
+      - name: Validate server syntax
+        run: node --check server.js
+
+      - name: Validate critical safeguards
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'INCOMING_DEBOUNCE_MS' server.js
+          grep -q 'incomingStillCurrent' server.js
+          grep -q 'replySafetyReview' server.js
+          grep -q 'Booking link blocked because' server.js
+          grep -q '20 \* 60 \* 60 \* 1000' server.js
+          ! grep -q '45 \* 60 \* 1000' server.js
+          ! grep -q 'Still interested in getting this started' server.js
+          ! grep -q 'slice(-5)' server.js
+
+      - name: Commit verified server upgrade
+        run: |
+          if git diff --quiet -- server.js; then
+            echo 'No server changes to commit.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add server.js
+          git commit -m 'Improve natural DM conversations and follow-ups'
+          git push origin HEAD:agent/natural-conversation-engine
