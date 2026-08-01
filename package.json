@@ -1,12 +1,12 @@
 {
   "name": "zernio-openai-ig-autoreply",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
-  "description": "Zernio + OpenAI Instagram DM auto-reply tool with natural conversation safeguards.",
+  "description": "Zernio + OpenAI Instagram DM auto-reply tool with natural conversation and booking nurture safeguards.",
   "main": "server.js",
   "scripts": {
     "start": "node scripts/start.js",
-    "check": "node --check server.js && node --check scripts/start.js && node --check scripts/upgrade-conversation-engine.js"
+    "check": "node --check server.js && node --check scripts/start.js && node --check scripts/upgrade-conversation-engine.js && node --check scripts/upgrade-short-links.js && node --check scripts/upgrade-booking-nurture.js"
   },
   "engines": {
     "node": "22.x"
