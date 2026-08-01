@@ -1,0 +1,55 @@
+name: Validate booking nurture upgrade
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - agent/short-links-booking-nurture
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Validate source files
+        run: npm run check
+
+      - name: Apply all migrations to clean server
+        shell: bash
+        run: |
+          set -euo pipefail
+          workdir="$(mktemp -d)"
+          mkdir -p "$workdir/scripts"
+          cp server.js "$workdir/server.js"
+          cp scripts/upgrade-conversation-engine.js "$workdir/scripts/"
+          cp scripts/upgrade-short-links.js "$workdir/scripts/"
+          cp scripts/upgrade-booking-nurture.js "$workdir/scripts/"
+          cd "$workdir"
+          node scripts/upgrade-conversation-engine.js
+          node scripts/upgrade-short-links.js
+          node scripts/upgrade-booking-nurture.js
+          node --check server.js
+          grep -q 'SHORT_BOOKING_LINK_VERSION = 1' server.js
+          grep -q 'BOOKING_NURTURE_VERSION = 1' server.js
+          grep -q 'app.get("/d/:code"' server.js
+          grep -q 'BOOKING_CONGRATS_DELAY_MS' server.js
+          grep -q 'TRUSTED_LINK_DRAFT_TTL_MS' server.js
+          grep -q 'processBookingNurtureAutomation' server.js
+          grep -q 'Mini-course link blocked because' server.js
+          ! grep -q 'Perfect, glad you got it booked. Before the call, go through this free training' server.js
