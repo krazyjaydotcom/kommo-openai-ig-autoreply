@@ -5,8 +5,12 @@ const { spawnSync } = require("child_process");
 const root = path.join(__dirname, "..");
 const serverFile = path.join(root, "server.js");
 
+function readServer() {
+  return fs.readFileSync(serverFile, "utf8");
+}
+
 function serverIncludes(marker) {
-  return fs.readFileSync(serverFile, "utf8").includes(marker);
+  return readServer().includes(marker);
 }
 
 function runScript(filename) {
@@ -20,20 +24,58 @@ function runScript(filename) {
   }
 }
 
+const serverSource = readServer();
+const hasConversationEngineUpgrade =
+  serverSource.includes("const INCOMING_DEBOUNCE_MS") &&
+  serverSource.includes("function replySafetyReview") &&
+  serverSource.includes("function incomingStillCurrent");
+const hasModernAutomationUpgrade =
+  serverSource.includes("function touchpointKpisForTimeframe") &&
+  serverSource.includes('app.get("/api/automation-events"') &&
+  serverSource.includes('featureEnabled(raw, "approval_mode", "APPROVAL_MODE", false)');
+const canApplyConversationEngineUpgrade = serverSource.includes(
+  "const DEFAULT_MANUAL_TAKEOVER_MINUTES = 8;"
+) && serverSource.includes("const FOLLOW_UP_WINDOW_MS = 23 * 60 * 60 * 1000;");
+
 if (
-  !serverIncludes("const INCOMING_DEBOUNCE_MS") ||
-  !serverIncludes("function replySafetyReview") ||
-  !serverIncludes("function incomingStillCurrent")
+  !hasConversationEngineUpgrade &&
+  !hasModernAutomationUpgrade &&
+  canApplyConversationEngineUpgrade
 ) {
   runScript("upgrade-conversation-engine.js");
+} else if (!hasConversationEngineUpgrade && !hasModernAutomationUpgrade) {
+  console.warn(
+    "Skipping conversation-engine upgrade because server.js no longer matches the expected upgrade markers."
+  );
 }
 
-if (!serverIncludes("const SHORT_BOOKING_LINK_VERSION = 1;")) {
+if (
+  !serverIncludes("const SHORT_BOOKING_LINK_VERSION = 1;") &&
+  serverIncludes("const INCOMING_DEBOUNCE_MS = Number(process.env.INCOMING_DEBOUNCE_MS || 9000);")
+) {
   runScript("upgrade-short-links.js");
+} else if (
+  !serverIncludes("const SHORT_BOOKING_LINK_VERSION = 1;") &&
+  serverIncludes("function trackedBookingUrl")
+) {
+  console.warn(
+    "Skipping short-link upgrade because booking-link tracking already exists without the legacy marker."
+  );
 }
 
-if (!serverIncludes("const BOOKING_NURTURE_VERSION = 1;")) {
+if (
+  !serverIncludes("const BOOKING_NURTURE_VERSION = 1;") &&
+  serverIncludes("function assistantMessageBeforeLatestUser")
+) {
   runScript("upgrade-booking-nurture.js");
+} else if (
+  !serverIncludes("const BOOKING_NURTURE_VERSION = 1;") &&
+  serverIncludes("const TRAINING_PLAYLIST_URL") &&
+  serverIncludes("booking_confirmed")
+) {
+  console.warn(
+    "Skipping booking-nurture upgrade because booking confirmation logic already exists without the legacy marker."
+  );
 }
 
 const syntaxCheck = spawnSync(process.execPath, ["--check", serverFile], {
