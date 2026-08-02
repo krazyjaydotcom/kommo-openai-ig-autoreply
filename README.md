@@ -8,7 +8,7 @@ This is intentionally small:
 - No database
 - No Redis or queue
 - No login screen or user accounts
-- One local JSON file at `data/store.json`
+- One local JSON file at `data/store.json`, or Supabase when configured
 - One DigitalOcean App Platform web component
 
 ## Env Vars
@@ -23,7 +23,12 @@ ZERNIO_ACCOUNT_ID=your-zernio-account-id
 ZERNIO_WEBHOOK_SECRET=choose-a-long-random-zernio-secret
 WEBHOOK_SECRET=choose-a-long-random-secret
 TRACKED_BOOKING_BASE_URL=https://go.palletprosacademy.com/discovery
+STORE_BACKEND=json
+SUPABASE_URL=
+SUPABASE_SERVICE_ROLE_KEY=
+SUPABASE_STATE_TABLE=app_state
 AUTO_SEND=true
+APPROVAL_MODE=false
 HUMANIZE_REPLIES_ENABLED=true
 TYPING_INDICATOR_ENABLED=true
 HUMAN_SEND_DELAY_ENABLED=true
@@ -45,8 +50,10 @@ Notes:
 - `ZERNIO_WEBHOOK_SECRET` verifies signed Zernio webhooks.
 - If you do not configure signed Zernio webhooks yet, `/webhook/zernio?secret=WEBHOOK_SECRET` can use the simple query-secret fallback.
 - `TRACKED_BOOKING_BASE_URL` is the public click-tracking route for your custom domain.
-- `AUTO_SEND=true` sends replies immediately only when the AI returns `needs_review: false`.
-- `AUTO_SEND=false` saves every generated reply as a pending draft.
+- `AUTO_SEND=true` sends replies immediately when the conversation is not paused and the provider can send.
+- `APPROVAL_MODE=false` keeps the app hands-free, even when the AI would have requested review. Turn `APPROVAL_MODE=true` when you want cautious draft review.
+- `AUTO_SEND=false` saves generated replies as pending drafts.
+- `STORE_BACKEND=supabase` stores the same app state in Supabase instead of the local JSON file.
 - `FOLLOW_UPS_ENABLED=true` sends or drafts follow-up nudges based on your auto-send setting.
 - `PALLET_PROS_KNOWLEDGE` is optional. If set, it overrides `knowledge/pallet-pros.md`.
 - The OpenAI API key must have active API billing/credits. ChatGPT Plus/Pro billing is separate from API billing.
@@ -95,13 +102,45 @@ Point your custom subdomain to the DigitalOcean app, then use:
 https://go.palletprosacademy.com/discovery?id=IG_USER_ID
 ```
 
-The app records the click in `data/store.json`, marks the matching conversation as a booking-link click when it can match the ID, increments the booking-link click counter, and redirects the prospect to:
+The app records the click in the configured app store, marks the matching conversation as a booking-link click when it can match the ID, increments the booking-link click counter, and redirects the prospect to:
 
 ```text
 https://www.tidycal.com/palletprosga/discovery?lead_id=IG_USER_ID
 ```
 
 The dashboard also has a manual `Send Booking Link` action for each conversation. It sends the same tracked `go.palletprosacademy.com` URL, not the raw DigitalOcean URL.
+
+## Supabase Storage
+
+To move app data out of DigitalOcean's temporary filesystem:
+
+1. Open Supabase SQL Editor.
+2. Run the SQL in `supabase/app_state.sql`.
+3. In DigitalOcean App Platform, add these environment variables:
+
+```text
+STORE_BACKEND=supabase
+SUPABASE_URL=your-project-url
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+SUPABASE_STATE_TABLE=app_state
+```
+
+The first time Supabase is enabled, the app seeds the database from `data/store.json` if that file exists. After that, drafts, conversations, analytics, click logs, booking events, feature settings, and automation events live in Supabase.
+
+Use the service role key only as a private server-side DigitalOcean environment variable. Do not put it in browser code.
+
+## Automation Visibility
+
+The dashboard shows touchpoints for the selected timeframe:
+
+```text
+Accounts Interacted
+Accounts Reached
+Incoming Messages
+Outgoing Messages
+```
+
+It also stores recent automation events so you can see why a message was ignored, drafted, auto-sent, or failed.
 
 ## Booking Confirmation Webhook
 

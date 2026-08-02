@@ -2,6 +2,13 @@ const crypto = require("crypto");
 const express = require("express");
 const fs = require("fs/promises");
 const path = require("path");
+let createSupabaseClient = null;
+
+try {
+  ({ createClient: createSupabaseClient } = require("@supabase/supabase-js"));
+} catch {
+  createSupabaseClient = null;
+}
 
 const app = express();
 
@@ -11,6 +18,8 @@ const DATA_DIR = process.env.DATA_DIR
   ? path.resolve(process.env.DATA_DIR)
   : DEFAULT_DATA_DIR;
 const DATA_FILE = path.join(DATA_DIR, "store.json");
+const SUPABASE_STATE_KEY = "default";
+const SUPABASE_STATE_TABLE = process.env.SUPABASE_STATE_TABLE || "app_state";
 const KNOWLEDGE_FILE = path.join(__dirname, "knowledge", "pallet-pros.md");
 const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
 const ZERNIO_BASE_URL = "https://zernio.com/api/v1";
@@ -56,6 +65,7 @@ const DEFAULT_STORE = {
   linkClicks: [],
   bookingEvents: [],
   profileCache: {},
+  automationEvents: [],
   dailyStats: {}
 };
 
@@ -190,6 +200,10 @@ function isAutoSendEnabled(settings) {
   return featureEnabled(settings, "auto_send", "AUTO_SEND", false);
 }
 
+function isApprovalModeEnabled(settings) {
+  return featureEnabled(settings, "approval_mode", "APPROVAL_MODE", false);
+}
+
 function isHumanizeRepliesEnabled(settings) {
   return featureEnabled(
     settings,
@@ -316,7 +330,94 @@ async function ensureStoreFile() {
   }
 }
 
+let supabaseClient = null;
+
+function storeBackend() {
+  const requested = String(process.env.STORE_BACKEND || "").toLowerCase();
+  if (requested === "supabase") {
+    return "supabase";
+  }
+
+  if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return "supabase";
+  }
+
+  return "json";
+}
+
+function getSupabaseClient() {
+  if (supabaseClient) {
+    return supabaseClient;
+  }
+
+  if (!createSupabaseClient) {
+    throw new Error("Supabase client package is not installed.");
+  }
+
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+
+  if (!url || !key) {
+    throw new Error("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required.");
+  }
+
+  supabaseClient = createSupabaseClient(url, key, {
+    auth: { persistSession: false, autoRefreshToken: false }
+  });
+  return supabaseClient;
+}
+
+async function ensureSupabaseStore() {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from(SUPABASE_STATE_TABLE)
+    .select("value")
+    .eq("key", SUPABASE_STATE_KEY)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Supabase store read failed: ${error.message}`);
+  }
+
+  if (!data) {
+    let initialValue = DEFAULT_STORE;
+    try {
+      const raw = await fs.readFile(DATA_FILE, "utf8");
+      initialValue = normalizeStore(JSON.parse(raw || "{}"));
+    } catch {
+      initialValue = DEFAULT_STORE;
+    }
+
+    const { error: insertError } = await supabase
+      .from(SUPABASE_STATE_TABLE)
+      .insert({
+        key: SUPABASE_STATE_KEY,
+        value: initialValue,
+        updated_at: new Date().toISOString()
+      });
+
+    if (insertError) {
+      throw new Error(`Supabase store initialization failed: ${insertError.message}`);
+    }
+  }
+}
+
 async function readStore() {
+  if (storeBackend() === "supabase") {
+    await ensureSupabaseStore();
+    const { data, error } = await getSupabaseClient()
+      .from(SUPABASE_STATE_TABLE)
+      .select("value")
+      .eq("key", SUPABASE_STATE_KEY)
+      .single();
+
+    if (error) {
+      throw new Error(`Supabase store read failed: ${error.message}`);
+    }
+
+    return normalizeStore(data?.value || {});
+  }
+
   await ensureStoreFile();
   const raw = await fs.readFile(DATA_FILE, "utf8");
   const parsed = JSON.parse(raw || "{}");
@@ -325,6 +426,26 @@ async function readStore() {
 }
 
 async function writeStore(store) {
+  if (storeBackend() === "supabase") {
+    const normalized = normalizeStore(store);
+    const { error } = await getSupabaseClient()
+      .from(SUPABASE_STATE_TABLE)
+      .upsert(
+        {
+          key: SUPABASE_STATE_KEY,
+          value: normalized,
+          updated_at: new Date().toISOString()
+        },
+        { onConflict: "key" }
+      );
+
+    if (error) {
+      throw new Error(`Supabase store write failed: ${error.message}`);
+    }
+
+    return;
+  }
+
   await fs.mkdir(DATA_DIR, { recursive: true });
   const tempFile = `${DATA_FILE}.tmp`;
   await fs.writeFile(tempFile, JSON.stringify(normalizeStore(store), null, 2));
@@ -354,6 +475,9 @@ function normalizeStore(store) {
       parsed.profileCache && typeof parsed.profileCache === "object"
         ? parsed.profileCache
         : {},
+    automationEvents: Array.isArray(parsed.automationEvents)
+      ? parsed.automationEvents
+      : [],
     dailyStats:
       parsed.dailyStats && typeof parsed.dailyStats === "object"
         ? parsed.dailyStats
@@ -388,6 +512,7 @@ function normalizeFeatureSettings(settings) {
 
   return {
     auto_send: featureEnabled(raw, "auto_send", "AUTO_SEND", false),
+    approval_mode: featureEnabled(raw, "approval_mode", "APPROVAL_MODE", false),
     follow_ups: featureEnabled(raw, "follow_ups", "FOLLOW_UPS_ENABLED", false),
     humanize_replies: featureEnabled(
       raw,
@@ -1811,6 +1936,46 @@ function conversationKpisForTimeframe(store, timeframe) {
   };
 }
 
+function touchpointKpisForTimeframe(store, timeframe) {
+  const conversations = Object.values(store.conversations || {});
+  let incomingMessages = 0;
+  let outgoingMessages = 0;
+  const interactedAccounts = new Set();
+  const reachedAccounts = new Set();
+
+  for (const memory of conversations) {
+    const messages = Array.isArray(memory?.last_messages) ? memory.last_messages : [];
+    for (const message of messages) {
+      if (!isDateInTimeframe(message.at, timeframe)) {
+        continue;
+      }
+
+      const key =
+        memory.key ||
+        memory.contact_id ||
+        memory.chat_id ||
+        memory.current_talk_id ||
+        message.id;
+      interactedAccounts.add(String(key));
+
+      if (message.role === "assistant") {
+        outgoingMessages += 1;
+        reachedAccounts.add(String(key));
+      } else {
+        incomingMessages += 1;
+      }
+    }
+  }
+
+  return {
+    accounts_interacted: interactedAccounts.size,
+    accounts_reached: reachedAccounts.size,
+    incoming_messages: incomingMessages,
+    outgoing_messages: outgoingMessages,
+    total_messages: incomingMessages + outgoingMessages
+  };
+}
+
 function recordDailyStat(store, conversationKey, increments = {}) {
   const stats = getDailyStats(store);
 
@@ -1828,6 +1993,32 @@ function recordDailyStat(store, conversationKey, increments = {}) {
   for (const [key, value] of Object.entries(counterIncrements)) {
     stats[key] = Number(stats[key] || 0) + Number(value || 0);
   }
+}
+
+function addAutomationEvent(store, event = {}) {
+  store.automationEvents = Array.isArray(store.automationEvents)
+    ? store.automationEvents
+    : [];
+
+  store.automationEvents.push({
+    id: crypto.randomUUID(),
+    created_at: new Date().toISOString(),
+    level: event.level || "info",
+    type: event.type || "event",
+    message: String(event.message || "").slice(0, 500),
+    talk_id: String(event.talk_id || "").slice(0, 120),
+    contact_id: String(event.contact_id || "").slice(0, 120),
+    conversation_key: String(event.conversation_key || "").slice(0, 240),
+    reason: String(event.reason || "").slice(0, 700)
+  });
+
+  store.automationEvents = store.automationEvents.slice(-500);
+}
+
+async function appendAutomationEvent(event = {}) {
+  const store = await readStore();
+  addAutomationEvent(store, event);
+  await writeStore(store);
 }
 
 function linkStatsForText(text) {
@@ -3206,26 +3397,64 @@ async function sendDueFollowUp(conversationKey) {
 async function processIncomingMessage(incoming, parsedPayload) {
   if (!incoming.text) {
     console.log("Webhook ignored: no text message found.");
+    await appendAutomationEvent({
+      level: "warn",
+      type: "ignored",
+      message: "Webhook ignored: no text message found.",
+      talk_id: incoming.talk_id,
+      contact_id: incoming.contact_id
+    });
     return;
   }
 
   if (incoming.direction && incoming.direction !== "incoming") {
     console.log(`Webhook ignored: message direction is ${incoming.direction}.`);
+    await appendAutomationEvent({
+      level: "info",
+      type: "ignored",
+      message: "Webhook ignored: non-incoming message.",
+      talk_id: incoming.talk_id,
+      contact_id: incoming.contact_id,
+      reason: `direction=${incoming.direction}`
+    });
     return;
   }
 
   if (incoming.message_type && incoming.message_type !== "text") {
     console.log(`Webhook ignored: message_type is ${incoming.message_type}.`);
+    await appendAutomationEvent({
+      level: "info",
+      type: "ignored",
+      message: "Webhook ignored: unsupported message type.",
+      talk_id: incoming.talk_id,
+      contact_id: incoming.contact_id,
+      reason: `message_type=${incoming.message_type}`
+    });
     return;
   }
 
   if (!isInstagramOrigin(incoming.origin)) {
     console.log(`Webhook ignored: origin is ${incoming.origin}.`);
+    await appendAutomationEvent({
+      level: "info",
+      type: "ignored",
+      message: "Webhook ignored: origin was not Instagram.",
+      talk_id: incoming.talk_id,
+      contact_id: incoming.contact_id,
+      reason: `origin=${incoming.origin}`
+    });
     return;
   }
 
   if (!isFreshEnough(incoming.created_at)) {
     console.log("Webhook ignored: message appears older than 24 hours.");
+    await appendAutomationEvent({
+      level: "info",
+      type: "ignored",
+      message: "Webhook ignored: message appears older than 24 hours.",
+      talk_id: incoming.talk_id,
+      contact_id: incoming.contact_id
+    });
     return;
   }
 
@@ -3235,6 +3464,15 @@ async function processIncomingMessage(incoming, parsedPayload) {
 
   if (!isProviderEnabled(providerStore, provider)) {
     console.log(`Webhook ignored: ${provider} provider is disabled.`);
+    addAutomationEvent(providerStore, {
+      level: "warn",
+      type: "ignored",
+      message: "Webhook ignored: provider is disabled.",
+      talk_id: incoming.talk_id,
+      contact_id: incoming.contact_id,
+      reason: `${provider} provider disabled`
+    });
+    await writeStore(providerStore);
     return;
   }
 
@@ -3245,6 +3483,15 @@ async function processIncomingMessage(incoming, parsedPayload) {
 
   if (duplicate) {
     console.log(`Webhook ignored: duplicate message ${incoming.incoming_message_id}.`);
+    await appendAutomationEvent({
+      level: "info",
+      type: "ignored",
+      message: "Webhook ignored: duplicate message.",
+      talk_id: incoming.talk_id,
+      contact_id: incoming.contact_id,
+      conversation_key: conversationKey,
+      reason: incoming.incoming_message_id
+    });
     return;
   }
 
@@ -3259,16 +3506,26 @@ async function processIncomingMessage(incoming, parsedPayload) {
     const holdReason = conversationHoldReason(settings);
     await writeStore(store);
 
+    const reviewRequired =
+      isApprovalModeEnabled(featureSettings) && ruleBasedReply.needs_review !== false;
     const shouldAutoSendRuleReply =
       isAutoSendEnabled(featureSettings) &&
       !holdReason &&
-      ruleBasedReply.needs_review === false &&
+      !reviewRequired &&
       Boolean(replyText);
 
     if (shouldAutoSendRuleReply) {
       try {
         await sendReplySequence(incoming, ruleBasedReply, featureSettings);
         await recordOutgoingForMemory(incoming, replyText, { source: "auto" });
+        await appendAutomationEvent({
+          level: "success",
+          type: "auto_sent",
+          message: "Auto-sent rule-based reply.",
+          talk_id: incoming.talk_id,
+          contact_id: incoming.contact_id,
+          conversation_key: conversationKey
+        });
         console.log(`Auto-sent rule-based reply for talk_id=${incoming.talk_id}.`);
         return;
       } catch (error) {
@@ -3291,7 +3548,24 @@ async function processIncomingMessage(incoming, parsedPayload) {
       needs_review: true,
       reason: shouldAutoSendRuleReply
         ? "Rule-based auto-send failed; saved for review."
-        : holdReason || "Appointment setter flow handled."
+        : holdReason ||
+          (reviewRequired
+            ? "Approval mode is on, so this rule-based reply was saved for review."
+            : "Appointment setter flow handled.")
+    });
+
+    await appendAutomationEvent({
+      level: "warn",
+      type: "draft_saved",
+      message: "Saved rule-based draft instead of sending.",
+      talk_id: incoming.talk_id,
+      contact_id: incoming.contact_id,
+      conversation_key: conversationKey,
+      reason:
+        holdReason ||
+        (reviewRequired
+          ? "Approval mode required review."
+          : "Rule-based auto-send failed or reply was empty.")
     });
 
     console.log(`Saved rule-based draft for talk_id=${incoming.talk_id}.`);
@@ -3340,6 +3614,16 @@ async function processIncomingMessage(incoming, parsedPayload) {
       reason: `OpenAI reply generation failed: ${error.message}`
     });
 
+    await appendAutomationEvent({
+      level: "error",
+      type: "openai_failed",
+      message: "OpenAI reply generation failed.",
+      talk_id: incoming.talk_id,
+      contact_id: incoming.contact_id,
+      conversation_key: conversationKey,
+      reason: error.message
+    });
+
     console.error(`Saved pending draft after OpenAI failure for talk_id=${incoming.talk_id}:`, error);
     return;
   }
@@ -3370,17 +3654,58 @@ async function processIncomingMessage(incoming, parsedPayload) {
   const holdReason = conversationHoldReason(settings);
   await writeStore(store);
 
+  const reviewRequired =
+    isApprovalModeEnabled(featureSettings) &&
+    (aiReply.needs_review || Boolean(reviewReason));
   const shouldAutoSend =
     isAutoSendEnabled(featureSettings) &&
     !holdReason &&
-    aiReply.needs_review === false &&
+    !reviewRequired &&
     Boolean(aiReply.reply);
 
   if (shouldAutoSend) {
-    await sendReply(incoming, aiReply.reply, featureSettings);
-    await recordOutgoingForMemory(incoming, aiReply.reply, { source: "auto" });
-    console.log(`Auto-sent reply for talk_id=${incoming.talk_id}.`);
-    return;
+    try {
+      await sendReply(incoming, aiReply.reply, featureSettings);
+      await recordOutgoingForMemory(incoming, aiReply.reply, { source: "auto" });
+      await appendAutomationEvent({
+        level: "success",
+        type: "auto_sent",
+        message: "Auto-sent OpenAI reply.",
+        talk_id: incoming.talk_id,
+        contact_id: incoming.contact_id,
+        conversation_key: conversationKey,
+        reason: reviewReason || ""
+      });
+      console.log(`Auto-sent reply for talk_id=${incoming.talk_id}.`);
+      return;
+    } catch (error) {
+      await saveDraft({
+        provider: normalizeProvider(incoming.provider),
+        conversation_key: conversationKey,
+        talk_id: incoming.talk_id,
+        chat_id: incoming.chat_id,
+        contact_id: incoming.contact_id,
+        zernio_conversation_id: incoming.zernio_conversation_id,
+        zernio_account_id: incoming.zernio_account_id,
+        incoming_message_id: incoming.incoming_message_id,
+        incoming_text: incoming.text,
+        origin: incoming.origin,
+        reply: aiReply.reply,
+        needs_review: true,
+        reason: `Auto-send failed: ${error.message}`
+      });
+      await appendAutomationEvent({
+        level: "error",
+        type: "send_failed",
+        message: "Auto-send failed after OpenAI generated a reply.",
+        talk_id: incoming.talk_id,
+        contact_id: incoming.contact_id,
+        conversation_key: conversationKey,
+        reason: error.message
+      });
+      console.error(`Auto-send failed for talk_id=${incoming.talk_id}:`, error);
+      return;
+    }
   }
 
   await saveDraft({
@@ -3399,7 +3724,24 @@ async function processIncomingMessage(incoming, parsedPayload) {
     reason:
       reviewReason ||
       holdReason ||
-      (aiReply.needs_review ? "AI requested review." : "AUTO_SEND is not true.")
+      (reviewRequired
+        ? "Approval mode is on, so this reply was saved for review."
+        : "AUTO_SEND is not true.")
+  });
+
+  await appendAutomationEvent({
+    level: "warn",
+    type: "draft_saved",
+    message: "Saved OpenAI draft instead of sending.",
+    talk_id: incoming.talk_id,
+    contact_id: incoming.contact_id,
+    conversation_key: conversationKey,
+    reason:
+      reviewReason ||
+      holdReason ||
+      (reviewRequired
+        ? "Approval mode required review."
+        : "AUTO_SEND is off or reply was empty.")
   });
 
   console.log(`Saved pending draft for talk_id=${incoming.talk_id}.`);
@@ -3454,10 +3796,28 @@ app.post(
 
     if (incoming.event_type && incoming.event_type !== "message.received") {
       console.log(`Zernio webhook ignored: event_type is ${incoming.event_type}.`);
+      appendAutomationEvent({
+        level: "info",
+        type: "ignored",
+        message: "Zernio webhook ignored: unexpected event type.",
+        talk_id: incoming.talk_id,
+        contact_id: incoming.contact_id,
+        reason: `event_type=${incoming.event_type}`
+      }).catch((error) => console.error("Automation event logging failed:", error));
       return;
     }
 
     processIncomingMessage(incoming, parsedPayload).catch((error) => {
+      appendAutomationEvent({
+        level: "error",
+        type: "processing_failed",
+        message: "Webhook processing failed after receipt.",
+        talk_id: incoming.talk_id,
+        contact_id: incoming.contact_id,
+        reason: error.message
+      }).catch((loggingError) =>
+        console.error("Automation event logging failed:", loggingError)
+      );
       console.error("Zernio webhook processing failed:", error);
     });
   }
@@ -3540,6 +3900,21 @@ app.get("/api/drafts", async (_req, res, next) => {
   }
 });
 
+app.get("/api/automation-events", async (req, res, next) => {
+  try {
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit || 40)));
+    const store = await readStore();
+    const events = (Array.isArray(store.automationEvents) ? store.automationEvents : [])
+      .slice()
+      .sort((a, b) => Date.parse(b.created_at || 0) - Date.parse(a.created_at || 0))
+      .slice(0, limit);
+
+    res.json({ events });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get("/api/stats", async (req, res, next) => {
   try {
     const store = await readStore();
@@ -3549,6 +3924,7 @@ app.get("/api/stats", async (req, res, next) => {
     const allTimeStats = getAllTimeStats(store);
     const timeframeStats = statsForTimeframe(store, timeframe);
     const funnel = conversationKpisForTimeframe(store, timeframe);
+    const touchpoints = touchpointKpisForTimeframe(store, timeframe);
     const providerSettings = getProviderSettings(store);
     const featureSettings = getFeatureSettings(store);
     const businessKnowledge = await loadKnowledgeBase();
@@ -3562,8 +3938,10 @@ app.get("/api/stats", async (req, res, next) => {
       all_time_stats: publicStats(allTimeStats),
       timeframe_stats: publicStats(timeframeStats),
       funnel,
+      touchpoints,
       settings: {
         auto_send: isAutoSendEnabled(featureSettings),
+        approval_mode: isApprovalModeEnabled(featureSettings),
         humanize_replies_enabled: isHumanizeRepliesEnabled(featureSettings),
         typing_indicator_enabled: isTypingIndicatorEnabled(featureSettings),
         human_send_delay_enabled: isHumanSendDelayEnabled(featureSettings),
@@ -3580,6 +3958,8 @@ app.get("/api/stats", async (req, res, next) => {
         memory_store_messages: MAX_RECENT_MEMORY_MESSAGES,
         memory_prompt_messages: MAX_PROMPT_MEMORY_MESSAGES,
         custom_data_dir: Boolean(process.env.DATA_DIR),
+        store_backend: storeBackend(),
+        supabase_configured: Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY),
         feature_settings: featureSettings,
         provider_settings: providerSettings
       }
@@ -3605,6 +3985,7 @@ app.post("/api/features", async (req, res, next) => {
     const feature = String(req.body.feature || "").toLowerCase();
     const allowedFeatures = [
       "auto_send",
+      "approval_mode",
       "follow_ups",
       "humanize_replies",
       "typing_indicator",
@@ -5640,6 +6021,34 @@ function renderModernHomePage() {
       gap: 10px;
     }
 
+    .events {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+      max-height: 210px;
+      overflow: auto;
+    }
+
+    .event {
+      background: rgba(255, 255, 255, 0.055);
+      border: 1px solid var(--border);
+      border-radius: 13px;
+      color: var(--muted);
+      display: grid;
+      gap: 4px;
+      font-size: 12px;
+      padding: 10px;
+    }
+
+    .event strong {
+      color: var(--text);
+      font-size: 12px;
+    }
+
+    .event.error { border-color: rgba(255, 107, 122, 0.42); }
+    .event.warn { border-color: rgba(244, 201, 93, 0.42); }
+    .event.success { border-color: rgba(57, 223, 159, 0.42); }
+
     .empty {
       border: 1px dashed var(--border);
       border-radius: 16px;
@@ -5826,6 +6235,7 @@ function renderModernHomePage() {
           <div class="controls">
             <div class="control-row" id="features"></div>
             <div class="control-row" id="flags"></div>
+            <div class="events" id="automation-events"></div>
           </div>
         </section>
       </section>
@@ -5878,6 +6288,7 @@ function renderModernHomePage() {
     const draftsEl = document.getElementById("drafts");
     const featuresEl = document.getElementById("features");
     const flagsEl = document.getElementById("flags");
+    const automationEventsEl = document.getElementById("automation-events");
     const kpisEl = document.getElementById("kpis");
     const funnelEl = document.getElementById("funnel");
     const statusEl = document.getElementById("status");
@@ -5931,9 +6342,12 @@ function renderModernHomePage() {
 
     function renderKpis(data) {
       const funnel = data.funnel || {};
+      const touchpoints = data.touchpoints || {};
       const totalDms = Math.max(Number((data.timeframe_stats || {}).prospects_touched || 0), Number(funnel.total_leads || 0));
       const cards = [
-        ["Total IG Leads Captured", funnel.total_leads || totalDms || 0, timeframeLabel(state.timeframe)],
+        ["Accounts Interacted", touchpoints.accounts_interacted || 0, timeframeLabel(state.timeframe)],
+        ["Accounts Reached", touchpoints.accounts_reached || 0, "outbound touchpoints"],
+        ["Total IG Leads Captured", funnel.total_leads || totalDms || 0, "conversation memory"],
         ["Booking Links Sent", funnel.booking_links_sent || 0, percent(funnel.link_sent_rate || 0) + " of leads"],
         ["Booking Link Clicks", funnel.booking_link_clicks || 0, percent(funnel.click_through_rate || 0) + " CTR"],
         ["Discovery Calls Scheduled", funnel.appointments_scheduled || 0, percent(funnel.booking_conversion_rate || 0) + " conversion"]
@@ -5986,13 +6400,16 @@ function renderModernHomePage() {
       flagsEl.innerHTML = "";
       [
         ["Memory", settings.conversation_memory_enabled],
+        ["Approval mode", settings.approval_mode],
         ["Follow-ups", settings.follow_ups_enabled],
         ["Typing", settings.typing_indicator_enabled],
-        ["Knowledge", settings.knowledge_base_configured]
+        ["Knowledge", settings.knowledge_base_configured],
+        ["Store", settings.store_backend || "json"]
       ].forEach(([label, value]) => {
         const tag = document.createElement("span");
-        tag.className = "tag " + (value ? "green" : "red");
-        tag.textContent = label + ": " + (value ? "on" : "off");
+        const isBoolean = typeof value === "boolean";
+        tag.className = "tag " + (!isBoolean || value ? "green" : "red");
+        tag.textContent = label + ": " + (isBoolean ? (value ? "on" : "off") : value);
         flagsEl.appendChild(tag);
       });
       renderFeatureControls(settings.feature_settings || {});
@@ -6002,6 +6419,7 @@ function renderModernHomePage() {
       featuresEl.innerHTML = "";
       [
         ["auto_send", "Auto-send"],
+        ["approval_mode", "Approval mode"],
         ["follow_ups", "Auto-follow-up"],
         ["humanize_replies", "Human tone"],
         ["conversation_memory", "Context memory"]
@@ -6201,14 +6619,41 @@ function renderModernHomePage() {
       });
     }
 
+    function renderAutomationEvents(events) {
+      automationEventsEl.innerHTML = "";
+      const visible = (events || []).slice(0, 8);
+      if (!visible.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "No automation events yet.";
+        automationEventsEl.appendChild(empty);
+        return;
+      }
+
+      visible.forEach((event) => {
+        const row = document.createElement("div");
+        row.className = "event " + (event.level || "info");
+        const top = document.createElement("strong");
+        top.textContent = (event.type || "event").replace("_", " ") + " · " + formatDate(event.created_at);
+        const message = document.createElement("span");
+        message.textContent = event.message || "";
+        const reason = document.createElement("span");
+        reason.textContent = event.reason || event.talk_id || "";
+        row.append(top, message);
+        if (reason.textContent) row.appendChild(reason);
+        automationEventsEl.appendChild(row);
+      });
+    }
+
     async function loadAll(silent) {
       if (!silent) setStatus("Refreshing...");
       try {
         const query = "?timeframe=" + encodeURIComponent(state.timeframe);
-        const [stats, conversations, drafts] = await Promise.all([
+        const [stats, conversations, drafts, events] = await Promise.all([
           api("/api/stats" + query),
           api("/api/conversations" + query),
-          api("/api/drafts")
+          api("/api/drafts"),
+          api("/api/automation-events?limit=25")
         ]);
         rangeLabelEl.textContent = timeframeLabel(state.timeframe);
         renderKpis(stats);
@@ -6216,6 +6661,7 @@ function renderModernHomePage() {
         renderStatuses(stats.settings || {});
         renderConversations(conversations.conversations || []);
         renderDrafts(drafts.drafts || []);
+        renderAutomationEvents(events.events || []);
         if (!silent) setStatus("Live.");
       } catch (error) {
         setStatus(error.message);
