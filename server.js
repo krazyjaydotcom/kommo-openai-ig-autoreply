@@ -2,13 +2,6 @@ const crypto = require("crypto");
 const express = require("express");
 const fs = require("fs/promises");
 const path = require("path");
-let createSupabaseClient = null;
-
-try {
-  ({ createClient: createSupabaseClient } = require("@supabase/supabase-js"));
-} catch {
-  createSupabaseClient = null;
-}
 
 const app = express();
 
@@ -330,8 +323,6 @@ async function ensureStoreFile() {
   }
 }
 
-let supabaseClient = null;
-
 function storeBackend() {
   const requested = String(process.env.STORE_BACKEND || "").toLowerCase();
   if (requested === "supabase") {
@@ -345,15 +336,7 @@ function storeBackend() {
   return "json";
 }
 
-function getSupabaseClient() {
-  if (supabaseClient) {
-    return supabaseClient;
-  }
-
-  if (!createSupabaseClient) {
-    throw new Error("Supabase client package is not installed.");
-  }
-
+async function supabaseRestRequest(pathname, options = {}) {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
 
@@ -361,25 +344,39 @@ function getSupabaseClient() {
     throw new Error("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required.");
   }
 
-  supabaseClient = createSupabaseClient(url, key, {
-    auth: { persistSession: false, autoRefreshToken: false }
+  const response = await fetch(`${url.replace(/\/$/, "")}/rest/v1/${pathname}`, {
+    ...options,
+    headers: {
+      apikey: key,
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+      ...(options.headers || {})
+    }
   });
-  return supabaseClient;
+
+  const text = await response.text();
+  const body = text ? safeJsonParse(text) || text : null;
+
+  if (!response.ok) {
+    throw new Error(
+      `Supabase REST ${response.status} ${response.statusText}: ${
+        typeof body === "string" ? body : JSON.stringify(body)
+      }`
+    );
+  }
+
+  return body;
 }
 
 async function ensureSupabaseStore() {
-  const supabase = getSupabaseClient();
-  const { data, error } = await supabase
-    .from(SUPABASE_STATE_TABLE)
-    .select("value")
-    .eq("key", SUPABASE_STATE_KEY)
-    .maybeSingle();
+  const rows = await supabaseRestRequest(
+    `${encodeURIComponent(SUPABASE_STATE_TABLE)}?key=eq.${encodeURIComponent(
+      SUPABASE_STATE_KEY
+    )}&select=value`,
+    { method: "GET" }
+  );
 
-  if (error) {
-    throw new Error(`Supabase store read failed: ${error.message}`);
-  }
-
-  if (!data) {
+  if (!Array.isArray(rows) || !rows.length) {
     let initialValue = DEFAULT_STORE;
     try {
       const raw = await fs.readFile(DATA_FILE, "utf8");
@@ -388,34 +385,29 @@ async function ensureSupabaseStore() {
       initialValue = DEFAULT_STORE;
     }
 
-    const { error: insertError } = await supabase
-      .from(SUPABASE_STATE_TABLE)
-      .insert({
+    await supabaseRestRequest(encodeURIComponent(SUPABASE_STATE_TABLE), {
+      method: "POST",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({
         key: SUPABASE_STATE_KEY,
         value: initialValue,
         updated_at: new Date().toISOString()
-      });
-
-    if (insertError) {
-      throw new Error(`Supabase store initialization failed: ${insertError.message}`);
-    }
+      })
+    });
   }
 }
 
 async function readStore() {
   if (storeBackend() === "supabase") {
     await ensureSupabaseStore();
-    const { data, error } = await getSupabaseClient()
-      .from(SUPABASE_STATE_TABLE)
-      .select("value")
-      .eq("key", SUPABASE_STATE_KEY)
-      .single();
+    const rows = await supabaseRestRequest(
+      `${encodeURIComponent(SUPABASE_STATE_TABLE)}?key=eq.${encodeURIComponent(
+        SUPABASE_STATE_KEY
+      )}&select=value`,
+      { method: "GET" }
+    );
 
-    if (error) {
-      throw new Error(`Supabase store read failed: ${error.message}`);
-    }
-
-    return normalizeStore(data?.value || {});
+    return normalizeStore(Array.isArray(rows) ? rows[0]?.value || {} : {});
   }
 
   await ensureStoreFile();
@@ -428,20 +420,15 @@ async function readStore() {
 async function writeStore(store) {
   if (storeBackend() === "supabase") {
     const normalized = normalizeStore(store);
-    const { error } = await getSupabaseClient()
-      .from(SUPABASE_STATE_TABLE)
-      .upsert(
-        {
+    await supabaseRestRequest(encodeURIComponent(SUPABASE_STATE_TABLE), {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify({
           key: SUPABASE_STATE_KEY,
           value: normalized,
           updated_at: new Date().toISOString()
-        },
-        { onConflict: "key" }
-      );
-
-    if (error) {
-      throw new Error(`Supabase store write failed: ${error.message}`);
-    }
+      })
+    });
 
     return;
   }
