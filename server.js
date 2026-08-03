@@ -87,6 +87,14 @@ Rules:
    https://www.youtube.com/playlist?list=PLPFyOjF-83nJ0B5xCreYqoQzcGx-SQsvs
 18. After someone confirms they booked, do not send the booking link again and do not keep qualifying them.
 
+Core appointment-setting objective:
+- The goal is not to have a long educational conversation in DMs. The goal is to identify real intent, answer enough to build trust, and move warm prospects to a Zoom/discovery call.
+- If someone plainly says they want to start, learn, get started, schedule, book, or talk about the pallet business, treat them as warm and move toward the call quickly.
+- The best-performing path is: interest -> Zoom call framing -> ask permission for calendar -> send calendar -> tell them to choose a time and you will verify it.
+- Do not add extra qualification questions after a clear "I want to start" unless their message includes a real question or important context that needs a brief answer first.
+- When a prospect gives a lot of context, mirror one concrete detail, answer one useful point, then steer back to a call where you can research their market and see whether the academy fits.
+- The DM should feel like a confident human appointment setter, not a course explainer, FAQ bot, or coach.
+
 Disqualify or redirect immediately to https://youtube.com/@palletprosacademy and do not continue qualifying if the person:
 - Is unemployed with no capital or real plan.
 - Is incarcerated.
@@ -103,7 +111,7 @@ Best-performing DM flow:
 1. First touch, if there is no prior context: "Thanks for the follow. Are you here for the content, or are you looking to start your own pallet business?"
 2. If they ask questions, answer briefly and naturally. Do not ignore the question just to push the call.
 3. If they give useful context, mirror one specific detail so they feel heard.
-4. When it makes sense, ask one open-ended question like: "Is this business something you'd be interested in pursuing?"
+4. If they are only lightly curious or vague, ask one open-ended question like: "Is this business something you'd be interested in pursuing?"
 5. If they say yes or clearly show they want to pursue it, invite them to a Zoom/discovery call so you can research their area, answer their questions, and see if Pallet Pros Academy would be a good fit for their goals.
 6. Before sending the calendar link, ask permission in one short question: "Do you mind if I send you a link to my calendar?"
 7. If they say yes, send the booking link and tell them to choose a date/time that works for them.
@@ -162,7 +170,8 @@ const CONTEXT_RULES = `Context rules:
 - When a prospect gives context, mirror one specific detail so the reply feels like it was written for them.
 - Bare replies like "yes", "ok", "sounds good", "how?", or "interested" depend on the previous assistant question. Use the last assistant message to decide what they are agreeing to.
 - If a bare reply cannot be confidently tied to the previous assistant question, set needs_review true instead of guessing.
-- Warm the lead up with one simple reason, timeline, or obstacle question before sending a calendar link unless they clearly asked for the link or already agreed to a call.
+- If they already said they want to start, learn the business, get started, schedule, book, or talk through details, do not ask multiple warm-up questions. Move to the Zoom/calendar permission step.
+- Use one simple reason, timeline, or obstacle question only when the person is vague, lukewarm, or merely curious.
 - If the history is missing, contradictory, or too thin to answer confidently, set needs_review true.`;
 
 const KNOWLEDGE_RULES = `Business knowledge rules:
@@ -1362,7 +1371,7 @@ function updateQuestionMemory(memory, text) {
 function appointmentSetterCalendarAskReply() {
   return {
     reply:
-      "That's exactly what the Zoom is for. We can research your area, answer your questions, and see if the academy fits your goals.\n\nDo you mind if I send the calendar link?",
+      "Great. Let's get on a Zoom call this week so we can research your market, answer your questions, and see if the academy fits your goals.\n\nDo you mind if I send the calendar link?",
     needs_review: false,
     handled: true
   };
@@ -1398,8 +1407,8 @@ function withTrackedBookingUrl(replyText, messageLike = {}) {
 function appointmentSetterCalendarLinkReply(messageLike) {
   const calendarUrl = trackedBookingUrl(messageLike);
   const messages = [
-    `Bet. Here's the calendar: ${calendarUrl}`,
-    "Pick a time that works for you and I'll verify it on my end."
+    `Solid. Here's the calendar: ${calendarUrl}`,
+    "Choose a date/time that works for you, and I'll verify it on my end."
   ];
 
   return {
@@ -1459,6 +1468,47 @@ function wantsContentOnly(text) {
 function wantsPalletBusiness(text) {
   return /\b(interested|want|wanna|trying|tryna|looking|ready|learn|start|get started|get into|appointment|consultation|schedule|book|call|zoom|business|pallet)\b/i.test(
     String(text || "")
+  );
+}
+
+function hasClearStartIntent(text) {
+  return /\b(i'?m|im|i am|we'?re|were|we are|i|we)\s+(?:definitely\s+|really\s+|ready\s+|tryna\s+|trying\s+|looking\s+|want(?:ing)?\s+|wanna\s+)?(?:interested|ready|down|trying|tryna|looking|want(?:ing)?|wanna|ready)\b.{0,80}\b(start|get started|learn|business|pallet|pallets)\b/i.test(
+    String(text || "")
+  ) ||
+    /\b(start|get started|learn|get into)\b.{0,40}\b(pallet|pallets|business)\b/i.test(
+      String(text || "")
+    ) ||
+    /\b(pallet|pallets)\b.{0,40}\b(business|academy|program)\b/i.test(String(text || ""));
+}
+
+function wantsAppointmentOrScheduling(text) {
+  return /\b(schedule|appointment|book|booking|calendar|consultation|consult|zoom|discovery call|call this week|reschedule|rebook)\b/i.test(
+    String(text || "")
+  );
+}
+
+function lastAssistantAskedContentOrBusiness(memory) {
+  return (Array.isArray(memory?.last_messages) ? memory.last_messages : [])
+    .slice(-5)
+    .some(
+      (message) =>
+        message.role === "assistant" &&
+        /content/i.test(message.text || "") &&
+        /(start|looking to start|wanting to start).{0,40}(pallet|business)/i.test(
+          message.text || ""
+        )
+    );
+}
+
+function yesToBusinessInterest(text) {
+  const cleanText = String(text || "")
+    .toLowerCase()
+    .replace(/[^\w\s']/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return /^(yes|yea|yeah|yep|yup|most definitely|definitely|for sure|sure|yea definitely|yeah definitely|i am|i'm|im|interested|i'm interested|im interested|trying|tryna|i'm tryna|im tryna|i want|wanting|wanna|ready|down|let's do it|lets do it)\b/.test(
+    cleanText
   );
 }
 
@@ -1541,6 +1591,23 @@ function appointmentSetterRuleReply(memory, incoming) {
   }
 
   if (
+    wantsAppointmentOrScheduling(text) &&
+    !memory?.booking_link_sent &&
+    !memory?.booking_confirmed
+  ) {
+    return appointmentSetterCalendarLinkReply(incoming);
+  }
+
+  if (
+    lastAssistantAskedContentOrBusiness(memory) &&
+    yesToBusinessInterest(text) &&
+    !memory?.booking_link_sent &&
+    !memory?.booking_confirmed
+  ) {
+    return appointmentSetterCalendarAskReply();
+  }
+
+  if (
     memory?.booking_link_sent &&
     mentionsSpecificTimeInsteadOfBooking(text) &&
     !prospectAskedQuestion(text)
@@ -1565,7 +1632,7 @@ function appointmentSetterRuleReply(memory, incoming) {
     !memory?.booking_link_sent &&
     !lastAssistantAskedForCalendarPermission(memory)
   ) {
-    return askedWarmQualifier(memory)
+    return hasClearStartIntent(text) || askedWarmQualifier(memory)
       ? appointmentSetterCalendarAskReply()
       : appointmentSetterWarmQualifierReply();
   }
