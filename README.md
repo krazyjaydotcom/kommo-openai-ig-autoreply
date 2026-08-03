@@ -231,6 +231,33 @@ Core flow:
 
 The app should not keep repeating the same greeting, question, link, or follow-up.
 
+## Scenario Playbook
+
+The OpenAI system prompt includes a scenario playbook in `server.js` under `SCENARIO_PLAYBOOK_RULES`.
+
+It covers common appointment-setter situations:
+
+- Price/cost questions.
+- How the pallet business works.
+- No truck yet.
+- Has a truck, trailer, business, warehouse, route, or pallet-yard access.
+- No money/no capital/not ready.
+- Location and market questions.
+- Skepticism or proof requests.
+- Direct phone-call requests.
+- Specific day/time replies.
+- Weekend call requests.
+- Already booked.
+- Missed call, reschedule, or rebook.
+- Link sent but prospect keeps asking broad questions.
+- Content-only or curiosity-only prospects.
+- Load-finding, freight, or dispatch confusion.
+- Partner/spouse/family discussion.
+- Start-timeframe questions.
+- Income questions.
+
+The priority is always: redirect bad-fit/content-only leads, answer direct questions briefly, then move serious prospects toward the Zoom/discovery call.
+
 ## Conversation Memory Lite
 
 When `CONVERSATION_MEMORY_ENABLED=true`, the app stores a compact record under `data/store.json` keyed by:
