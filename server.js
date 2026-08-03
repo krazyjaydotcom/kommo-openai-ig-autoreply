@@ -1575,7 +1575,9 @@ function lastAssistantAskedForCalendarPermission(memory) {
     .some(
       (message) =>
         message.role === "assistant" &&
-        /send you a link to my calendar|link to my calendar/i.test(message.text || "")
+        /send you a link to my calendar|send (?:you )?(?:the|a) calendar link|link to my calendar|calendar link/i.test(
+          message.text || ""
+        )
     );
 }
 
