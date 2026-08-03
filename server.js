@@ -1491,6 +1491,50 @@ function appointmentSetterContentReply() {
   };
 }
 
+function appointmentSetterCostReply() {
+  return {
+    reply:
+      "It depends on where you're starting and what kind of help you need. The call is the best way to see what makes sense for you. Want me to send the calendar link?",
+    needs_review: false,
+    handled: true
+  };
+}
+
+function appointmentSetterHowItWorksReply() {
+  return {
+    reply:
+      "The short version is we help you understand how to source, move, and sell pallets in your area. Want to hop on a quick Zoom so we can look at your market?",
+    needs_review: false,
+    handled: true
+  };
+}
+
+function appointmentSetterNoTruckReply() {
+  return {
+    reply:
+      "That's fine. A truck helps, but the first step is seeing if your area has the opportunity. Want to hop on a quick Zoom so we can look at it?",
+    needs_review: false,
+    handled: true
+  };
+}
+
+function appointmentSetterNoMoneyReply() {
+  return {
+    reply: `No pressure. The YouTube channel is probably the best place to start for now: ${YOUTUBE_URL}`,
+    needs_review: false,
+    handled: true
+  };
+}
+
+function appointmentSetterSkepticReply() {
+  return {
+    reply:
+      "I get why you'd ask. I run this business myself, and the call is to see if the model makes sense in your area. Want me to send the calendar link?",
+    needs_review: false,
+    handled: true
+  };
+}
+
 function appointmentSetterWarmQualifierReply() {
   return {
     reply: "Got you. Is this business something you'd be interested in pursuing, or are you mostly checking it out right now?",
@@ -1507,6 +1551,36 @@ function yesToCalendarLink(text) {
 
 function wantsContentOnly(text) {
   return /\b(just content|only content|free content|just looking|just curious|researching|youtube)\b/i.test(
+    String(text || "")
+  );
+}
+
+function asksPriceOrCost(text) {
+  return /\b(price|cost|how much|what.*charge|program.*cost|academy.*cost|pay for|investment)\b/i.test(
+    String(text || "")
+  );
+}
+
+function asksHowItWorks(text) {
+  return /\b(how does (?:this|it|the business) work|how.*pallet.*work|what is the pallet business|explain.*pallet|what.*business model)\b/i.test(
+    String(text || "")
+  );
+}
+
+function saysNoTruckYet(text) {
+  return /\b(no truck|don't have (?:a )?truck|dont have (?:a )?truck|without (?:a )?truck|need (?:a )?truck|no trailer|don't have (?:a )?trailer|dont have (?:a )?trailer)\b/i.test(
+    String(text || "")
+  );
+}
+
+function saysNoMoneyOrCapital(text) {
+  return /\b(no money|no capital|don't have (?:any )?(?:money|capital)|dont have (?:any )?(?:money|capital)|can't afford|cant afford|broke|unemployed)\b/i.test(
+    String(text || "")
+  );
+}
+
+function asksIfLegit(text) {
+  return /\b(is this legit|legit|scam|real deal|does this really work|does it work|proof|testimonials?|results)\b/i.test(
     String(text || "")
   );
 }
@@ -1636,6 +1710,26 @@ function appointmentSetterRuleReply(memory, incoming) {
 
   if (wantsDirectPhoneCall(text) && !hasRichProspectContext(text)) {
     return appointmentSetterPhoneReply(memory, incoming);
+  }
+
+  if (saysNoMoneyOrCapital(text)) {
+    return appointmentSetterNoMoneyReply();
+  }
+
+  if (asksPriceOrCost(text)) {
+    return appointmentSetterCostReply();
+  }
+
+  if (asksHowItWorks(text)) {
+    return appointmentSetterHowItWorksReply();
+  }
+
+  if (saysNoTruckYet(text)) {
+    return appointmentSetterNoTruckReply();
+  }
+
+  if (asksIfLegit(text)) {
+    return appointmentSetterSkepticReply();
   }
 
   if (
