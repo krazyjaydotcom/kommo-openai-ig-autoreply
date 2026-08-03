@@ -2148,6 +2148,47 @@ function conversationHasAssistantReply(memory) {
   );
 }
 
+function latestAssistantMessage(memory) {
+  const messages = Array.isArray(memory?.last_messages) ? memory.last_messages : [];
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === "assistant") {
+      return messages[index];
+    }
+  }
+  return null;
+}
+
+function scorecardMessageId(message) {
+  if (!message) {
+    return "";
+  }
+
+  return String(
+    message.id ||
+      `reply:${message.at || ""}:${crypto
+        .createHash("sha1")
+        .update(String(message.text || ""))
+        .digest("hex")
+        .slice(0, 12)}`
+  );
+}
+
+function latestScorecardForReply(store, conversationKey, messageId) {
+  const feedback = Array.isArray(store?.feedback) ? store.feedback : [];
+  const cleanMessageId = String(messageId || "");
+  for (let index = feedback.length - 1; index >= 0; index -= 1) {
+    const item = feedback[index];
+    if (
+      item?.type === "reply_scorecard" &&
+      item.conversation_key === conversationKey &&
+      String(item.message_id || "") === cleanMessageId
+    ) {
+      return item;
+    }
+  }
+  return null;
+}
+
 function conversationKpisForTimeframe(store, timeframe) {
   const conversations = Object.values(store.conversations || {}).filter((memory) =>
     conversationInTimeframe(memory, timeframe)
@@ -2352,10 +2393,15 @@ async function updateDraft(id, updates) {
   return store.drafts[index];
 }
 
-function publicConversation(memory, settings = {}) {
+function publicConversation(memory, settings = {}, store = null) {
   refreshMemorySummary(memory);
   const messages = Array.isArray(memory.last_messages) ? memory.last_messages : [];
   const lastMessage = messages[messages.length - 1] || null;
+  const lastAssistantMessage = latestAssistantMessage(memory);
+  const lastAssistantMessageId = scorecardMessageId(lastAssistantMessage);
+  const latestScorecard = store && lastAssistantMessage
+    ? latestScorecardForReply(store, memory.key, lastAssistantMessageId)
+    : null;
 
   return {
     key: memory.key,
@@ -2368,6 +2414,16 @@ function publicConversation(memory, settings = {}) {
     lead_status: memory.lead_status || classifyLeadStatus(memory),
     summary: memory.summary || "",
     last_message: lastMessage,
+    last_assistant_message: lastAssistantMessage
+      ? { ...lastAssistantMessage, scorecard_id: lastAssistantMessageId }
+      : null,
+    reply_scorecard: latestScorecard
+      ? {
+          rating: latestScorecard.rating || "",
+          note: latestScorecard.note || "",
+          created_at: latestScorecard.created_at || ""
+        }
+      : null,
     last_incoming_at: memory.last_incoming_at || "",
     last_outgoing_at: memory.last_outgoing_at || "",
     last_outgoing_source: memory.last_outgoing_source || "",
@@ -4447,7 +4503,8 @@ app.get("/api/conversations", async (req, res, next) => {
       .map((memory) =>
         publicConversation(
           memory,
-          getConversationSettings(store, memory.current_talk_id)
+          getConversationSettings(store, memory.current_talk_id),
+          store
         )
       )
       .sort((a, b) => {
@@ -4480,7 +4537,7 @@ app.post("/api/conversations/:key/pause", async (req, res, next) => {
     refreshMemorySummary(memory);
 
     await writeStore(store);
-    res.json({ ok: true, conversation: publicConversation(memory, settings) });
+    res.json({ ok: true, conversation: publicConversation(memory, settings, store) });
   } catch (error) {
     next(error);
   }
@@ -4507,7 +4564,7 @@ app.post("/api/conversations/:key/resume", async (req, res, next) => {
     refreshMemorySummary(memory);
 
     await writeStore(store);
-    res.json({ ok: true, conversation: publicConversation(memory, settings) });
+    res.json({ ok: true, conversation: publicConversation(memory, settings, store) });
   } catch (error) {
     next(error);
   }
@@ -4553,7 +4610,7 @@ app.post("/api/conversations/:key/send-booking-link", async (req, res, next) => 
     res.json({
       ok: true,
       reply,
-      conversation: publicConversation(updatedMemory, settings)
+      conversation: publicConversation(updatedMemory, settings, updatedStore)
     });
   } catch (error) {
     next(error);
@@ -4564,6 +4621,8 @@ app.post("/api/feedback", async (req, res, next) => {
   try {
     const type = String(req.body.type || "").trim().slice(0, 40);
     const note = String(req.body.note || "").trim().slice(0, 500);
+    const rating = String(req.body.rating || "").trim().slice(0, 60);
+    const messageId = String(req.body.message_id || "").trim().slice(0, 160);
 
     if (!type) {
       res.status(400).json({ ok: false, error: "Feedback type is required." });
@@ -4574,14 +4633,18 @@ app.post("/api/feedback", async (req, res, next) => {
     store.feedback.push({
       id: crypto.randomUUID(),
       type,
+      rating,
       note,
       conversation_key: String(req.body.conversation_key || ""),
       draft_id: String(req.body.draft_id || ""),
+      message_id: messageId,
       reply: String(req.body.reply || "").slice(0, 2000),
       incoming_text: String(req.body.incoming_text || "").slice(0, 2000),
+      lead_status: String(req.body.lead_status || "").slice(0, 80),
+      source: String(req.body.source || "").slice(0, 80),
       created_at: new Date().toISOString()
     });
-    store.feedback = store.feedback.slice(-500);
+    store.feedback = store.feedback.slice(-1000);
 
     await writeStore(store);
     res.json({ ok: true });
@@ -6187,6 +6250,59 @@ function renderModernHomePage() {
       border-color: rgba(244, 201, 93, 0.38);
     }
 
+    .scorecard {
+      background: rgba(255, 255, 255, 0.045);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 14px;
+      display: grid;
+      gap: 8px;
+      padding: 10px;
+    }
+
+    .scorecard-title {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .scorecard-reply {
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .scorecard-buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .scorecard-button {
+      background: rgba(255, 255, 255, 0.07);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 900;
+      min-height: 34px;
+      padding: 0 10px;
+    }
+
+    .scorecard-button.good,
+    .scorecard-button.active {
+      background: rgba(57, 223, 159, 0.14);
+      border-color: rgba(57, 223, 159, 0.38);
+      color: #dffdf2;
+    }
+
+    .scorecard-button.bad {
+      background: rgba(255, 107, 122, 0.1);
+      border-color: rgba(255, 107, 122, 0.34);
+      color: #ffd8de;
+    }
+
     .controls {
       display: grid;
       gap: 10px;
@@ -6695,6 +6811,79 @@ function renderModernHomePage() {
       return tags.length ? tags : [["New Lead", "blue"]];
     }
 
+    function renderReplyScorecard(conversation) {
+      const assistantMessage = conversation.last_assistant_message;
+      if (!assistantMessage || !assistantMessage.text) {
+        return null;
+      }
+
+      const wrap = document.createElement("div");
+      wrap.className = "scorecard";
+
+      const title = document.createElement("div");
+      title.className = "scorecard-title";
+      title.textContent = conversation.reply_scorecard
+        ? "Reply Scorecard · last marked " + conversation.reply_scorecard.rating.replaceAll("_", " ")
+        : "Reply Scorecard";
+
+      const reply = document.createElement("div");
+      reply.className = "scorecard-reply";
+      reply.textContent = assistantMessage.text;
+
+      const buttons = document.createElement("div");
+      buttons.className = "scorecard-buttons";
+      [
+        ["good", "Good", "good"],
+        ["too_pushy", "Too pushy", "bad"],
+        ["too_vague", "Too vague", "bad"],
+        ["wrong_direction", "Wrong direction", "bad"],
+        ["did_not_answer", "Didn't answer", "bad"],
+        ["too_robotic", "Too robotic", "bad"]
+      ].forEach(([rating, label, tone]) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className =
+          "scorecard-button " +
+          tone +
+          (conversation.reply_scorecard && conversation.reply_scorecard.rating === rating
+            ? " active"
+            : "");
+        button.textContent = label;
+        button.addEventListener("click", async () => {
+          button.disabled = true;
+          setStatus("Saving scorecard...");
+          try {
+            await api("/api/feedback", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                type: "reply_scorecard",
+                rating,
+                conversation_key: conversation.key,
+                message_id: assistantMessage.scorecard_id || assistantMessage.id || "",
+                reply: assistantMessage.text || "",
+                incoming_text:
+                  conversation.last_message && conversation.last_message.role === "user"
+                    ? conversation.last_message.text || ""
+                    : "",
+                lead_status: conversation.lead_status || "",
+                source: assistantMessage.source || conversation.last_outgoing_source || ""
+              })
+            });
+            await loadAll(true);
+            setStatus("Scorecard saved: " + label + ".");
+          } catch (error) {
+            setStatus(error.message);
+            button.disabled = false;
+          }
+        });
+        buttons.appendChild(button);
+      });
+
+      wrap.append(title, reply, buttons);
+      return wrap;
+    }
+
     function renderConversation(conversation) {
       const card = document.createElement("article");
       card.className = "lead";
@@ -6742,6 +6931,7 @@ function renderModernHomePage() {
       message.className = "lead-message";
       const lastText = conversation.last_message && conversation.last_message.text ? conversation.last_message.text : conversation.summary || "No recent message yet.";
       message.textContent = lastText;
+      const scorecard = renderReplyScorecard(conversation);
 
       const actions = document.createElement("div");
       actions.className = "actions";
@@ -6780,7 +6970,9 @@ function renderModernHomePage() {
       });
 
       actions.append(pauseButton, linkButton);
-      card.append(top, tags, message, actions);
+      card.append(top, tags, message);
+      if (scorecard) card.appendChild(scorecard);
+      card.appendChild(actions);
       return card;
     }
 

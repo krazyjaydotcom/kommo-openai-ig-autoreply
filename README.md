@@ -291,8 +291,11 @@ The homepage includes:
 
 - Recent conversations with lead status labels.
 - Pause/Resume AI per conversation when you want to take over manually.
+- Reply scorecards on recent bot replies: `Good`, `Too pushy`, `Too vague`, `Wrong direction`, `Didn't answer`, and `Too robotic`.
 - Draft feedback buttons: `Good`, `Robotic`, `Pushy`, and `Wrong context`.
 - Test Reply mode for pasting a transcript and previewing what OpenAI would say without sending anything.
+
+Scorecard ratings are stored in the app feedback log with the conversation key, reply text, latest incoming text, lead status, source, and message id. Use these real examples to tune future scenario rules instead of guessing.
 
 ## Feature Controls
 
