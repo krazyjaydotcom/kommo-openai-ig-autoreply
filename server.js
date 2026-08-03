@@ -183,6 +183,8 @@ const SCENARIO_PLAYBOOK_RULES = `Scenario playbook:
   Do not disqualify immediately. Say a truck helps, but the first step is seeing whether their area has the opportunity. Move toward a discovery call if they are serious.
 - Has a truck, trailer, business, warehouse, route, or pallet-yard access:
   Treat as warmer. Mirror the asset they have, then move toward the call quickly.
+- Existing pallet operator, slowed-down business, buyer/client problem, contracts, or pricing pressure:
+  Treat them as experienced, not beginner. Do not give generic sympathy and do not pounce with "want me to send the calendar link?" First name the business problem they gave you. Position the academy/call as a way to research their market and find better buyers or buyer channels. Use this flavor: "Got you. That's exactly the type of thing my academy helps people with. If you want, we can get on a call, research your market, and see where you may be able to find buyers. How does that sound?"
 - No money, no capital, unemployed, or "I can't afford anything":
   Do not hard sell. If they have no capital or no plan, send them to YouTube. If they are serious but early, say YouTube is the best starting point for now.
 - Location or market question:
@@ -215,9 +217,10 @@ const SCENARIO_PLAYBOOK_RULES = `Scenario playbook:
 Scenario priority:
 1. Safety/disqualification and content-only redirects come first.
 2. Answer direct questions briefly.
-3. If serious intent is present, move toward Zoom/calendar.
+3. If serious intent is present, move toward the business outcome first, then the Zoom/calendar.
 4. Ask only one question.
-5. Do not keep chatting when the next best step is clearly booking.`;
+5. Do not keep chatting when the next best step is clearly booking.
+6. Positioning matters: prospects usually want the result, not a Zoom call. Frame the call as the easiest way to solve or diagnose the problem they just named.`;
 
 const KNOWLEDGE_RULES = `Business knowledge rules:
 - Use business_knowledge for Pallet Pros and Pallet Pros Academy facts, offer details, tone, objections, and FAQs.
@@ -1535,6 +1538,15 @@ function appointmentSetterSkepticReply() {
   };
 }
 
+function appointmentSetterExistingBuyerProblemReply() {
+  return {
+    reply:
+      "Got you. That's exactly the type of thing my academy helps people with. If you want, we can get on a call, research your market, and see where you may be able to find buyers. How does that sound?",
+    needs_review: false,
+    handled: true
+  };
+}
+
 function appointmentSetterWarmQualifierReply() {
   return {
     reply: "Got you. Is this business something you'd be interested in pursuing, or are you mostly checking it out right now?",
@@ -1583,6 +1595,25 @@ function asksIfLegit(text) {
   return /\b(is this legit|legit|scam|real deal|does this really work|does it work|proof|testimonials?|results)\b/i.test(
     String(text || "")
   );
+}
+
+function mentionsExistingPalletBusiness(text) {
+  return /\b(started|have|own|run|running|been in|already (?:have|run|started)).{0,80}\b(pallet|pallets|pallet business)\b|\b(pallet|pallets)\b.{0,80}\b(5 years|years ago|already started|my business|our business|slowed down|slow|slower)\b/i.test(
+    String(text || "")
+  );
+}
+
+function mentionsBuyerProblem(text) {
+  return /\b(buyer|buyers|client|clients|customer|customers|contracts?|accounts?|new business|sales|sell more|selling|yard|yards|direct buyers?|better buyers?|slowed down|slow|less money|pricing|prices)\b/i.test(
+    String(text || "")
+  );
+}
+
+function existingOperatorBuyerProblem(memory, text) {
+  const recent = recentConversationText(memory, 8);
+  const combined = `${recent} ${String(text || "").toLowerCase()}`;
+
+  return mentionsBuyerProblem(text) && mentionsExistingPalletBusiness(combined);
 }
 
 function wantsPalletBusiness(text) {
@@ -1714,6 +1745,10 @@ function appointmentSetterRuleReply(memory, incoming) {
 
   if (saysNoMoneyOrCapital(text)) {
     return appointmentSetterNoMoneyReply();
+  }
+
+  if (existingOperatorBuyerProblem(memory, text)) {
+    return appointmentSetterExistingBuyerProblemReply();
   }
 
   if (asksPriceOrCost(text)) {
