@@ -1625,7 +1625,12 @@ function appointmentSetterRuleReply(memory, incoming) {
     return appointmentSetterCalendarLinkReply(incoming);
   }
 
-  if (wantsContentOnly(text) && !wantsPalletBusiness(text) && !prospectAskedQuestion(text)) {
+  if (
+    wantsContentOnly(text) &&
+    !hasClearStartIntent(text) &&
+    !wantsAppointmentOrScheduling(text) &&
+    !prospectAskedQuestion(text)
+  ) {
     return appointmentSetterContentReply();
   }
 
