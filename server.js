@@ -668,6 +668,12 @@ function memoryAutomationPaused(memory) {
   return true;
 }
 
+function hasProspectMessages(memory) {
+  return (Array.isArray(memory?.last_messages) ? memory.last_messages : []).some(
+    (message) => message.role === "user"
+  );
+}
+
 function comparableText(value) {
   return String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
 }
@@ -2428,7 +2434,7 @@ function publicConversation(memory, settings = {}, store = null) {
     last_incoming_at: memory.last_incoming_at || "",
     last_outgoing_at: memory.last_outgoing_at || "",
     last_outgoing_source: memory.last_outgoing_source || "",
-    ai_paused: Boolean(settings.paused || memory.ai_paused),
+    ai_paused: Boolean(settings.paused || memoryAutomationPaused(memory)),
     manual_takeover_active: isManualTakeoverActive(settings) || isManualTakeoverActive(memory),
     manual_takeover_until:
       settings.manual_takeover_until || memory.manual_takeover_until || null,
@@ -3411,6 +3417,7 @@ async function processManualOutgoingMessage(outgoing) {
 
   const sentAtMs = toMessageTimestampMs(outgoing.created_at);
   const sentAt = new Date(sentAtMs).toISOString();
+  const shouldPauseForManualTakeover = hasProspectMessages(memory);
   const featureSettings = getFeatureSettings(store);
   const takeoverUntil = new Date(Date.now() + manualTakeoverMs(featureSettings)).toISOString();
   const settings = getConversationSettings(store, outgoing.talk_id);
@@ -3427,19 +3434,34 @@ async function processManualOutgoingMessage(outgoing) {
   updateQuestionMemory(memory, outgoing.text);
   memory.last_outgoing_at = sentAt;
   memory.last_outgoing_source = "manual";
-  memory.ai_paused = true;
-  memory.manual_takeover_since = sentAt;
-  memory.manual_takeover_until = takeoverUntil;
+  if (shouldPauseForManualTakeover) {
+    memory.ai_paused = true;
+    memory.manual_takeover_since = sentAt;
+    memory.manual_takeover_until = takeoverUntil;
+
+    settings.manual_takeover_since = sentAt;
+    settings.manual_takeover_until = takeoverUntil;
+    settings.manual_takeover_reason = "Manual Zernio reply detected.";
+  } else {
+    memory.ai_paused = false;
+    memory.manual_takeover_since = null;
+    memory.manual_takeover_until = null;
+    settings.manual_takeover_since = null;
+    settings.manual_takeover_until = null;
+    settings.manual_takeover_reason = "";
+  }
   refreshMemorySummary(memory);
 
-  settings.manual_takeover_since = sentAt;
-  settings.manual_takeover_until = takeoverUntil;
-  settings.manual_takeover_reason = "Manual Zernio reply detected.";
-
   await writeStore(store);
-  console.log(
-    `Manual takeover active for talk_id=${outgoing.talk_id} until ${takeoverUntil}.`
-  );
+  if (shouldPauseForManualTakeover) {
+    console.log(
+      `Manual takeover active for talk_id=${outgoing.talk_id} until ${takeoverUntil}.`
+    );
+  } else {
+    console.log(
+      `Manual opener saved for talk_id=${outgoing.talk_id}; AI remains available for prospect replies.`
+    );
+  }
 }
 
 async function activateManualCompanionTakeover(messageLike, reason) {
