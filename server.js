@@ -6769,7 +6769,7 @@ function renderModernHomePage() {
       </div>
       <nav class="nav" aria-label="Primary">
         <a class="active" href="#dashboard">Dashboard</a>
-        <a href="#activity">Live Logs</a>
+        <a href="#activity">DM Inbox</a>
         <a href="#settings">Prompt Settings</a>
         <a href="#analytics">Analytics</a>
       </nav>
@@ -6827,8 +6827,8 @@ function renderModernHomePage() {
       <section class="grid content-grid" style="margin-top:14px;">
         <section class="card panel" id="activity">
           <div class="panel-head">
-            <h2>Real-Time Activity Feed</h2>
-            <span class="panel-note" id="activity-count"></span>
+            <h2>DM Inbox</h2>
+            <span class="panel-note" id="activity-count">Open a thread to reply</span>
           </div>
           <div class="activity" id="conversations"></div>
         </section>
@@ -6861,7 +6861,7 @@ function renderModernHomePage() {
 
   <nav class="bottom-nav" aria-label="Mobile navigation">
     <a class="active" href="#dashboard">Dash</a>
-    <a href="#activity">Logs</a>
+    <a href="#activity">Inbox</a>
     <a href="#settings">Settings</a>
     <a href="#analytics">Stats</a>
   </nav>
@@ -7352,7 +7352,7 @@ function renderModernHomePage() {
       if (!visible.length) {
         const empty = document.createElement("div");
         empty.className = "empty";
-        empty.textContent = "No Instagram activity in this timeframe yet.";
+        empty.textContent = "No DMs have reached the app in this timeframe yet. When Zernio sends an Instagram message webhook, the thread will appear here with an Open DM button.";
         conversationsEl.appendChild(empty);
         return;
       }
