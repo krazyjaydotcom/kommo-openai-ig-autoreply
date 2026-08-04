@@ -673,7 +673,7 @@ function comparableText(value) {
 }
 
 function appOutgoingSource(source) {
-  return ["auto", "manual_approval", "follow_up"].includes(String(source || ""));
+  return ["auto", "manual_approval", "manual_companion", "follow_up"].includes(String(source || ""));
 }
 
 function recentAssistantMessages(memory, limit = 5) {
@@ -1199,7 +1199,7 @@ function memoryMessageLabel(message) {
     return "Prospect";
   }
 
-  if (message.source === "manual") {
+  if (String(message.source || "").startsWith("manual")) {
     return "You";
   }
 
@@ -2413,6 +2413,7 @@ function publicConversation(memory, settings = {}, store = null) {
     origin: memory.origin || "",
     lead_status: memory.lead_status || classifyLeadStatus(memory),
     summary: memory.summary || "",
+    recent_messages: messages.slice(-MAX_RECENT_MEMORY_MESSAGES),
     last_message: lastMessage,
     last_assistant_message: lastAssistantMessage
       ? { ...lastAssistantMessage, scorecard_id: lastAssistantMessageId }
@@ -3439,6 +3440,29 @@ async function processManualOutgoingMessage(outgoing) {
   console.log(
     `Manual takeover active for talk_id=${outgoing.talk_id} until ${takeoverUntil}.`
   );
+}
+
+async function activateManualCompanionTakeover(messageLike, reason) {
+  const store = await readStore();
+  const memory = getConversationMemory(store, messageLike);
+  const featureSettings = getFeatureSettings(store);
+  const takeoverUntil = new Date(Date.now() + manualTakeoverMs(featureSettings)).toISOString();
+  const settings = getConversationSettings(store, memory.current_talk_id || messageLike.talk_id);
+  const since = new Date().toISOString();
+
+  cancelFollowUp(memory);
+  memory.ai_paused = true;
+  memory.manual_takeover_since = since;
+  memory.manual_takeover_until = takeoverUntil;
+  refreshMemorySummary(memory);
+
+  settings.manual_takeover_since = since;
+  settings.manual_takeover_until = takeoverUntil;
+  settings.manual_takeover_reason = reason || "Manual dashboard reply sent.";
+
+  await writeStore(store);
+
+  return { memory, settings, store };
 }
 
 let followUpSweepRunning = false;
@@ -4565,6 +4589,66 @@ app.post("/api/conversations/:key/resume", async (req, res, next) => {
 
     await writeStore(store);
     res.json({ ok: true, conversation: publicConversation(memory, settings, store) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/conversations/:key/send-message", async (req, res, next) => {
+  try {
+    const store = await readStore();
+    const memory = store.conversations[req.params.key];
+    const reply = String(req.body?.reply || "").trim();
+
+    if (!memory) {
+      res.status(404).json({ ok: false, error: "Conversation not found" });
+      return;
+    }
+
+    if (!reply) {
+      res.status(400).json({ ok: false, error: "Reply cannot be empty" });
+      return;
+    }
+
+    if (reply.length > 1200) {
+      res.status(400).json({ ok: false, error: "Reply must be 1200 characters or less" });
+      return;
+    }
+
+    const messageLike = {
+      provider: memory.provider,
+      contact_id: memory.contact_id,
+      chat_id: memory.chat_id,
+      talk_id: memory.current_talk_id,
+      zernio_conversation_id: memory.zernio_conversation_id,
+      zernio_account_id: memory.zernio_account_id,
+      origin: memory.origin
+    };
+    const featureSettings = getFeatureSettings(store);
+
+    try {
+      await sendReply(messageLike, reply, featureSettings);
+    } catch (error) {
+      res.status(502).json({ ok: false, error: error.message });
+      return;
+    }
+
+    await recordOutgoingForMemory(messageLike, reply, { source: "manual_companion" });
+    const takeover = await activateManualCompanionTakeover(
+      messageLike,
+      "Manual dashboard reply sent."
+    );
+    const updatedMemory = takeover.store.conversations[req.params.key] || takeover.memory;
+    const settings = getConversationSettings(
+      takeover.store,
+      updatedMemory.current_talk_id || messageLike.talk_id
+    );
+
+    res.json({
+      ok: true,
+      reply,
+      conversation: publicConversation(updatedMemory, settings, takeover.store)
+    });
   } catch (error) {
     next(error);
   }
@@ -6250,6 +6334,135 @@ function renderModernHomePage() {
       border-color: rgba(244, 201, 93, 0.38);
     }
 
+    .companion-backdrop {
+      align-items: stretch;
+      background: rgba(2, 6, 7, 0.62);
+      backdrop-filter: blur(18px);
+      display: flex;
+      inset: 0;
+      justify-content: flex-end;
+      padding: 18px;
+      position: fixed;
+      z-index: 60;
+    }
+
+    .companion-backdrop[hidden] {
+      display: none;
+    }
+
+    .companion {
+      background:
+        linear-gradient(145deg, rgba(17, 28, 28, 0.96), rgba(6, 11, 13, 0.96)),
+        var(--panel-strong);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 22px;
+      box-shadow: 0 28px 90px rgba(0, 0, 0, 0.42);
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      max-width: 520px;
+      min-height: 0;
+      overflow: hidden;
+      width: min(520px, 100%);
+    }
+
+    .companion-head {
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+      display: grid;
+      gap: 12px;
+      grid-template-columns: 48px minmax(0, 1fr) auto;
+      padding: 16px;
+    }
+
+    .companion-title {
+      font-size: 16px;
+      font-weight: 900;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .companion-subtitle {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 2px;
+    }
+
+    .companion-close {
+      align-items: center;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      color: var(--text);
+      display: grid;
+      font-size: 20px;
+      height: 42px;
+      justify-items: center;
+      width: 42px;
+    }
+
+    .companion-thread {
+      display: grid;
+      gap: 10px;
+      min-height: 0;
+      overflow: auto;
+      padding: 16px;
+    }
+
+    .bubble {
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      color: var(--text);
+      line-height: 1.42;
+      max-width: 88%;
+      padding: 10px 12px;
+      white-space: pre-wrap;
+    }
+
+    .bubble.user {
+      background: rgba(255, 255, 255, 0.08);
+      justify-self: start;
+    }
+
+    .bubble.assistant {
+      background: linear-gradient(135deg, rgba(57, 223, 159, 0.18), rgba(156, 124, 255, 0.14));
+      border-color: rgba(57, 223, 159, 0.22);
+      justify-self: end;
+    }
+
+    .bubble small {
+      color: var(--dim);
+      display: block;
+      font-size: 10px;
+      margin-top: 6px;
+      text-transform: uppercase;
+    }
+
+    .companion-composer {
+      border-top: 1px solid var(--border);
+      display: grid;
+      gap: 10px;
+      padding: 14px;
+    }
+
+    .companion-composer textarea {
+      background: rgba(255, 255, 255, 0.075);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      color: var(--text);
+      min-height: 118px;
+      padding: 12px;
+      resize: vertical;
+      width: 100%;
+    }
+
+    .companion-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+
     .scorecard {
       background: rgba(255, 255, 255, 0.045);
       border: 1px solid rgba(255, 255, 255, 0.08);
@@ -6525,6 +6738,25 @@ function renderModernHomePage() {
       .action {
         min-height: 48px;
       }
+
+      .companion-backdrop {
+        padding: 0;
+      }
+
+      .companion {
+        border-radius: 0;
+        max-width: none;
+        width: 100%;
+      }
+
+      .companion-head {
+        padding-top: max(14px, env(safe-area-inset-top));
+      }
+
+      .companion-actions {
+        display: grid;
+        grid-template-columns: 1fr;
+      }
     }
   </style>
 </head>
@@ -6634,8 +6866,29 @@ function renderModernHomePage() {
     <a href="#analytics">Stats</a>
   </nav>
 
+  <div class="companion-backdrop" id="dm-companion" hidden>
+    <section class="companion" role="dialog" aria-modal="true" aria-labelledby="dm-companion-title">
+      <header class="companion-head">
+        <div class="avatar" id="dm-companion-avatar">IG</div>
+        <div>
+          <div class="companion-title" id="dm-companion-title">DM Companion</div>
+          <div class="companion-subtitle" id="dm-companion-subtitle">Recent Instagram context</div>
+        </div>
+        <button class="companion-close" id="dm-companion-close" type="button" aria-label="Close DM Companion">x</button>
+      </header>
+      <div class="companion-thread" id="dm-companion-thread"></div>
+      <form class="companion-composer" id="dm-companion-form">
+        <textarea id="dm-companion-text" aria-label="Manual Instagram reply" maxlength="1200" placeholder="Type a short, natural reply..."></textarea>
+        <div class="companion-actions">
+          <button class="action" id="dm-companion-booking" type="button">Send Booking Link</button>
+          <button class="action primary" id="dm-companion-send" type="submit">Send DM</button>
+        </div>
+      </form>
+    </section>
+  </div>
+
   <script>
-    const state = { timeframe: "24h", conversations: [] };
+    const state = { timeframe: "24h", conversations: [], activeConversationKey: "" };
     const conversationsEl = document.getElementById("conversations");
     const draftsEl = document.getElementById("drafts");
     const featuresEl = document.getElementById("features");
@@ -6652,6 +6905,16 @@ function renderModernHomePage() {
     const testTranscript = document.getElementById("test-transcript");
     const testNewMessage = document.getElementById("test-new-message");
     const testResult = document.getElementById("test-result");
+    const companionEl = document.getElementById("dm-companion");
+    const companionAvatarEl = document.getElementById("dm-companion-avatar");
+    const companionTitleEl = document.getElementById("dm-companion-title");
+    const companionSubtitleEl = document.getElementById("dm-companion-subtitle");
+    const companionThreadEl = document.getElementById("dm-companion-thread");
+    const companionFormEl = document.getElementById("dm-companion-form");
+    const companionTextEl = document.getElementById("dm-companion-text");
+    const companionCloseEl = document.getElementById("dm-companion-close");
+    const companionBookingEl = document.getElementById("dm-companion-booking");
+    const companionSendEl = document.getElementById("dm-companion-send");
 
     function setStatus(message) {
       statusEl.textContent = message || "";
@@ -6801,6 +7064,106 @@ function renderModernHomePage() {
       });
     }
 
+    function activeConversation() {
+      return state.conversations.find((conversation) => conversation.key === state.activeConversationKey) || null;
+    }
+
+    function renderCompanionAvatar(conversation) {
+      companionAvatarEl.innerHTML = "";
+      if (conversation && conversation.avatar_url) {
+        const image = document.createElement("img");
+        image.src = conversation.avatar_url;
+        image.alt = "";
+        image.loading = "lazy";
+        image.onerror = () => {
+          companionAvatarEl.textContent = initials(conversation);
+        };
+        companionAvatarEl.appendChild(image);
+        return;
+      }
+      companionAvatarEl.textContent = conversation ? initials(conversation) : "IG";
+    }
+
+    function renderCompanion(conversation) {
+      if (!conversation) return;
+      renderCompanionAvatar(conversation);
+      companionTitleEl.textContent = conversation.username ? "@" + conversation.username : conversation.contact_id || conversation.talk_id || "Instagram lead";
+      companionSubtitleEl.textContent =
+        String(conversation.lead_status || "cold").replace("_", " ") +
+        " | " +
+        (conversation.manual_takeover_active ? "manual takeover active" : "AI available");
+      companionThreadEl.innerHTML = "";
+
+      const messages = Array.isArray(conversation.recent_messages) ? conversation.recent_messages : [];
+      if (!messages.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "No saved messages for this lead yet.";
+        companionThreadEl.appendChild(empty);
+        return;
+      }
+
+      messages.forEach((message) => {
+        const bubble = document.createElement("div");
+        const isAssistant = message.role === "assistant";
+        bubble.className = "bubble " + (isAssistant ? "assistant" : "user");
+        const text = document.createElement("div");
+        text.textContent = message.text || "";
+        const meta = document.createElement("small");
+        meta.textContent =
+          (isAssistant ? (String(message.source || "").startsWith("manual") ? "You" : "AI") : "Prospect") +
+          " | " +
+          formatDate(message.at);
+        bubble.append(text, meta);
+        companionThreadEl.appendChild(bubble);
+      });
+      companionThreadEl.scrollTop = companionThreadEl.scrollHeight;
+    }
+
+    function openCompanion(conversation) {
+      state.activeConversationKey = conversation.key;
+      renderCompanion(conversation);
+      companionEl.hidden = false;
+      setTimeout(() => companionTextEl.focus(), 30);
+    }
+
+    function closeCompanion() {
+      companionEl.hidden = true;
+      state.activeConversationKey = "";
+      companionTextEl.value = "";
+    }
+
+    async function sendCompanionReply() {
+      const conversation = activeConversation();
+      const reply = companionTextEl.value.trim();
+      if (!conversation || !reply) return;
+
+      companionSendEl.disabled = true;
+      companionBookingEl.disabled = true;
+      setStatus("Sending manual DM...");
+      try {
+        const data = await api("/api/conversations/" + encodeURIComponent(conversation.key) + "/send-message", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reply })
+        });
+        companionTextEl.value = "";
+        await loadAll(true);
+        if (data.conversation) {
+          state.activeConversationKey = data.conversation.key;
+          renderCompanion(data.conversation);
+        } else {
+          renderCompanion(activeConversation());
+        }
+        setStatus("Manual DM sent. AI is paused briefly for this lead.");
+      } catch (error) {
+        setStatus(error.message);
+      } finally {
+        companionSendEl.disabled = false;
+        companionBookingEl.disabled = false;
+      }
+    }
+
     function statusTags(conversation) {
       const tags = [];
       if (conversation.last_outgoing_at) tags.push(["AI Replied", "green"]);
@@ -6936,6 +7299,12 @@ function renderModernHomePage() {
       const actions = document.createElement("div");
       actions.className = "actions";
       const paused = Boolean(conversation.ai_paused || conversation.manual_takeover_active);
+      const openDmButton = document.createElement("button");
+      openDmButton.className = "action primary";
+      openDmButton.type = "button";
+      openDmButton.textContent = "Open DM";
+      openDmButton.addEventListener("click", () => openCompanion(conversation));
+
       const pauseButton = document.createElement("button");
       pauseButton.className = "action warn";
       pauseButton.type = "button";
@@ -6969,7 +7338,7 @@ function renderModernHomePage() {
         }
       });
 
-      actions.append(pauseButton, linkButton);
+      actions.append(openDmButton, pauseButton, linkButton);
       card.append(top, tags, message);
       if (scorecard) card.appendChild(scorecard);
       card.appendChild(actions);
@@ -7087,7 +7456,11 @@ function renderModernHomePage() {
         renderKpis(stats);
         renderFunnel(stats);
         renderStatuses(stats.settings || {});
+        state.conversations = conversations.conversations || [];
         renderConversations(conversations.conversations || []);
+        if (!companionEl.hidden && state.activeConversationKey) {
+          renderCompanion(activeConversation());
+        }
         renderDrafts(drafts.drafts || []);
         renderAutomationEvents(events.events || []);
         if (!silent) setStatus("Live.");
@@ -7120,6 +7493,38 @@ function renderModernHomePage() {
         setStatus(error.message);
       } finally {
         testButton.disabled = false;
+      }
+    });
+
+    companionCloseEl.addEventListener("click", closeCompanion);
+    companionEl.addEventListener("click", (event) => {
+      if (event.target === companionEl) closeCompanion();
+    });
+    companionFormEl.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      await sendCompanionReply();
+    });
+    companionBookingEl.addEventListener("click", async () => {
+      const conversation = activeConversation();
+      if (!conversation) return;
+      companionBookingEl.disabled = true;
+      companionSendEl.disabled = true;
+      setStatus("Sending tracked booking link...");
+      try {
+        const data = await api("/api/conversations/" + encodeURIComponent(conversation.key) + "/send-booking-link", { method: "POST" });
+        await loadAll(true);
+        if (data.conversation) {
+          state.activeConversationKey = data.conversation.key;
+          renderCompanion(data.conversation);
+        } else {
+          renderCompanion(activeConversation());
+        }
+        setStatus("Tracked booking link sent.");
+      } catch (error) {
+        setStatus(error.message);
+      } finally {
+        companionBookingEl.disabled = false;
+        companionSendEl.disabled = false;
       }
     });
 

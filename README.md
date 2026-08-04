@@ -142,6 +142,10 @@ Outgoing Messages
 
 It also stores recent automation events so you can see why a message was ignored, drafted, auto-sent, or failed.
 
+## DM Companion
+
+Each conversation card has an `Open DM` action. It opens a dashboard companion panel with the saved recent thread, lets you send a short manual reply through Zernio, and records that reply in conversation memory so future AI responses keep the same context. Manual dashboard replies also trigger a temporary manual takeover window so the AI does not immediately talk over you.
+
 ## Booking Confirmation Webhook
 
 If your post-booking/application page can fire a webhook after a call is scheduled, send it here:
