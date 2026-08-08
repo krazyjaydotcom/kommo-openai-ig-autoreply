@@ -44,7 +44,7 @@ const FOLLOW_UP_OFFSETS_MS = [
 ];
 const FOLLOW_UP_CHECK_MS = 60 * 1000;
 const FOLLOW_UP_WINDOW_MS = 23 * 60 * 60 * 1000;
-const APP_BUILD_MARKER = "2026-08-08-dm-bot-toggle-v1";
+const APP_BUILD_MARKER = "2026-08-08-ig-style-inbox-v1";
 const DEFAULT_KPI_TARGETS = {
   daily_touch_points_target: 100,
   touch_pitch_min_rate: 10,
@@ -7289,11 +7289,13 @@ function renderModernHomePage() {
       font-weight: 900;
       height: 38px;
       justify-items: center;
-      overflow: hidden;
+      overflow: visible;
+      position: relative;
       width: 38px;
     }
 
     .avatar img {
+      border-radius: 50%;
       height: 100%;
       object-fit: cover;
       width: 100%;
@@ -7931,10 +7933,10 @@ function renderModernHomePage() {
     }
 
     .mobile-search {
-      background: rgba(15, 23, 42, 0.62);
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      color: var(--text);
+      background: rgba(248, 250, 252, 0.92);
+      border: 0;
+      border-radius: 18px;
+      color: #111827;
       min-height: 50px;
       padding: 0 15px;
       width: 100%;
@@ -7947,26 +7949,39 @@ function renderModernHomePage() {
 
     .mobile-filters {
       display: flex;
-      gap: 8px;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+      gap: 22px;
       overflow-x: auto;
-      padding-bottom: 2px;
+      padding: 4px 0 0;
     }
 
     .mobile-filters button {
-      background: rgba(15, 23, 42, 0.54);
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      color: var(--muted);
+      background: transparent;
+      border: 0;
+      border-radius: 0;
+      color: rgba(226, 232, 240, 0.62);
       flex: 0 0 auto;
-      font-size: 12px;
+      font-size: 15px;
       font-weight: 900;
-      min-height: 40px;
-      padding: 0 15px;
+      min-height: 44px;
+      padding: 0 0 10px;
+      position: relative;
     }
 
     .mobile-filters button.active {
-      background: #f8fafc;
-      color: #05080c;
+      background: transparent;
+      color: var(--text);
+    }
+
+    .mobile-filters button.active::after {
+      background: var(--text);
+      border-radius: 999px 999px 0 0;
+      bottom: 0;
+      content: "";
+      height: 2px;
+      left: 0;
+      position: absolute;
+      right: 0;
     }
 
     .mobile-inbox-list,
@@ -7983,17 +7998,31 @@ function renderModernHomePage() {
       border-bottom: 1px solid rgba(148, 163, 184, 0.12);
       color: var(--text);
       display: grid;
-      gap: 10px;
-      grid-template-columns: 48px minmax(0, 1fr) auto;
-      min-height: 76px;
-      padding: 10px 0;
+      gap: 12px;
+      grid-template-columns: 58px minmax(0, 1fr) 34px;
+      min-height: 82px;
+      padding: 11px 0;
       text-align: left;
       width: 100%;
     }
 
     .mobile-thread-row .avatar {
-      height: 48px;
-      width: 48px;
+      box-shadow: 0 0 0 2px rgba(236, 72, 153, 0.75), 0 0 0 4px rgba(245, 158, 11, 0.65);
+      height: 56px;
+      width: 56px;
+    }
+
+    .mobile-thread-row .avatar::after,
+    .companion-head .avatar::after {
+      background: #22c55e;
+      border: 2px solid #fff;
+      border-radius: 50%;
+      bottom: 2px;
+      content: "";
+      height: 11px;
+      position: absolute;
+      right: 2px;
+      width: 11px;
     }
 
     .thread-name {
@@ -8019,6 +8048,26 @@ function renderModernHomePage() {
       display: grid;
       gap: 6px;
       justify-items: end;
+    }
+
+    .thread-camera {
+      border: 2px solid rgba(226, 232, 240, 0.48);
+      border-radius: 8px;
+      display: block;
+      height: 24px;
+      position: relative;
+      width: 28px;
+    }
+
+    .thread-camera::before {
+      background: rgba(226, 232, 240, 0.48);
+      border-radius: 999px;
+      content: "";
+      height: 8px;
+      left: 8px;
+      position: absolute;
+      top: 6px;
+      width: 8px;
     }
 
     .thread-time {
@@ -8128,6 +8177,54 @@ function renderModernHomePage() {
         display: block;
       }
 
+      #mobile-inbox-screen.active {
+        background: #fff;
+        border-radius: 24px;
+        color: #050505;
+        margin: -4px -4px 0;
+        min-height: calc(100dvh - 126px);
+        padding: 16px 16px 18px;
+      }
+
+      #mobile-inbox-screen .mobile-header h1,
+      #mobile-inbox-screen .thread-name {
+        color: #050505;
+      }
+
+      #mobile-inbox-screen .mobile-header p,
+      #mobile-inbox-screen .thread-preview,
+      #mobile-inbox-screen .thread-time {
+        color: #8e8e93;
+      }
+
+      #mobile-inbox-screen .mobile-filters {
+        border-bottom-color: #eef0f3;
+      }
+
+      #mobile-inbox-screen .mobile-filters button {
+        color: #8e8e93;
+      }
+
+      #mobile-inbox-screen .mobile-filters button.active {
+        color: #050505;
+      }
+
+      #mobile-inbox-screen .mobile-filters button.active::after {
+        background: #050505;
+      }
+
+      #mobile-inbox-screen .mobile-thread-row {
+        border-bottom-color: #eef0f3;
+      }
+
+      #mobile-inbox-screen .thread-camera {
+        border-color: #9ca3af;
+      }
+
+      #mobile-inbox-screen .thread-camera::before {
+        background: #9ca3af;
+      }
+
       .status-stack {
         justify-content: flex-start;
         min-width: 0;
@@ -8165,13 +8262,15 @@ function renderModernHomePage() {
       }
 
       .companion-backdrop {
-        background: var(--bg);
+        background: #fff;
         backdrop-filter: none;
         padding: 0;
         z-index: 80;
       }
 
       .companion {
+        background: #fff;
+        color: #050505;
         border: 0;
         border-radius: 0;
         height: 100dvh;
@@ -8180,30 +8279,127 @@ function renderModernHomePage() {
       }
 
       .companion-head {
-        grid-template-columns: 42px minmax(0, 1fr) 42px;
-        padding: max(14px, env(safe-area-inset-top)) 14px 12px;
+        background: #fff;
+        border-bottom: 1px solid #eef0f3;
+        color: #050505;
+        grid-template-columns: 42px 48px minmax(0, 1fr);
+        min-height: 86px;
+        padding: max(12px, env(safe-area-inset-top)) 18px 12px;
       }
 
       .companion-head .avatar {
-        height: 42px;
-        width: 42px;
+        height: 48px;
+        width: 48px;
       }
 
       .companion-close {
+        background: transparent;
+        border: 0;
+        color: #050505;
+        font-size: 42px;
+        height: 48px;
+        line-height: 1;
         order: -1;
+        width: 32px;
+      }
+
+      .companion-title {
+        color: #050505;
+        font-size: 20px;
+      }
+
+      .companion-subtitle {
+        color: #8e8e93;
+        font-size: 15px;
       }
 
       .companion-thread {
-        padding: 14px;
+        align-content: start;
+        background: #fff;
+        gap: 4px;
+        padding: 28px 26px 16px;
+      }
+
+      .bubble {
+        border-color: #d7d7dc;
+        border-radius: 22px;
+        color: #050505;
+        font-size: 20px;
+        line-height: 1.18;
+        max-width: 82%;
+        padding: 13px 18px;
+      }
+
+      .bubble.user {
+        background: #fff;
+        justify-self: start;
+      }
+
+      .bubble.assistant {
+        background: #efeff2;
+        border-color: #efeff2;
+        justify-self: end;
+      }
+
+      .bubble small {
+        color: #8e8e93;
+        font-size: 13px;
+        font-weight: 500;
+        letter-spacing: 0;
+        text-transform: none;
       }
 
       .companion-composer {
-        padding: 12px 12px max(12px, env(safe-area-inset-bottom));
+        align-items: center;
+        background: #fff;
+        border-top: 1px solid #eef0f3;
+        display: grid;
+        gap: 8px;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        padding: 10px 16px max(10px, env(safe-area-inset-bottom));
       }
 
       .companion-composer textarea {
-        min-height: 52px;
+        background: #fff;
+        border: 1px solid #d7d7dc;
+        border-radius: 999px;
+        color: #050505;
+        font-size: 18px;
+        grid-column: 2;
+        min-height: 46px;
+        padding: 11px 18px;
         resize: none;
+      }
+
+      .companion-actions {
+        display: contents;
+      }
+
+      .companion-actions .action {
+        border-radius: 999px;
+        min-height: 42px;
+        padding: 0 12px;
+      }
+
+      #dm-companion-booking {
+        background: #f3f4f6;
+        border-color: #e5e7eb;
+        color: #374151;
+        font-size: 12px;
+        grid-column: 1;
+        grid-row: 1;
+        min-width: 84px;
+      }
+
+      #dm-companion-send {
+        background: transparent;
+        border: 0;
+        color: #0095f6;
+        font-size: 17px;
+        grid-column: 3;
+        grid-row: 1;
+        min-width: 54px;
+        padding: 0;
       }
     }
 
@@ -8387,14 +8583,12 @@ function renderModernHomePage() {
           </div>
           <input class="mobile-search" id="mobile-inbox-search" type="search" placeholder="Search conversations" aria-label="Search conversations">
           <div class="mobile-filters" aria-label="Inbox filters">
-            <button type="button" data-inbox-filter="all" class="active">All</button>
-            <button type="button" data-inbox-filter="needs">Needs Me</button>
+            <button type="button" data-inbox-filter="initial" class="active">Initial Contact</button>
             <button type="button" data-inbox-filter="pitched">Pitched</button>
-            <button type="button" data-inbox-filter="not_booked">Not Booked</button>
+            <button type="button" data-inbox-filter="youtube">YouTube</button>
             <button type="button" data-inbox-filter="booked">Booked</button>
             <button type="button" data-inbox-filter="showed">Showed</button>
-            <button type="button" data-inbox-filter="no_show">No Show</button>
-            <button type="button" data-inbox-filter="follow_up_due">Follow-Up Due</button>
+            <button type="button" data-inbox-filter="needs">Needs Me</button>
           </div>
           <div class="mobile-inbox-list" id="mobile-inbox-list"></div>
         </section>
@@ -8576,23 +8770,11 @@ function renderModernHomePage() {
           <div class="companion-title" id="dm-companion-title">DM Companion</div>
           <div class="companion-subtitle" id="dm-companion-subtitle">Recent Instagram context</div>
         </div>
-        <button class="companion-close" id="dm-companion-close" type="button" aria-label="Close DM Companion">x</button>
+        <button class="companion-close" id="dm-companion-close" type="button" aria-label="Back to inbox">&lt;</button>
       </header>
       <div class="companion-thread" id="dm-companion-thread"></div>
-      <section class="appointment-panel" id="dm-appointment-panel" hidden>
-        <div class="panel-head">
-          <h2>Call Outcome</h2>
-          <span class="panel-note" id="dm-appointment-status">Unknown</span>
-        </div>
-        <div class="appointment-actions">
-          <button class="action" type="button" data-appointment-status="showed">Showed</button>
-          <button class="action" type="button" data-appointment-status="no_show">No Show</button>
-          <button class="action" type="button" data-appointment-status="rescheduled">Rescheduled</button>
-          <button class="action" type="button" data-appointment-status="cancelled">Cancelled</button>
-        </div>
-      </section>
       <form class="companion-composer" id="dm-companion-form">
-        <textarea id="dm-companion-text" aria-label="Manual Instagram reply" maxlength="1200" placeholder="Type a short, natural reply..."></textarea>
+        <textarea id="dm-companion-text" aria-label="Manual Instagram reply" maxlength="1200" placeholder="Type a message..."></textarea>
         <div class="companion-actions">
           <button class="action" id="dm-companion-booking" type="button">Turn Bot Off</button>
           <button class="action primary" id="dm-companion-send" type="submit">Send DM</button>
@@ -8607,7 +8789,7 @@ function renderModernHomePage() {
       conversations: [],
       activeConversationKey: "",
       mobileScreen: "pulse",
-      inboxFilter: "all",
+      inboxFilter: "initial",
       inboxSearch: "",
       latestStats: null,
       latestDrafts: [],
@@ -8765,6 +8947,50 @@ function renderModernHomePage() {
       if (conversation.call_pitched) return { label: "Pitched", tone: "link" };
       if (conversation.booking_link_sent) return { label: "Link Sent", tone: "link" };
       return { label: "AI Active", tone: "active" };
+    }
+
+    function conversationStage(conversation) {
+      if (needsHumanAttention(conversation)) return "needs";
+      if (conversation.appointment_status === "showed") return "showed";
+      if (conversation.booking_confirmed) return "booked";
+      if (conversation.youtube_link_sent || conversation.training_link_sent || conversation.lead_status === "content_only") return "youtube";
+      if (conversation.call_pitched || conversation.booking_link_sent || conversation.booking_link_clicked) return "pitched";
+      return "initial";
+    }
+
+    function stageLabel(stage) {
+      return {
+        initial: "Initial Contact",
+        pitched: "Pitched",
+        youtube: "YouTube",
+        booked: "Booked",
+        showed: "Showed",
+        needs: "Needs Me"
+      }[stage] || "Initial Contact";
+    }
+
+    function stageMatches(conversation, filter) {
+      const stage = conversationStage(conversation);
+      if (filter === "all") return true;
+      if (filter === "not_booked") return stage === "pitched" && !conversation.booking_confirmed;
+      if (filter === "follow_up_due") return Boolean(conversation.follow_up && conversation.follow_up.next_due_at);
+      if (filter === "no_show") return conversation.appointment_status === "no_show";
+      return stage === filter;
+    }
+
+    function refreshInboxStageCounts(conversations) {
+      const counts = {};
+      (conversations || []).forEach((conversation) => {
+        const stage = conversationStage(conversation);
+        counts[stage] = Number(counts[stage] || 0) + 1;
+      });
+      document.querySelectorAll("[data-inbox-filter]").forEach((button) => {
+        const stage = button.dataset.inboxFilter;
+        const base = button.dataset.label || button.textContent.replace(/\s+\d+$/, "");
+        button.dataset.label = base;
+        const count = Number(counts[stage] || 0);
+        button.textContent = count ? base + " " + count : base;
+      });
     }
 
     function attentionConversations() {
@@ -9064,9 +9290,9 @@ function renderModernHomePage() {
       renderCompanionAvatar(conversation);
       companionTitleEl.textContent = conversation.username ? "@" + conversation.username : conversation.contact_id || conversation.talk_id || "Instagram lead";
       companionSubtitleEl.textContent =
-        String(conversation.lead_status || "cold").replace("_", " ") +
-        " | " +
-        (conversation.manual_takeover_active ? "manual takeover active" : "AI available");
+        conversation.ai_paused || conversation.manual_takeover_active
+          ? "Bot paused"
+          : "Active now";
       if (companionAppointmentPanelEl) {
         companionAppointmentPanelEl.hidden = !conversation.booking_confirmed && !conversation.call_pitched;
         companionAppointmentStatusEl.textContent =
@@ -9340,6 +9566,7 @@ function renderModernHomePage() {
 
     function renderMobileInbox(conversations) {
       mobileInboxListEl.innerHTML = "";
+      refreshInboxStageCounts(conversations);
       const search = state.inboxSearch.trim().toLowerCase();
       const filtered = (conversations || []).filter((conversation) => {
         const haystack = [
@@ -9352,24 +9579,12 @@ function renderModernHomePage() {
           .join(" ")
           .toLowerCase();
         const matchesSearch = !search || haystack.includes(search);
-        const followUpDue = Boolean(conversation.follow_up && conversation.follow_up.next_due_at);
-        const pitchedNotBooked =
-          (conversation.call_pitched || conversation.booking_link_sent) &&
-          !conversation.booking_confirmed;
-        const matchesFilter =
-          state.inboxFilter === "all" ||
-          (state.inboxFilter === "needs" && needsHumanAttention(conversation)) ||
-          (state.inboxFilter === "pitched" && (conversation.call_pitched || conversation.booking_link_sent)) ||
-          (state.inboxFilter === "not_booked" && pitchedNotBooked) ||
-          (state.inboxFilter === "booked" && conversation.booking_confirmed) ||
-          (state.inboxFilter === "showed" && conversation.appointment_status === "showed") ||
-          (state.inboxFilter === "no_show" && conversation.appointment_status === "no_show") ||
-          (state.inboxFilter === "follow_up_due" && followUpDue);
+        const matchesFilter = stageMatches(conversation, state.inboxFilter);
         return matchesSearch && matchesFilter;
       });
 
       mobileInboxCountEl.textContent =
-        filtered.length + (filtered.length === 1 ? " conversation" : " conversations");
+        stageLabel(state.inboxFilter) + " - " + filtered.length;
 
       if (!filtered.length) {
         const empty = document.createElement("div");
@@ -9377,9 +9592,7 @@ function renderModernHomePage() {
         empty.textContent =
           state.inboxFilter === "needs"
             ? "Nothing needs you right now."
-            : state.inboxFilter === "not_booked"
-              ? "No pitched-but-not-booked conversations in this view."
-            : "No conversations match this view yet.";
+            : "No conversations in " + stageLabel(state.inboxFilter).toLowerCase() + " yet.";
         mobileInboxListEl.appendChild(empty);
         return;
       }
@@ -9421,14 +9634,13 @@ function renderModernHomePage() {
 
         const side = document.createElement("div");
         side.className = "thread-side";
+        const camera = document.createElement("span");
+        camera.className = "thread-camera";
+        camera.setAttribute("aria-hidden", "true");
         const time = document.createElement("span");
         time.className = "thread-time";
         time.textContent = relativeTime(conversationTime(conversation));
-        const status = primaryConversationState(conversation);
-        const statusEl = document.createElement("span");
-        statusEl.className = "thread-state " + status.tone;
-        statusEl.textContent = status.label;
-        side.append(time, statusEl);
+        side.append(camera, time);
 
         row.append(avatar, body, side);
         mobileInboxListEl.appendChild(row);
