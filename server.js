@@ -43,7 +43,7 @@ const FOLLOW_UP_OFFSETS_MS = [
 ];
 const FOLLOW_UP_CHECK_MS = 60 * 1000;
 const FOLLOW_UP_WINDOW_MS = 23 * 60 * 60 * 1000;
-const APP_BUILD_MARKER = "2026-08-08-context-debounce-v1";
+const APP_BUILD_MARKER = "2026-08-08-short-calendar-links-v1";
 const INCOMING_REPLY_DEBOUNCE_MS = Math.max(
   0,
   numberEnv("INCOMING_REPLY_DEBOUNCE_MS", 12_000)
@@ -1527,12 +1527,59 @@ function leadTrackingId(messageLike = {}) {
   ).trim();
 }
 
+function publicTrackingCode(leadId) {
+  const cleanLeadId = String(leadId || "").trim();
+  if (!cleanLeadId) {
+    return "";
+  }
+
+  return `p${crypto
+    .createHash("sha256")
+    .update(cleanLeadId)
+    .digest("base64url")
+    .replace(/[^a-z0-9]/gi, "")
+    .slice(0, 9)}`;
+}
+
+function memoryTrackingIdentifiers(memory) {
+  if (!memory || typeof memory !== "object") {
+    return [];
+  }
+
+  return [
+    memory.contact_id,
+    memory.chat_id,
+    memory.current_talk_id,
+    memory.zernio_conversation_id
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+}
+
+function resolvePublicTrackingId(store, publicId) {
+  const cleanPublicId = String(publicId || "").trim();
+  if (!cleanPublicId) {
+    return "";
+  }
+
+  for (const memory of Object.values(store.conversations || {})) {
+    for (const identifier of memoryTrackingIdentifiers(memory)) {
+      if (identifier === cleanPublicId || publicTrackingCode(identifier) === cleanPublicId) {
+        return identifier;
+      }
+    }
+  }
+
+  return cleanPublicId;
+}
+
 function trackedBookingUrl(messageLike = {}) {
   const leadId = leadTrackingId(messageLike);
+  const trackingCode = publicTrackingCode(leadId);
   const params = new URLSearchParams();
 
-  if (leadId) {
-    params.set("id", leadId);
+  if (trackingCode) {
+    params.set("t", trackingCode);
   }
 
   return params.toString()
@@ -2074,13 +2121,17 @@ function publicStats(stats) {
 }
 
 async function recordBookingLinkClick(req) {
-  const leadId = String(req.query.id || req.query.lead_id || "").trim().slice(0, 160);
+  const publicId = String(req.query.t || req.query.id || req.query.lead_id || "")
+    .trim()
+    .slice(0, 160);
   const clickedAt = new Date().toISOString();
   const store = await readStore();
+  const leadId = resolvePublicTrackingId(store, publicId);
 
   store.linkClicks.push({
     id: crypto.randomUUID(),
     lead_id: leadId,
+    public_id: publicId,
     clicked_at: clickedAt,
     user_agent: String(req.headers["user-agent"] || "").slice(0, 300),
     ip:
@@ -2097,14 +2148,7 @@ async function recordBookingLinkClick(req) {
         continue;
       }
 
-      const identifiers = [
-        memory.contact_id,
-        memory.chat_id,
-        memory.current_talk_id,
-        memory.zernio_conversation_id
-      ].map((value) => String(value || ""));
-
-      if (identifiers.includes(leadId)) {
+      if (memoryTrackingIdentifiers(memory).includes(leadId)) {
         memory.booking_link_clicked = true;
         memory.booking_link_clicked_at = clickedAt;
         memory.lead_status = "hot";
@@ -2118,7 +2162,7 @@ async function recordBookingLinkClick(req) {
   });
 
   await writeStore(store);
-  return leadId;
+  return { leadId, publicId };
 }
 
 function leadMatchesMemory(memory, leadId) {
@@ -2127,25 +2171,22 @@ function leadMatchesMemory(memory, leadId) {
     return false;
   }
 
-  return [
-    memory.contact_id,
-    memory.chat_id,
-    memory.current_talk_id,
-    memory.zernio_conversation_id
-  ]
-    .map((value) => String(value || ""))
-    .includes(id);
+  return memoryTrackingIdentifiers(memory).some(
+    (identifier) => identifier === id || publicTrackingCode(identifier) === id
+  );
 }
 
 async function recordAppointmentScheduled({ leadId, source = "booking_webhook", payload = {} }) {
-  const cleanLeadId = String(leadId || "").trim().slice(0, 160);
   const bookedAt = new Date().toISOString();
   const store = await readStore();
+  const publicId = String(leadId || "").trim().slice(0, 160);
+  const cleanLeadId = resolvePublicTrackingId(store, publicId);
   let matched = false;
 
   store.bookingEvents.push({
     id: crypto.randomUUID(),
     lead_id: cleanLeadId,
+    public_id: publicId,
     booked_at: bookedAt,
     source,
     payload: JSON.stringify(payload || {}).slice(0, 3000)
@@ -4464,11 +4505,12 @@ app.get("/", (_req, res) => {
 
 app.get("/discovery", async (req, res, next) => {
   try {
-    const leadId = await recordBookingLinkClick(req);
+    const { leadId, publicId } = await recordBookingLinkClick(req);
     const redirectUrl = new URL(BOOKING_URL);
+    const tidyCalLeadId = publicId || publicTrackingCode(leadId) || leadId;
 
-    if (leadId) {
-      redirectUrl.searchParams.set("lead_id", leadId);
+    if (tidyCalLeadId) {
+      redirectUrl.searchParams.set("lead_id", tidyCalLeadId);
     }
 
     res.redirect(302, redirectUrl.toString());
