@@ -20,6 +20,7 @@ const YOUTUBE_URL = "https://youtube.com/@palletprosacademy";
 const BOOKING_URL = "https://www.tidycal.com/palletprosga/15-minute-meeting";
 const TRACKED_BOOKING_BASE_URL =
   process.env.TRACKED_BOOKING_BASE_URL || "https://go.palletprosacademy.com/discovery";
+const BUSINESS_TIME_ZONE = process.env.BUSINESS_TIME_ZONE || "America/New_York";
 const META_GRAPH_VERSION = process.env.META_GRAPH_VERSION || "v20.0";
 const META_GRAPH_ACCESS_TOKEN =
   process.env.META_GRAPH_ACCESS_TOKEN || process.env.INSTAGRAM_ACCESS_TOKEN || "";
@@ -43,7 +44,27 @@ const FOLLOW_UP_OFFSETS_MS = [
 ];
 const FOLLOW_UP_CHECK_MS = 60 * 1000;
 const FOLLOW_UP_WINDOW_MS = 23 * 60 * 60 * 1000;
-const APP_BUILD_MARKER = "2026-08-08-mobile-app-shell-v1";
+const APP_BUILD_MARKER = "2026-08-08-setter-kpis-v1";
+const DEFAULT_KPI_TARGETS = {
+  daily_touch_points_target: 100,
+  touch_pitch_min_rate: 10,
+  pitch_book_min_rate: 50,
+  book_show_min_rate: 75,
+  weekly_calls_booked_goal: 15
+};
+const KPI_EVENT_TYPES = new Set([
+  "touch_point",
+  "call_pitched",
+  "call_booked",
+  "call_showed",
+  "call_no_show",
+  "call_cancelled",
+  "call_rescheduled",
+  "booking_link_sent",
+  "booking_link_clicked",
+  "human_intervention",
+  "follow_up"
+]);
 const INCOMING_REPLY_DEBOUNCE_MS = Math.max(
   0,
   numberEnv("INCOMING_REPLY_DEBOUNCE_MS", 12_000)
@@ -76,7 +97,9 @@ const DEFAULT_STORE = {
   bookingEvents: [],
   profileCache: {},
   automationEvents: [],
-  dailyStats: {}
+  dailyStats: {},
+  kpiEvents: [],
+  kpiTargets: DEFAULT_KPI_TARGETS
 };
 let storeWriteQueue = Promise.resolve();
 const pendingIncomingReplies = new Map();
@@ -560,8 +583,26 @@ function normalizeStore(store) {
     dailyStats:
       parsed.dailyStats && typeof parsed.dailyStats === "object"
         ? parsed.dailyStats
-        : {}
+        : {},
+    kpiEvents: Array.isArray(parsed.kpiEvents)
+      ? parsed.kpiEvents.filter((event) => KPI_EVENT_TYPES.has(event?.type)).slice(-5000)
+      : [],
+    kpiTargets: normalizeKpiTargets(parsed.kpiTargets)
   };
+}
+
+function normalizeKpiTargets(targets) {
+  const raw = targets && typeof targets === "object" ? targets : {};
+  const normalized = { ...DEFAULT_KPI_TARGETS };
+
+  for (const key of Object.keys(normalized)) {
+    const value = Number(raw[key]);
+    if (Number.isFinite(value) && value >= 0) {
+      normalized[key] = value;
+    }
+  }
+
+  return normalized;
 }
 
 function normalizeProvider(provider) {
@@ -791,8 +832,65 @@ function humanSendDelayMs(replyText, settings) {
   return Math.round(minMs + Math.random() * (upperMs - minMs));
 }
 
+function businessDateKey(value = new Date(), timeZone = BUSINESS_TIME_ZONE) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  })
+    .formatToParts(date)
+    .reduce((accumulator, part) => {
+      accumulator[part.type] = part.value;
+      return accumulator;
+    }, {});
+
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
 function todayKey(date = new Date()) {
+  return businessDateKey(date);
+}
+
+function keyToUtcDate(key) {
+  const [year, month, day] = String(key || "").split("-").map(Number);
+  if (!year || !month || !day) {
+    return new Date(NaN);
+  }
+  return new Date(Date.UTC(year, month - 1, day, 12));
+}
+
+function addDaysToKey(key, days) {
+  const date = keyToUtcDate(key);
+  date.setUTCDate(date.getUTCDate() + Number(days || 0));
   return date.toISOString().slice(0, 10);
+}
+
+function startOfWeekKey(key) {
+  const date = keyToUtcDate(key);
+  const day = date.getUTCDay();
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  date.setUTCDate(date.getUTCDate() + mondayOffset);
+  return date.toISOString().slice(0, 10);
+}
+
+function startOfMonthKey(key) {
+  return `${String(key).slice(0, 7)}-01`;
+}
+
+function startOfYearKey(key) {
+  return `${String(key).slice(0, 4)}-01-01`;
+}
+
+function startOfQuarterKey(key) {
+  const [year, month] = String(key || "").split("-").map(Number);
+  const startMonth = Math.floor(((month || 1) - 1) / 3) * 3 + 1;
+  return `${year}-${String(startMonth).padStart(2, "0")}-01`;
 }
 
 function resolveTimeframe(value) {
@@ -2179,6 +2277,14 @@ async function recordBookingLinkClick(req) {
   recordDailyStat(store, leadId ? `click:${leadId}` : "click:unknown", {
     booking_link_clicks: 1
   });
+  recordKpiEvent(store, {
+    type: "booking_link_clicked",
+    timestamp: clickedAt,
+    conversation_id: leadId || publicId || "unknown",
+    prospect_id: leadId || publicId || "unknown",
+    source: "tracked_calendar_redirect",
+    dedupe_key: `booking_link_clicked:${publicId || leadId || clickedAt}`
+  });
 
   await writeStore(store);
   return { leadId, publicId };
@@ -2231,6 +2337,14 @@ async function recordAppointmentScheduled({ leadId, source = "booking_webhook", 
         recordDailyStat(store, memory.key || `booking:${cleanLeadId}`, {
           appointments_scheduled: 1
         });
+        recordKpiEvent(store, {
+          type: "call_booked",
+          timestamp: bookedAt,
+          conversation_id: memory.key || cleanLeadId,
+          prospect_id: cleanLeadId || memory.contact_id || memory.key,
+          source,
+          dedupe_key: `call_booked:${memory.key || cleanLeadId}:${businessDateKey(bookedAt)}`
+        });
       }
     }
   }
@@ -2238,6 +2352,14 @@ async function recordAppointmentScheduled({ leadId, source = "booking_webhook", 
   if (!matched) {
     recordDailyStat(store, cleanLeadId ? `booking:${cleanLeadId}` : "booking:unknown", {
       appointments_scheduled: 1
+    });
+    recordKpiEvent(store, {
+      type: "call_booked",
+      timestamp: bookedAt,
+      conversation_id: cleanLeadId || publicId || "unknown",
+      prospect_id: cleanLeadId || publicId || "unknown",
+      source,
+      dedupe_key: `call_booked:${cleanLeadId || publicId || bookedAt}:${businessDateKey(bookedAt)}`
     });
   }
 
@@ -2467,6 +2589,376 @@ function touchpointKpisForTimeframe(store, timeframe) {
   };
 }
 
+function safeRate(numerator, denominator) {
+  const top = Number(numerator || 0);
+  const bottom = Number(denominator || 0);
+  if (!bottom || !Number.isFinite(top) || !Number.isFinite(bottom)) {
+    return 0;
+  }
+  return Math.round((top / bottom) * 10000) / 100;
+}
+
+function conversationIdentifier(memoryOrMessage = {}, fallback = "") {
+  return String(
+    memoryOrMessage.key ||
+      memoryOrMessage.conversation_id ||
+      memoryOrMessage.conversation_key ||
+      memoryOrMessage.contact_id ||
+      memoryOrMessage.chat_id ||
+      memoryOrMessage.zernio_conversation_id ||
+      memoryOrMessage.talk_id ||
+      memoryOrMessage.current_talk_id ||
+      fallback ||
+      "unknown"
+  ).slice(0, 240);
+}
+
+function replyPitchesCall(text) {
+  const value = String(text || "");
+  return /\b(zoom|call|calendar|book|schedule|appointment|talk for a few|research your market|send you (a|the) link|send (you )?(my )?calendar)\b/i.test(
+    value
+  );
+}
+
+function recordKpiEvent(store, event = {}) {
+  const type = String(event.type || "").trim();
+  if (!KPI_EVENT_TYPES.has(type)) {
+    return null;
+  }
+
+  store.kpiEvents = Array.isArray(store.kpiEvents) ? store.kpiEvents : [];
+  const timestamp = event.timestamp ? new Date(event.timestamp) : new Date();
+  const at = Number.isNaN(timestamp.getTime()) ? new Date().toISOString() : timestamp.toISOString();
+  const conversationId = conversationIdentifier(event, event.prospect_id || event.lead_id || "");
+  const day = businessDateKey(at);
+  const dedupeKey =
+    event.dedupe_key ||
+    `${type}:${day}:${conversationId}:${String(event.source || "").slice(0, 60)}`;
+
+  if (store.kpiEvents.some((item) => item?.dedupe_key === dedupeKey)) {
+    return null;
+  }
+
+  const normalized = {
+    id: crypto.randomUUID(),
+    type,
+    timestamp: at,
+    business_day: day,
+    conversation_id: conversationId,
+    prospect_id: String(event.prospect_id || event.lead_id || conversationId).slice(0, 240),
+    source: String(event.source || "app").slice(0, 80),
+    dedupe_key: dedupeKey,
+    metadata: event.metadata && typeof event.metadata === "object" ? event.metadata : {}
+  };
+
+  store.kpiEvents.push(normalized);
+  store.kpiEvents = store.kpiEvents.slice(-5000);
+  return normalized;
+}
+
+function dateRangeFromQuery(query = {}, now = new Date()) {
+  const rawRange = String(query.range || query.timeframe || "7d").toLowerCase();
+  const today = businessDateKey(now);
+  const customStart = String(query.start || query.start_date || "").slice(0, 10);
+  const customEnd = String(query.end || query.end_date || "").slice(0, 10);
+
+  if (rawRange === "all" || rawRange === "all_time") {
+    return { key: "all", label: "All Time", startKey: "", endKey: "", all: true };
+  }
+
+  if (rawRange === "custom" && customStart && customEnd) {
+    return {
+      key: "custom",
+      label: "Custom",
+      startKey: customStart <= customEnd ? customStart : customEnd,
+      endKey: customStart <= customEnd ? customEnd : customStart,
+      all: false
+    };
+  }
+
+  const ranges = {
+    "24h": ["Today", today, today],
+    today: ["Today", today, today],
+    yesterday: ["Yesterday", addDaysToKey(today, -1), addDaysToKey(today, -1)],
+    "7d": ["Last 7 Days", addDaysToKey(today, -6), today],
+    last_7_days: ["Last 7 Days", addDaysToKey(today, -6), today],
+    "30d": ["Last 30 Days", addDaysToKey(today, -29), today],
+    last_30_days: ["Last 30 Days", addDaysToKey(today, -29), today],
+    "90d": ["Last 90 Days", addDaysToKey(today, -89), today],
+    ytd: ["YTD", startOfYearKey(today), today],
+    this_year: ["This Year", startOfYearKey(today), today]
+  };
+
+  if (rawRange === "this_week") {
+    ranges.this_week = ["This Week", startOfWeekKey(today), today];
+  }
+  if (rawRange === "last_week") {
+    const end = addDaysToKey(startOfWeekKey(today), -1);
+    ranges.last_week = ["Last Week", startOfWeekKey(end), end];
+  }
+  if (rawRange === "this_month") {
+    ranges.this_month = ["This Month", startOfMonthKey(today), today];
+  }
+  if (rawRange === "last_month") {
+    const end = addDaysToKey(startOfMonthKey(today), -1);
+    ranges.last_month = ["Last Month", startOfMonthKey(end), end];
+  }
+  if (rawRange === "this_quarter") {
+    ranges.this_quarter = ["This Quarter", startOfQuarterKey(today), today];
+  }
+  if (rawRange === "last_quarter") {
+    const end = addDaysToKey(startOfQuarterKey(today), -1);
+    ranges.last_quarter = ["Last Quarter", startOfQuarterKey(end), end];
+  }
+  if (rawRange === "last_year") {
+    const year = Number(today.slice(0, 4)) - 1;
+    ranges.last_year = ["Last Year", `${year}-01-01`, `${year}-12-31`];
+  }
+
+  const selected = ranges[rawRange] || ranges["7d"];
+  return {
+    key: rawRange,
+    label: selected[0],
+    startKey: selected[1],
+    endKey: selected[2],
+    all: false
+  };
+}
+
+function kpiEventInRange(event, range) {
+  if (range.all) {
+    return true;
+  }
+  const key = event.business_day || businessDateKey(event.timestamp);
+  return key >= range.startKey && key <= range.endKey;
+}
+
+function derivedKpiEvents(store) {
+  const events = [];
+
+  for (const [day, stats] of Object.entries(store.dailyStats || {})) {
+    const keys = Array.isArray(stats?.prospect_keys) ? stats.prospect_keys : [];
+    for (const key of keys) {
+      events.push({
+        id: `legacy-touch:${day}:${key}`,
+        type: "touch_point",
+        timestamp: `${day}T12:00:00.000Z`,
+        business_day: day,
+        conversation_id: key,
+        prospect_id: key,
+        source: "legacy_daily_stats",
+        derived: true
+      });
+    }
+  }
+
+  for (const memory of Object.values(store.conversations || {})) {
+    const messages = Array.isArray(memory?.last_messages) ? memory.last_messages : [];
+    const pitchedMessage = messages.find(
+      (message) => message.role === "assistant" && replyPitchesCall(message.text)
+    );
+    if (memory.call_pitched || pitchedMessage) {
+      const at = memory.call_pitched_at || pitchedMessage?.at || memory.last_outgoing_at || new Date().toISOString();
+      events.push({
+        id: `legacy-pitch:${conversationIdentifier(memory)}:${businessDateKey(at)}`,
+        type: "call_pitched",
+        timestamp: at,
+        business_day: businessDateKey(at),
+        conversation_id: conversationIdentifier(memory),
+        prospect_id: conversationIdentifier(memory),
+        source: "conversation_memory",
+        derived: true
+      });
+    }
+    if (memory.appointment_status === "showed") {
+      const at = memory.appointment_status_at || memory.booking_confirmed_at || memory.last_outgoing_at || new Date().toISOString();
+      events.push({
+        id: `legacy-show:${conversationIdentifier(memory)}:${businessDateKey(at)}`,
+        type: "call_showed",
+        timestamp: at,
+        business_day: businessDateKey(at),
+        conversation_id: conversationIdentifier(memory),
+        prospect_id: conversationIdentifier(memory),
+        source: "manual_status",
+        derived: true
+      });
+    }
+    if (memory.appointment_status === "no_show") {
+      const at = memory.appointment_status_at || new Date().toISOString();
+      events.push({
+        id: `legacy-noshow:${conversationIdentifier(memory)}:${businessDateKey(at)}`,
+        type: "call_no_show",
+        timestamp: at,
+        business_day: businessDateKey(at),
+        conversation_id: conversationIdentifier(memory),
+        prospect_id: conversationIdentifier(memory),
+        source: "manual_status",
+        derived: true
+      });
+    }
+  }
+
+  for (const event of Array.isArray(store.bookingEvents) ? store.bookingEvents : []) {
+    const at = event.booked_at || event.created_at || new Date().toISOString();
+    events.push({
+      id: `legacy-book:${event.id || event.lead_id || at}`,
+      type: "call_booked",
+      timestamp: at,
+      business_day: businessDateKey(at),
+      conversation_id: String(event.lead_id || event.public_id || event.id || "booking"),
+      prospect_id: String(event.lead_id || event.public_id || event.id || "booking"),
+      source: event.source || "booking_event",
+      derived: true
+    });
+  }
+
+  return events;
+}
+
+function allKpiEvents(store) {
+  const seen = new Set();
+  return [...derivedKpiEvents(store), ...(Array.isArray(store.kpiEvents) ? store.kpiEvents : [])]
+    .filter((event) => KPI_EVENT_TYPES.has(event?.type))
+    .filter((event) => {
+      const key = `${event.type}:${event.business_day || businessDateKey(event.timestamp)}:${event.conversation_id || event.prospect_id || event.id}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function groupKeyForEvent(event, groupBy) {
+  const day = event.business_day || businessDateKey(event.timestamp);
+  if (groupBy === "year") return day.slice(0, 4);
+  if (groupBy === "month") return day.slice(0, 7);
+  if (groupBy === "week") return startOfWeekKey(day);
+  return day;
+}
+
+function emptySetterKpis() {
+  return {
+    touch_points: 0,
+    calls_pitched: 0,
+    calls_booked: 0,
+    calls_showed: 0,
+    no_shows: 0,
+    cancelled: 0,
+    rescheduled: 0,
+    booking_links_sent: 0,
+    booking_link_clicks: 0,
+    follow_ups: 0,
+    human_interventions: 0,
+    touch_to_pitch_rate: 0,
+    pitch_to_book_rate: 0,
+    book_to_show_rate: 0,
+    touch_to_book_rate: 0
+  };
+}
+
+function setterKpisForEvents(events) {
+  const kpis = emptySetterKpis();
+  const touchKeys = new Set();
+
+  for (const event of events || []) {
+    if (event.type === "touch_point") {
+      touchKeys.add(`${event.business_day || businessDateKey(event.timestamp)}:${event.conversation_id || event.prospect_id}`);
+    } else if (event.type === "call_pitched") {
+      kpis.calls_pitched += 1;
+    } else if (event.type === "call_booked") {
+      kpis.calls_booked += 1;
+    } else if (event.type === "call_showed") {
+      kpis.calls_showed += 1;
+    } else if (event.type === "call_no_show") {
+      kpis.no_shows += 1;
+    } else if (event.type === "call_cancelled") {
+      kpis.cancelled += 1;
+    } else if (event.type === "call_rescheduled") {
+      kpis.rescheduled += 1;
+    } else if (event.type === "booking_link_sent") {
+      kpis.booking_links_sent += 1;
+    } else if (event.type === "booking_link_clicked") {
+      kpis.booking_link_clicks += 1;
+    } else if (event.type === "follow_up") {
+      kpis.follow_ups += 1;
+    } else if (event.type === "human_intervention") {
+      kpis.human_interventions += 1;
+    }
+  }
+
+  kpis.touch_points = touchKeys.size;
+  kpis.touch_to_pitch_rate = safeRate(kpis.calls_pitched, kpis.touch_points);
+  kpis.pitch_to_book_rate = safeRate(kpis.calls_booked, kpis.calls_pitched);
+  kpis.book_to_show_rate = safeRate(kpis.calls_showed, kpis.calls_booked);
+  kpis.touch_to_book_rate = safeRate(kpis.calls_booked, kpis.touch_points);
+  return kpis;
+}
+
+function kpiDiagnosis(kpis, targets = DEFAULT_KPI_TARGETS) {
+  if (!kpis.touch_points) {
+    return {
+      level: "needs",
+      title: "Low conversation volume",
+      message: "No meaningful DM touch points are showing in this range yet."
+    };
+  }
+  if (kpis.touch_points >= Math.max(10, Number(targets.daily_touch_points_target || 100) * 0.25) && kpis.touch_to_pitch_rate < Number(targets.touch_pitch_min_rate || 10)) {
+    return {
+      level: "needs",
+      title: "Pitch rate is low",
+      message: "People are replying, but the app is not moving enough warm conversations toward a call."
+    };
+  }
+  if (kpis.calls_pitched >= 5 && kpis.pitch_to_book_rate < Number(targets.pitch_book_min_rate || 50)) {
+    return {
+      level: "needs",
+      title: "Booking conversion is soft",
+      message: "The pitch is happening, but not enough prospects are saying yes and booking."
+    };
+  }
+  if (kpis.calls_booked >= 3 && kpis.book_to_show_rate < Number(targets.book_show_min_rate || 75)) {
+    return {
+      level: "watch",
+      title: "Show rate needs attention",
+      message: "Booked calls are not consistently marked as showed yet. Update call outcomes after Zoom."
+    };
+  }
+  return {
+    level: "ok",
+    title: "Setter flow is healthy",
+    message: "Touch, pitch, booked, and showed metrics are within the current target guardrails."
+  };
+}
+
+function kpiAnalytics(store, query = {}) {
+  const range = dateRangeFromQuery(query);
+  const groupBy = ["day", "week", "month", "year"].includes(String(query.group_by || query.group || "").toLowerCase())
+    ? String(query.group_by || query.group).toLowerCase()
+    : "day";
+  const events = allKpiEvents(store).filter((event) => kpiEventInRange(event, range));
+  const totals = setterKpisForEvents(events);
+  const groups = new Map();
+
+  for (const event of events) {
+    const key = groupKeyForEvent(event, groupBy);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(event);
+  }
+
+  const breakdown = [...groups.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, groupEvents]) => ({ key, ...setterKpisForEvents(groupEvents) }));
+
+  return {
+    range,
+    group_by: groupBy,
+    business_time_zone: BUSINESS_TIME_ZONE,
+    totals,
+    targets: normalizeKpiTargets(store.kpiTargets),
+    diagnosis: kpiDiagnosis(totals, normalizeKpiTargets(store.kpiTargets)),
+    breakdown
+  };
+}
+
 function recordDailyStat(store, conversationKey, increments = {}) {
   const stats = getDailyStats(store);
 
@@ -2646,12 +3138,16 @@ function publicConversation(memory, settings = {}, store = null) {
     manual_takeover_active: isManualTakeoverActive(settings) || isManualTakeoverActive(memory),
     manual_takeover_until:
       settings.manual_takeover_until || memory.manual_takeover_until || null,
+    call_pitched: Boolean(memory.call_pitched),
+    call_pitched_at: memory.call_pitched_at || null,
     booking_link_sent: Boolean(memory.booking_link_sent),
     booking_link_clicked: Boolean(memory.booking_link_clicked),
     booking_link_clicked_at: memory.booking_link_clicked_at || null,
     training_link_sent: Boolean(memory.training_link_sent),
     booking_confirmed: Boolean(memory.booking_confirmed),
     booking_confirmed_at: memory.booking_confirmed_at || null,
+    appointment_status: memory.appointment_status || "unknown",
+    appointment_status_at: memory.appointment_status_at || null,
     follow_up: memory.follow_up || {}
   };
 }
@@ -3534,6 +4030,14 @@ async function recordIncomingForMemory(incoming, featureSettings) {
 
   if (!duplicate) {
     const incomingAt = new Date(toMessageTimestampMs(incoming.created_at)).toISOString();
+    recordKpiEvent(store, {
+      type: "touch_point",
+      timestamp: incomingAt,
+      conversation_id: memory.key,
+      prospect_id: incoming.contact_id || incoming.chat_id || memory.key,
+      source: "incoming_dm",
+      dedupe_key: `touch_point:${businessDateKey(incomingAt)}:${memory.key}`
+    });
     memory.last_incoming_at = incomingAt;
     if (isBookingConfirmation(incoming.text)) {
       const wasConfirmed = Boolean(memory.booking_confirmed);
@@ -3542,6 +4046,14 @@ async function recordIncomingForMemory(incoming, featureSettings) {
       memory.booking_confirmed_at = incomingAt;
       if (!wasConfirmed) {
         recordDailyStat(store, memory.key, { appointments_scheduled: 1 });
+        recordKpiEvent(store, {
+          type: "call_booked",
+          timestamp: incomingAt,
+          conversation_id: memory.key,
+          prospect_id: incoming.contact_id || incoming.chat_id || memory.key,
+          source: "incoming_booking_confirmation",
+          dedupe_key: `call_booked:${memory.key}:${businessDateKey(incomingAt)}`
+        });
       }
     }
     cancelFollowUp(memory);
@@ -3585,6 +4097,39 @@ async function recordOutgoingForMemory(messageLike, replyText, options = {}) {
   memory.last_outgoing_at = sentAt;
   memory.last_outgoing_source = source;
   updateLinkMemory(memory, replyText);
+  const linkStats = linkStatsForText(replyText);
+  if (replyPitchesCall(replyText) || linkStats.booking_links_sent) {
+    memory.call_pitched = true;
+    memory.call_pitched_at = memory.call_pitched_at || sentAt;
+    recordKpiEvent(store, {
+      type: "call_pitched",
+      timestamp: sentAt,
+      conversation_id: conversationKey,
+      prospect_id: messageLike.contact_id || messageLike.chat_id || conversationKey,
+      source,
+      dedupe_key: `call_pitched:${businessDateKey(sentAt)}:${conversationKey}`
+    });
+  }
+  if (linkStats.booking_links_sent) {
+    recordKpiEvent(store, {
+      type: "booking_link_sent",
+      timestamp: sentAt,
+      conversation_id: conversationKey,
+      prospect_id: messageLike.contact_id || messageLike.chat_id || conversationKey,
+      source,
+      dedupe_key: `booking_link_sent:${businessDateKey(sentAt)}:${conversationKey}`
+    });
+  }
+  if (source === "follow_up") {
+    recordKpiEvent(store, {
+      type: "follow_up",
+      timestamp: sentAt,
+      conversation_id: conversationKey,
+      prospect_id: messageLike.contact_id || messageLike.chat_id || conversationKey,
+      source,
+      dedupe_key: `follow_up:${sentAt}:${conversationKey}`
+    });
+  }
   updateQuestionMemory(memory, replyText);
   scheduleFollowUpIfNeeded(memory, replyText, sentAtMs, featureSettings);
   refreshMemorySummary(memory);
@@ -3595,7 +4140,7 @@ async function recordOutgoingForMemory(messageLike, replyText, options = {}) {
     auto_replies_sent: source === "auto" ? 1 : 0,
     manual_approvals_sent: source === "manual_approval" ? 1 : 0,
     followups_sent: source === "follow_up" ? 1 : 0,
-    ...linkStatsForText(replyText)
+    ...linkStats
   });
 
   await writeStore(store);
@@ -4619,6 +5164,8 @@ app.get("/api/stats", async (req, res, next) => {
     const timeframeStats = statsForTimeframe(store, timeframe);
     const funnel = conversationKpisForTimeframe(store, timeframe);
     const touchpoints = touchpointKpisForTimeframe(store, timeframe);
+    const kpiQuery = { ...req.query, range: req.query.range || timeframe };
+    const analytics = kpiAnalytics(store, kpiQuery);
     const providerSettings = getProviderSettings(store);
     const featureSettings = getFeatureSettings(store);
     const businessKnowledge = await loadKnowledgeBase();
@@ -4633,6 +5180,16 @@ app.get("/api/stats", async (req, res, next) => {
       timeframe_stats: publicStats(timeframeStats),
       funnel,
       touchpoints,
+      setter_kpis: analytics.totals,
+      setter_funnel: {
+        touch_points: analytics.totals.touch_points,
+        calls_pitched: analytics.totals.calls_pitched,
+        calls_booked: analytics.totals.calls_booked,
+        calls_showed: analytics.totals.calls_showed
+      },
+      kpi_targets: analytics.targets,
+      kpi_diagnosis: analytics.diagnosis,
+      business_time_zone: BUSINESS_TIME_ZONE,
       settings: {
         auto_send: isAutoSendEnabled(featureSettings),
         approval_mode: isApprovalModeEnabled(featureSettings),
@@ -4650,6 +5207,7 @@ app.get("/api/stats", async (req, res, next) => {
           Math.round(offsetMs / 60_000)
         ),
         app_build_marker: APP_BUILD_MARKER,
+        business_time_zone: BUSINESS_TIME_ZONE,
         incoming_reply_debounce_ms: INCOMING_REPLY_DEBOUNCE_MS,
         identity_guard_enabled: true,
         self_usernames: Array.from(SELF_INSTAGRAM_USERNAMES),
@@ -4662,6 +5220,38 @@ app.get("/api/stats", async (req, res, next) => {
         provider_settings: providerSettings
       }
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/kpi-analytics", async (req, res, next) => {
+  try {
+    const store = await readStore();
+    res.json(kpiAnalytics(store, req.query || {}));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/kpi-targets", async (_req, res, next) => {
+  try {
+    const store = await readStore();
+    res.json({ targets: normalizeKpiTargets(store.kpiTargets) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/kpi-targets", async (req, res, next) => {
+  try {
+    const store = await readStore();
+    store.kpiTargets = normalizeKpiTargets({
+      ...store.kpiTargets,
+      ...(req.body || {})
+    });
+    await writeStore(store);
+    res.json({ ok: true, targets: store.kpiTargets });
   } catch (error) {
     next(error);
   }
@@ -5077,6 +5667,62 @@ app.post("/api/conversations/:key/send-booking-link", async (req, res, next) => 
       ok: true,
       reply,
       conversation: publicConversation(updatedMemory, settings, updatedStore)
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/conversations/:key/appointment-status", async (req, res, next) => {
+  try {
+    const allowed = new Set(["showed", "no_show", "cancelled", "rescheduled", "unknown"]);
+    const status = String(req.body?.status || "").toLowerCase();
+    if (!allowed.has(status)) {
+      res.status(400).json({ ok: false, error: "Unknown appointment status." });
+      return;
+    }
+
+    const store = await readStore();
+    const memory = store.conversations[req.params.key];
+    if (!memory) {
+      res.status(404).json({ ok: false, error: "Conversation not found" });
+      return;
+    }
+
+    const timestamp = new Date().toISOString();
+    memory.appointment_status = status;
+    memory.appointment_status_at = timestamp;
+    if (status === "showed") {
+      memory.lead_status = "showed";
+    }
+    refreshMemorySummary(memory);
+
+    const eventType = {
+      showed: "call_showed",
+      no_show: "call_no_show",
+      cancelled: "call_cancelled",
+      rescheduled: "call_rescheduled"
+    }[status];
+
+    if (eventType) {
+      recordKpiEvent(store, {
+        type: eventType,
+        timestamp,
+        conversation_id: memory.key,
+        prospect_id: memory.contact_id || memory.chat_id || memory.key,
+        source: "manual_appointment_status",
+        dedupe_key: `${eventType}:${memory.key}:${businessDateKey(timestamp)}`
+      });
+    }
+
+    await writeStore(store);
+    res.json({
+      ok: true,
+      conversation: publicConversation(
+        memory,
+        getConversationSettings(store, memory.current_talk_id),
+        store
+      )
     });
   } catch (error) {
     next(error);
@@ -7179,6 +7825,76 @@ function renderModernHomePage() {
       font-weight: 900;
     }
 
+    .mobile-ratios,
+    .mobile-diagnosis,
+    .analytics-controls,
+    .analytics-breakdown,
+    .target-grid,
+    .appointment-panel {
+      background: rgba(15, 23, 42, 0.52);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      display: grid;
+      gap: 10px;
+      padding: 12px;
+    }
+
+    .mobile-ratios {
+      grid-template-columns: repeat(3, 1fr);
+    }
+
+    .mobile-ratios article,
+    .analytics-breakdown article {
+      display: grid;
+      gap: 3px;
+    }
+
+    .mobile-ratios strong {
+      font-size: 18px;
+    }
+
+    .mobile-ratios span,
+    .mobile-diagnosis p,
+    .analytics-breakdown span,
+    .target-grid label {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      margin: 0;
+    }
+
+    .mobile-diagnosis.ok { border-color: rgba(57, 223, 159, 0.34); }
+    .mobile-diagnosis.watch { border-color: rgba(244, 201, 93, 0.36); }
+    .mobile-diagnosis.needs { border-color: rgba(255, 107, 122, 0.36); }
+
+    .analytics-controls,
+    .target-grid,
+    .appointment-actions {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .analytics-controls select,
+    .analytics-controls input,
+    .target-grid input {
+      background: rgba(2, 6, 12, 0.54);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      color: var(--text);
+      min-height: 42px;
+      padding: 0 10px;
+      width: 100%;
+    }
+
+    .target-grid label {
+      display: grid;
+      gap: 5px;
+    }
+
+    .appointment-actions {
+      display: grid;
+      gap: 8px;
+    }
+
     .attention-row,
     .more-menu button {
       align-items: center;
@@ -7623,8 +8339,8 @@ function renderModernHomePage() {
           </section>
 
           <section class="timeframe mobile-timeframe" aria-label="Mobile timeframe selector">
-            <button type="button" data-range="24h" class="active">Today</button>
-            <button type="button" data-range="7d">7 Days</button>
+            <button type="button" data-range="24h">Today</button>
+            <button type="button" data-range="7d" class="active">7 Days</button>
             <button type="button" data-range="30d">30 Days</button>
           </section>
 
@@ -7634,9 +8350,15 @@ function renderModernHomePage() {
           </section>
 
           <section class="mobile-supporting-metrics" aria-label="Supporting metrics">
-            <article><strong id="mobile-leads">0</strong><span>Leads</span></article>
-            <article><strong id="mobile-links-sent">0</strong><span>Links Sent</span></article>
-            <article><strong id="mobile-link-clicks">0</strong><span>Clicks</span></article>
+            <article><strong id="mobile-leads">0</strong><span>Touch Points</span></article>
+            <article><strong id="mobile-links-sent">0</strong><span>Calls Pitched</span></article>
+            <article><strong id="mobile-link-clicks">0</strong><span>Showed</span></article>
+          </section>
+
+          <section class="mobile-ratios" aria-label="Setter conversion rates">
+            <article><strong id="mobile-touch-pitch">0%</strong><span>Touch -> Pitch</span></article>
+            <article><strong id="mobile-pitch-book">0%</strong><span>Pitch -> Book</span></article>
+            <article><strong id="mobile-show-rate">0%</strong><span>Show Rate</span></article>
           </section>
 
           <button class="attention-row" id="mobile-needs-attention" type="button">
@@ -7649,8 +8371,12 @@ function renderModernHomePage() {
               <h2>Conversion Funnel</h2>
               <button class="ghost-link" id="mobile-funnel-toggle" type="button">View Funnel</button>
             </div>
-            <p id="mobile-funnel-summary" class="funnel-summary">0 Leads -> 0 Replies -> 0 Links -> 0 Calls</p>
+            <p id="mobile-funnel-summary" class="funnel-summary">0 Touch -> 0 Pitch -> 0 Book -> 0 Show</p>
             <div class="funnel compact" id="mobile-funnel-detail" hidden></div>
+          </section>
+          <section class="mobile-diagnosis ok" id="mobile-kpi-diagnosis">
+            <strong id="mobile-diagnosis-title">Setter flow is healthy</strong>
+            <p id="mobile-diagnosis-message">Waiting for enough DM activity to diagnose.</p>
           </section>
         </section>
 
@@ -7663,7 +8389,12 @@ function renderModernHomePage() {
           <div class="mobile-filters" aria-label="Inbox filters">
             <button type="button" data-inbox-filter="all" class="active">All</button>
             <button type="button" data-inbox-filter="needs">Needs Me</button>
+            <button type="button" data-inbox-filter="pitched">Pitched</button>
+            <button type="button" data-inbox-filter="not_booked">Not Booked</button>
             <button type="button" data-inbox-filter="booked">Booked</button>
+            <button type="button" data-inbox-filter="showed">Showed</button>
+            <button type="button" data-inbox-filter="no_show">No Show</button>
+            <button type="button" data-inbox-filter="follow_up_due">Follow-Up Due</button>
           </div>
           <div class="mobile-inbox-list" id="mobile-inbox-list"></div>
         </section>
@@ -7678,6 +8409,7 @@ function renderModernHomePage() {
             <button type="button" data-more-panel="instructions">AI Instructions <span>></span></button>
             <button type="button" data-more-panel="drafts">Pending Drafts <strong id="mobile-drafts-count">0</strong></button>
             <button type="button" data-more-panel="analytics">Full Analytics <span>></span></button>
+            <button type="button" data-more-panel="targets">KPI Targets <span>></span></button>
             <button type="button" data-more-panel="tester">AI Tester <span>></span></button>
             <button type="button" data-more-panel="system">System <span>></span></button>
           </div>
@@ -7699,8 +8431,48 @@ function renderModernHomePage() {
 
           <section class="more-panel" id="more-analytics" hidden>
             <div class="panel-head"><h2>Full Analytics</h2><button class="ghost-link" data-more-close type="button">Close</button></div>
+            <div class="analytics-controls">
+              <select id="analytics-range" aria-label="Analytics date range">
+                <option value="today">Today</option>
+                <option value="yesterday">Yesterday</option>
+                <option value="7d" selected>Last 7 Days</option>
+                <option value="30d">Last 30 Days</option>
+                <option value="this_week">This Week</option>
+                <option value="last_week">Last Week</option>
+                <option value="this_month">This Month</option>
+                <option value="last_month">Last Month</option>
+                <option value="this_quarter">This Quarter</option>
+                <option value="last_quarter">Last Quarter</option>
+                <option value="ytd">YTD</option>
+                <option value="this_year">This Year</option>
+                <option value="last_year">Last Year</option>
+                <option value="all">All Time</option>
+                <option value="custom">Custom Date Range</option>
+              </select>
+              <select id="analytics-group" aria-label="Analytics grouping">
+                <option value="day">Group by Day</option>
+                <option value="week">Group by Week</option>
+                <option value="month">Group by Month</option>
+                <option value="year">Group by Year</option>
+              </select>
+              <input id="analytics-start" type="date" aria-label="Custom start date">
+              <input id="analytics-end" type="date" aria-label="Custom end date">
+            </div>
             <div class="grid kpis" id="mobile-full-kpis"></div>
             <div class="funnel" id="mobile-full-funnel"></div>
+            <div class="analytics-breakdown" id="analytics-breakdown"></div>
+          </section>
+
+          <section class="more-panel" id="more-targets" hidden>
+            <div class="panel-head"><h2>KPI Targets</h2><button class="ghost-link" data-more-close type="button">Close</button></div>
+            <form class="target-grid" id="kpi-target-form">
+              <label>Daily Touch Target<input name="daily_touch_points_target" type="number" min="0" step="1"></label>
+              <label>Touch -> Pitch %<input name="touch_pitch_min_rate" type="number" min="0" step="1"></label>
+              <label>Pitch -> Book %<input name="pitch_book_min_rate" type="number" min="0" step="1"></label>
+              <label>Book -> Show %<input name="book_show_min_rate" type="number" min="0" step="1"></label>
+              <label>Weekly Calls Goal<input name="weekly_calls_booked_goal" type="number" min="0" step="1"></label>
+              <button class="action primary" type="submit">Save Targets</button>
+            </form>
           </section>
 
           <section class="more-panel" id="more-tester" hidden>
@@ -7807,6 +8579,18 @@ function renderModernHomePage() {
         <button class="companion-close" id="dm-companion-close" type="button" aria-label="Close DM Companion">x</button>
       </header>
       <div class="companion-thread" id="dm-companion-thread"></div>
+      <section class="appointment-panel" id="dm-appointment-panel" hidden>
+        <div class="panel-head">
+          <h2>Call Outcome</h2>
+          <span class="panel-note" id="dm-appointment-status">Unknown</span>
+        </div>
+        <div class="appointment-actions">
+          <button class="action" type="button" data-appointment-status="showed">Showed</button>
+          <button class="action" type="button" data-appointment-status="no_show">No Show</button>
+          <button class="action" type="button" data-appointment-status="rescheduled">Rescheduled</button>
+          <button class="action" type="button" data-appointment-status="cancelled">Cancelled</button>
+        </div>
+      </section>
       <form class="companion-composer" id="dm-companion-form">
         <textarea id="dm-companion-text" aria-label="Manual Instagram reply" maxlength="1200" placeholder="Type a short, natural reply..."></textarea>
         <div class="companion-actions">
@@ -7819,7 +8603,7 @@ function renderModernHomePage() {
 
   <script>
     const state = {
-      timeframe: "24h",
+      timeframe: "7d",
       conversations: [],
       activeConversationKey: "",
       mobileScreen: "pulse",
@@ -7827,7 +8611,8 @@ function renderModernHomePage() {
       inboxSearch: "",
       latestStats: null,
       latestDrafts: [],
-      latestEvents: []
+      latestEvents: [],
+      latestAnalytics: null
     };
     const conversationsEl = document.getElementById("conversations");
     const draftsEl = document.getElementById("drafts");
@@ -7855,10 +8640,18 @@ function renderModernHomePage() {
     const companionCloseEl = document.getElementById("dm-companion-close");
     const companionBookingEl = document.getElementById("dm-companion-booking");
     const companionSendEl = document.getElementById("dm-companion-send");
+    const companionAppointmentPanelEl = document.getElementById("dm-appointment-panel");
+    const companionAppointmentStatusEl = document.getElementById("dm-appointment-status");
     const mobileCallsBookedEl = document.getElementById("mobile-calls-booked");
     const mobileLeadsEl = document.getElementById("mobile-leads");
     const mobileLinksSentEl = document.getElementById("mobile-links-sent");
     const mobileLinkClicksEl = document.getElementById("mobile-link-clicks");
+    const mobileTouchPitchEl = document.getElementById("mobile-touch-pitch");
+    const mobilePitchBookEl = document.getElementById("mobile-pitch-book");
+    const mobileShowRateEl = document.getElementById("mobile-show-rate");
+    const mobileDiagnosisEl = document.getElementById("mobile-kpi-diagnosis");
+    const mobileDiagnosisTitleEl = document.getElementById("mobile-diagnosis-title");
+    const mobileDiagnosisMessageEl = document.getElementById("mobile-diagnosis-message");
     const mobileAttentionCountEl = document.getElementById("mobile-attention-count");
     const mobileNeedsAttentionEl = document.getElementById("mobile-needs-attention");
     const mobileHealthEl = document.getElementById("mobile-bot-health");
@@ -7876,6 +8669,12 @@ function renderModernHomePage() {
     const mobileDraftsCountEl = document.getElementById("mobile-drafts-count");
     const mobileFullKpisEl = document.getElementById("mobile-full-kpis");
     const mobileFullFunnelEl = document.getElementById("mobile-full-funnel");
+    const analyticsRangeEl = document.getElementById("analytics-range");
+    const analyticsGroupEl = document.getElementById("analytics-group");
+    const analyticsStartEl = document.getElementById("analytics-start");
+    const analyticsEndEl = document.getElementById("analytics-end");
+    const analyticsBreakdownEl = document.getElementById("analytics-breakdown");
+    const kpiTargetFormEl = document.getElementById("kpi-target-form");
     const mobileAutomationEventsEl = document.getElementById("mobile-automation-events");
     const mobileTestButton = document.getElementById("mobile-test-button");
     const mobileTestTranscript = document.getElementById("mobile-test-transcript");
@@ -7957,9 +8756,13 @@ function renderModernHomePage() {
     }
 
     function primaryConversationState(conversation) {
+      if (conversation.appointment_status === "showed") return { label: "Showed", tone: "booked" };
+      if (conversation.appointment_status === "no_show") return { label: "No Show", tone: "needs" };
+      if (conversation.appointment_status === "rescheduled") return { label: "Rescheduled", tone: "paused" };
       if (conversation.booking_confirmed) return { label: "Booked", tone: "booked" };
       if (conversation.ai_paused || conversation.manual_takeover_active) return { label: "Paused", tone: "paused" };
       if (needsHumanAttention(conversation)) return { label: "Needs You", tone: "needs" };
+      if (conversation.call_pitched) return { label: "Pitched", tone: "link" };
       if (conversation.booking_link_sent) return { label: "Link Sent", tone: "link" };
       return { label: "AI Active", tone: "active" };
     }
@@ -7995,16 +8798,14 @@ function renderModernHomePage() {
     }
 
     function renderKpis(data) {
-      const funnel = data.funnel || {};
-      const touchpoints = data.touchpoints || {};
-      const totalDms = Math.max(Number((data.timeframe_stats || {}).prospects_touched || 0), Number(funnel.total_leads || 0));
+      const kpis = data.setter_kpis || {};
       const cards = [
-        ["Accounts Interacted", touchpoints.accounts_interacted || 0, timeframeLabel(state.timeframe)],
-        ["Accounts Reached", touchpoints.accounts_reached || 0, "outbound touchpoints"],
-        ["Total IG Leads Captured", funnel.total_leads || totalDms || 0, "conversation memory"],
-        ["Booking Links Sent", funnel.booking_links_sent || 0, percent(funnel.link_sent_rate || 0) + " of leads"],
-        ["Booking Link Clicks", funnel.booking_link_clicks || 0, percent(funnel.click_through_rate || 0) + " CTR"],
-        ["Discovery Calls Scheduled", funnel.appointments_scheduled || 0, percent(funnel.booking_conversion_rate || 0) + " conversion"]
+        ["Touch Points", kpis.touch_points || 0, timeframeLabel(state.timeframe)],
+        ["Calls Pitched", kpis.calls_pitched || 0, percent(kpis.touch_to_pitch_rate || 0) + " touch -> pitch"],
+        ["Calls Booked", kpis.calls_booked || 0, percent(kpis.pitch_to_book_rate || 0) + " pitch -> book"],
+        ["Calls Showed", kpis.calls_showed || 0, percent(kpis.book_to_show_rate || 0) + " show rate"],
+        ["Needs You", attentionConversations().length, "manual review"],
+        ["Touch -> Book", percent(kpis.touch_to_book_rate || 0), "overall conversion"]
       ];
       kpisEl.innerHTML = "";
       cards.forEach(([label, value, detail]) => {
@@ -8022,16 +8823,14 @@ function renderModernHomePage() {
     }
 
     function metricCards(data) {
-      const funnel = data.funnel || {};
-      const touchpoints = data.touchpoints || {};
-      const totalDms = Math.max(Number((data.timeframe_stats || {}).prospects_touched || 0), Number(funnel.total_leads || 0));
+      const kpis = data.setter_kpis || {};
       return [
-        ["Accounts Interacted", touchpoints.accounts_interacted || 0, timeframeLabel(state.timeframe)],
-        ["Accounts Reached", touchpoints.accounts_reached || 0, "outbound touchpoints"],
-        ["Total IG Leads Captured", funnel.total_leads || totalDms || 0, "conversation memory"],
-        ["Booking Links Sent", funnel.booking_links_sent || 0, percent(funnel.link_sent_rate || 0) + " of leads"],
-        ["Booking Link Clicks", funnel.booking_link_clicks || 0, percent(funnel.click_through_rate || 0) + " CTR"],
-        ["Discovery Calls Scheduled", funnel.appointments_scheduled || 0, percent(funnel.booking_conversion_rate || 0) + " conversion"]
+        ["Touch Points", kpis.touch_points || 0, timeframeLabel(state.timeframe)],
+        ["Calls Pitched", kpis.calls_pitched || 0, percent(kpis.touch_to_pitch_rate || 0) + " touch -> pitch"],
+        ["Calls Booked", kpis.calls_booked || 0, percent(kpis.pitch_to_book_rate || 0) + " pitch -> book"],
+        ["Calls Showed", kpis.calls_showed || 0, percent(kpis.book_to_show_rate || 0) + " show rate"],
+        ["No Shows", kpis.no_shows || 0, "manual outcomes"],
+        ["Touch -> Book", percent(kpis.touch_to_book_rate || 0), "overall conversion"]
       ];
     }
 
@@ -8053,13 +8852,12 @@ function renderModernHomePage() {
     }
 
     function renderFunnel(data) {
-      const funnel = data.funnel || {};
+      const kpis = data.setter_kpis || {};
       const stages = [
-        ["IG Leads", funnel.total_leads || 0],
-        ["AI Replied", funnel.ai_replied || 0],
-        ["Link Sent", funnel.booking_links_sent || 0],
-        ["Link Clicked", funnel.booking_link_clicks || 0],
-        ["Call Booked", funnel.appointments_scheduled || 0]
+        ["Touch Points", kpis.touch_points || 0],
+        ["Calls Pitched", kpis.calls_pitched || 0],
+        ["Calls Booked", kpis.calls_booked || 0],
+        ["Calls Showed", kpis.calls_showed || 0]
       ];
       const max = Math.max(...stages.map(([, value]) => Number(value || 0)), 1);
       funnelEl.innerHTML = "";
@@ -8081,13 +8879,12 @@ function renderModernHomePage() {
 
     function renderFunnelInto(target, data) {
       if (!target) return;
-      const funnel = data.funnel || {};
+      const kpis = data.setter_kpis || {};
       const stages = [
-        ["Leads", funnel.total_leads || 0],
-        ["AI Replied", funnel.ai_replied || 0],
-        ["Link Sent", funnel.booking_links_sent || 0],
-        ["Clicked", funnel.booking_link_clicks || 0],
-        ["Booked", funnel.appointments_scheduled || 0]
+        ["Touch", kpis.touch_points || 0],
+        ["Pitch", kpis.calls_pitched || 0],
+        ["Book", kpis.calls_booked || 0],
+        ["Show", kpis.calls_showed || 0]
       ];
       const max = Math.max(...stages.map(([, value]) => Number(value || 0)), 1);
       target.innerHTML = "";
@@ -8116,7 +8913,8 @@ function renderModernHomePage() {
 
     function renderMobilePulse(data) {
       if (!data) return;
-      const funnel = data.funnel || {};
+      const kpis = data.setter_kpis || {};
+      const diagnosis = data.kpi_diagnosis || {};
       const settings = data.settings || {};
       const attentionCount = attentionConversations().length;
       const lastActivity = state.conversations
@@ -8133,20 +8931,26 @@ function renderModernHomePage() {
         : "One or more connection/settings checks need attention.";
       mobileViewIssueEl.hidden = healthy;
 
-      mobileCallsBookedEl.textContent = funnel.appointments_scheduled || 0;
-      mobileLeadsEl.textContent = funnel.total_leads || 0;
-      mobileLinksSentEl.textContent = funnel.booking_links_sent || 0;
-      mobileLinkClicksEl.textContent = funnel.booking_link_clicks || 0;
+      mobileCallsBookedEl.textContent = kpis.calls_booked || 0;
+      mobileLeadsEl.textContent = kpis.touch_points || 0;
+      mobileLinksSentEl.textContent = kpis.calls_pitched || 0;
+      mobileLinkClicksEl.textContent = kpis.calls_showed || 0;
+      mobileTouchPitchEl.textContent = percent(kpis.touch_to_pitch_rate || 0);
+      mobilePitchBookEl.textContent = percent(kpis.pitch_to_book_rate || 0);
+      mobileShowRateEl.textContent = percent(kpis.book_to_show_rate || 0);
       mobileAttentionCountEl.textContent = attentionCount;
       mobileFunnelSummaryEl.textContent =
-        (funnel.total_leads || 0) +
-        " Leads -> " +
-        (funnel.ai_replied || 0) +
-        " Replies -> " +
-        (funnel.booking_links_sent || 0) +
-        " Links -> " +
-        (funnel.appointments_scheduled || 0) +
-        " Calls";
+        (kpis.touch_points || 0) +
+        " Touch -> " +
+        (kpis.calls_pitched || 0) +
+        " Pitch -> " +
+        (kpis.calls_booked || 0) +
+        " Book -> " +
+        (kpis.calls_showed || 0) +
+        " Show";
+      mobileDiagnosisEl.className = "mobile-diagnosis " + (diagnosis.level || "ok");
+      mobileDiagnosisTitleEl.textContent = diagnosis.title || "Setter flow is healthy";
+      mobileDiagnosisMessageEl.textContent = diagnosis.message || "Waiting for enough DM activity to diagnose.";
       renderFunnelInto(mobileFunnelDetailEl, data);
       renderMetricCards(mobileFullKpisEl, data);
       renderFunnelInto(mobileFullFunnelEl, data);
@@ -8263,6 +9067,11 @@ function renderModernHomePage() {
         String(conversation.lead_status || "cold").replace("_", " ") +
         " | " +
         (conversation.manual_takeover_active ? "manual takeover active" : "AI available");
+      if (companionAppointmentPanelEl) {
+        companionAppointmentPanelEl.hidden = !conversation.booking_confirmed && !conversation.call_pitched;
+        companionAppointmentStatusEl.textContent =
+          String(conversation.appointment_status || "unknown").replace("_", " ");
+      }
       companionThreadEl.innerHTML = "";
 
       const messages = Array.isArray(conversation.recent_messages) ? conversation.recent_messages : [];
@@ -8271,6 +9080,7 @@ function renderModernHomePage() {
         empty.className = "empty";
         empty.textContent = "No saved messages for this lead yet.";
         companionThreadEl.appendChild(empty);
+        companionThreadEl.scrollTop = companionThreadEl.scrollHeight;
         return;
       }
 
@@ -8530,10 +9340,19 @@ function renderModernHomePage() {
           .join(" ")
           .toLowerCase();
         const matchesSearch = !search || haystack.includes(search);
+        const followUpDue = Boolean(conversation.follow_up && conversation.follow_up.next_due_at);
+        const pitchedNotBooked =
+          (conversation.call_pitched || conversation.booking_link_sent) &&
+          !conversation.booking_confirmed;
         const matchesFilter =
           state.inboxFilter === "all" ||
           (state.inboxFilter === "needs" && needsHumanAttention(conversation)) ||
-          (state.inboxFilter === "booked" && conversation.booking_confirmed);
+          (state.inboxFilter === "pitched" && (conversation.call_pitched || conversation.booking_link_sent)) ||
+          (state.inboxFilter === "not_booked" && pitchedNotBooked) ||
+          (state.inboxFilter === "booked" && conversation.booking_confirmed) ||
+          (state.inboxFilter === "showed" && conversation.appointment_status === "showed") ||
+          (state.inboxFilter === "no_show" && conversation.appointment_status === "no_show") ||
+          (state.inboxFilter === "follow_up_due" && followUpDue);
         return matchesSearch && matchesFilter;
       });
 
@@ -8546,6 +9365,8 @@ function renderModernHomePage() {
         empty.textContent =
           state.inboxFilter === "needs"
             ? "Nothing needs you right now."
+            : state.inboxFilter === "not_booked"
+              ? "No pitched-but-not-booked conversations in this view."
             : "No conversations match this view yet.";
         mobileInboxListEl.appendChild(empty);
         return;
@@ -8753,6 +9574,63 @@ function renderModernHomePage() {
       });
     }
 
+    function renderAnalyticsBreakdown(analytics) {
+      if (!analyticsBreakdownEl) return;
+      const rows = analytics && Array.isArray(analytics.breakdown) ? analytics.breakdown.slice(-12) : [];
+      analyticsBreakdownEl.innerHTML = "";
+      if (!rows.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "No KPI events in this range yet.";
+        analyticsBreakdownEl.appendChild(empty);
+        return;
+      }
+      rows.forEach((row) => {
+        const item = document.createElement("article");
+        item.innerHTML =
+          "<strong>" +
+          row.key +
+          "</strong><span>" +
+          (row.touch_points || 0) +
+          " touches · " +
+          (row.calls_pitched || 0) +
+          " pitched · " +
+          (row.calls_booked || 0) +
+          " booked · " +
+          (row.calls_showed || 0) +
+          " showed</span>";
+        analyticsBreakdownEl.appendChild(item);
+      });
+    }
+
+    function analyticsQuery() {
+      const range = analyticsRangeEl ? analyticsRangeEl.value : state.timeframe;
+      const group = analyticsGroupEl ? analyticsGroupEl.value : "day";
+      const params = new URLSearchParams({ range, group_by: group });
+      if (range === "custom") {
+        if (analyticsStartEl && analyticsStartEl.value) params.set("start", analyticsStartEl.value);
+        if (analyticsEndEl && analyticsEndEl.value) params.set("end", analyticsEndEl.value);
+      }
+      return "?" + params.toString();
+    }
+
+    async function loadKpiAnalytics() {
+      try {
+        const analytics = await api("/api/kpi-analytics" + analyticsQuery());
+        state.latestAnalytics = analytics;
+        renderAnalyticsBreakdown(analytics);
+      } catch (error) {
+        setStatus(error.message);
+      }
+    }
+
+    function fillTargetForm(targets) {
+      if (!kpiTargetFormEl || !targets) return;
+      for (const input of kpiTargetFormEl.querySelectorAll("input[name]")) {
+        input.value = targets[input.name] ?? "";
+      }
+    }
+
     async function loadAll(silent) {
       if (!silent) setStatus("Refreshing...");
       try {
@@ -8771,9 +9649,11 @@ function renderModernHomePage() {
         state.latestStats = stats;
         state.latestDrafts = drafts.drafts || [];
         state.latestEvents = events.events || [];
+        fillTargetForm(stats.kpi_targets || {});
         renderConversations(conversations.conversations || []);
         renderMobileInbox(state.conversations);
         renderMobilePulse(stats);
+        loadKpiAnalytics();
         if (!companionEl.hidden && state.activeConversationKey) {
           renderCompanion(activeConversation());
         }
@@ -8827,6 +9707,33 @@ function renderModernHomePage() {
         renderMobileInbox(state.conversations);
       });
     });
+
+    [analyticsRangeEl, analyticsGroupEl, analyticsStartEl, analyticsEndEl].forEach((element) => {
+      if (!element) return;
+      element.addEventListener("change", loadKpiAnalytics);
+    });
+
+    if (kpiTargetFormEl) {
+      kpiTargetFormEl.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const payload = {};
+        for (const input of kpiTargetFormEl.querySelectorAll("input[name]")) {
+          payload[input.name] = Number(input.value || 0);
+        }
+        try {
+          const result = await api("/api/kpi-targets", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+          fillTargetForm(result.targets || {});
+          await loadAll(true);
+          setStatus("KPI targets saved.");
+        } catch (error) {
+          setStatus(error.message);
+        }
+      });
+    }
 
     mobileInboxSearchEl.addEventListener("input", () => {
       state.inboxSearch = mobileInboxSearchEl.value || "";
@@ -8922,6 +9829,31 @@ function renderModernHomePage() {
         companionBookingEl.disabled = false;
         companionSendEl.disabled = false;
       }
+    });
+
+    document.querySelectorAll("[data-appointment-status]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const conversation = activeConversation();
+        if (!conversation) return;
+        button.disabled = true;
+        try {
+          const data = await api("/api/conversations/" + encodeURIComponent(conversation.key) + "/appointment-status", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: button.dataset.appointmentStatus })
+          });
+          await loadAll(true);
+          if (data.conversation) {
+            state.activeConversationKey = data.conversation.key;
+            renderCompanion(data.conversation);
+          }
+          setStatus("Call outcome saved.");
+        } catch (error) {
+          setStatus(error.message);
+        } finally {
+          button.disabled = false;
+        }
+      });
     });
 
     loadAll();
