@@ -44,7 +44,7 @@ const FOLLOW_UP_OFFSETS_MS = [
 ];
 const FOLLOW_UP_CHECK_MS = 60 * 1000;
 const FOLLOW_UP_WINDOW_MS = 23 * 60 * 60 * 1000;
-const APP_BUILD_MARKER = "2026-08-08-ig-style-inbox-v1";
+const APP_BUILD_MARKER = "2026-08-08-ig-inbox-tight-v1";
 const DEFAULT_KPI_TARGETS = {
   daily_touch_points_target: 100,
   touch_pitch_min_rate: 10,
@@ -7935,10 +7935,15 @@ function renderModernHomePage() {
     .mobile-search {
       background: rgba(248, 250, 252, 0.92);
       border: 0;
-      border-radius: 18px;
+      border-radius: 14px;
       color: #111827;
-      min-height: 50px;
-      padding: 0 15px;
+      display: block;
+      flex: none;
+      font-size: 16px;
+      height: 44px;
+      line-height: 44px;
+      min-height: 0;
+      padding: 0 16px;
       width: 100%;
     }
 
@@ -7947,12 +7952,35 @@ function renderModernHomePage() {
       outline: none;
     }
 
+    .mobile-inbox-tools {
+      align-items: center;
+      display: grid;
+      gap: 12px;
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    .mobile-filter-text {
+      background: transparent;
+      border: 0;
+      color: #0095f6;
+      font-size: 16px;
+      font-weight: 800;
+      min-height: 40px;
+      padding: 0;
+    }
+
     .mobile-filters {
       display: flex;
       border-bottom: 1px solid rgba(148, 163, 184, 0.18);
-      gap: 22px;
+      gap: 24px;
       overflow-x: auto;
-      padding: 4px 0 0;
+      padding: 2px 0 0;
+      scrollbar-width: none;
+      white-space: nowrap;
+    }
+
+    .mobile-filters::-webkit-scrollbar {
+      display: none;
     }
 
     .mobile-filters button {
@@ -7961,10 +7989,10 @@ function renderModernHomePage() {
       border-radius: 0;
       color: rgba(226, 232, 240, 0.62);
       flex: 0 0 auto;
-      font-size: 15px;
+      font-size: 14px;
       font-weight: 900;
-      min-height: 44px;
-      padding: 0 0 10px;
+      min-height: 42px;
+      padding: 0 0 9px;
       position: relative;
     }
 
@@ -7988,7 +8016,7 @@ function renderModernHomePage() {
     .more-menu,
     .mobile-control-list {
       display: grid;
-      gap: 10px;
+      gap: 0;
     }
 
     .mobile-thread-row {
@@ -8000,8 +8028,8 @@ function renderModernHomePage() {
       display: grid;
       gap: 12px;
       grid-template-columns: 58px minmax(0, 1fr) 34px;
-      min-height: 82px;
-      padding: 11px 0;
+      min-height: 74px;
+      padding: 9px 0;
       text-align: left;
       width: 100%;
     }
@@ -8178,12 +8206,27 @@ function renderModernHomePage() {
       }
 
       #mobile-inbox-screen.active {
+        align-content: start;
         background: #fff;
         border-radius: 24px;
         color: #050505;
+        display: grid;
+        gap: 10px;
+        grid-template-rows: auto auto auto minmax(0, 1fr);
         margin: -4px -4px 0;
         min-height: calc(100dvh - 126px);
-        padding: 16px 16px 18px;
+        padding: 12px 16px 18px;
+      }
+
+      #mobile-inbox-screen .mobile-header {
+        display: grid;
+        gap: 2px;
+      }
+
+      #mobile-inbox-screen .mobile-header.compact h1 {
+        font-size: 28px;
+        line-height: 1.05;
+        margin: 0;
       }
 
       #mobile-inbox-screen .mobile-header h1,
@@ -8195,6 +8238,34 @@ function renderModernHomePage() {
       #mobile-inbox-screen .thread-preview,
       #mobile-inbox-screen .thread-time {
         color: #8e8e93;
+      }
+
+      #mobile-inbox-screen .mobile-header p {
+        font-size: 12px;
+        margin: 0;
+      }
+
+      #mobile-inbox-screen .mobile-search {
+        background: #f1f2f5;
+        box-shadow: none;
+        color: #050505;
+        height: 42px;
+        margin: 4px 0 0;
+      }
+
+      #mobile-inbox-screen .mobile-inbox-list {
+        align-content: start;
+        min-height: 0;
+        overflow: auto;
+      }
+
+      #mobile-inbox-screen .empty {
+        background: transparent;
+        border: 0;
+        color: #8e8e93;
+        font-size: 13px;
+        margin-top: 18px;
+        padding: 14px 8px;
       }
 
       #mobile-inbox-screen .mobile-filters {
@@ -8581,7 +8652,10 @@ function renderModernHomePage() {
             <h1>Inbox</h1>
             <p id="mobile-inbox-count">0 conversations</p>
           </div>
-          <input class="mobile-search" id="mobile-inbox-search" type="search" placeholder="Search conversations" aria-label="Search conversations">
+          <div class="mobile-inbox-tools">
+            <input class="mobile-search" id="mobile-inbox-search" type="search" placeholder="Search" aria-label="Search conversations">
+            <button class="mobile-filter-text" type="button" data-inbox-filter-jump>Filter</button>
+          </div>
           <div class="mobile-filters" aria-label="Inbox filters">
             <button type="button" data-inbox-filter="initial" class="active">Initial Contact</button>
             <button type="button" data-inbox-filter="pitched">Pitched</button>
@@ -9928,6 +10002,16 @@ function renderModernHomePage() {
       button.addEventListener("click", () => {
         state.inboxFilter = button.dataset.inboxFilter;
         document.querySelectorAll("[data-inbox-filter]").forEach((item) => item.classList.toggle("active", item === button));
+        renderMobileInbox(state.conversations);
+      });
+    });
+
+    document.querySelectorAll("[data-inbox-filter-jump]").forEach((button) => {
+      button.addEventListener("click", () => {
+        state.inboxFilter = "needs";
+        document.querySelectorAll("[data-inbox-filter]").forEach((item) => {
+          item.classList.toggle("active", item.dataset.inboxFilter === "needs");
+        });
         renderMobileInbox(state.conversations);
       });
     });
