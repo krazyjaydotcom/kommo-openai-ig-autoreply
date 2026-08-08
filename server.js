@@ -17,7 +17,7 @@ const KNOWLEDGE_FILE = path.join(__dirname, "knowledge", "pallet-pros.md");
 const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
 const ZERNIO_BASE_URL = "https://zernio.com/api/v1";
 const YOUTUBE_URL = "https://youtube.com/@palletprosacademy";
-const BOOKING_URL = "https://www.tidycal.com/palletprosga/discovery";
+const BOOKING_URL = "https://www.tidycal.com/palletprosga/15-minute-meeting";
 const TRACKED_BOOKING_BASE_URL =
   process.env.TRACKED_BOOKING_BASE_URL || "https://go.palletprosacademy.com/discovery";
 const META_GRAPH_VERSION = process.env.META_GRAPH_VERSION || "v20.0";
@@ -43,7 +43,7 @@ const FOLLOW_UP_OFFSETS_MS = [
 ];
 const FOLLOW_UP_CHECK_MS = 60 * 1000;
 const FOLLOW_UP_WINDOW_MS = 23 * 60 * 60 * 1000;
-const APP_BUILD_MARKER = "2026-08-08-short-calendar-links-v1";
+const APP_BUILD_MARKER = "2026-08-08-booking-flow-v1";
 const INCOMING_REPLY_DEBOUNCE_MS = Math.max(
   0,
   numberEnv("INCOMING_REPLY_DEBOUNCE_MS", 12_000)
@@ -113,6 +113,10 @@ Core appointment-setting objective:
 - Do not add extra qualification questions after a clear "I want to start" unless their message includes a real question or important context that needs a brief answer first.
 - When a prospect gives a lot of context, mirror one concrete detail, answer one useful point, then steer back to a call where you can research their market and see whether the academy fits.
 - The DM should feel like a confident human appointment setter, not a course explainer, FAQ bot, or coach.
+- Primary goal: move people interested in starting a pallet business toward booking a Zoom consultation with Pallet Pros Academy.
+- Keep the path extremely simple: interested in pallet business -> invite them to Zoom -> ask permission to send calendar -> they agree -> send calendar link.
+- Do not over-qualify in DMs. Do not ask a long series of questions. Do not teach the entire pallet business through Instagram messages.
+- Once the prospect gives permission to receive the calendar link, sending the link becomes the highest-priority action. Never qualify more first, never ask if they are still interested, and never ask the booking question again.
 
 Disqualify or redirect immediately to https://youtube.com/@palletprosacademy and do not continue qualifying if the person:
 - Is unemployed with no capital or real plan.
@@ -127,13 +131,13 @@ Treat the lead as warmer if the person already:
 - Says they want to start, want to learn the business, wants insight, or wants an appointment.
 
 Best-performing DM flow:
-1. First touch, if there is no prior context: "Thanks for the follow. Are you here for the content, or are you looking to start your own pallet business?"
+1. First touch, if there is no prior context: "Yoo 👋 Thanks for the follow! Are you just here for the content or are you wanting to start your own pallet business?"
 2. If they ask questions, answer briefly and naturally. Do not ignore the question just to push the call.
 3. If they give useful context, mirror one specific detail so they feel heard.
 4. If they are only lightly curious or vague, ask one open-ended question like: "Is this business something you'd be interested in pursuing?"
-5. If they say yes or clearly show they want to pursue it, invite them to a Zoom/discovery call so you can research their area, answer their questions, and see if Pallet Pros Academy would be a good fit for their goals.
+5. If they say yes or clearly show they want to pursue it, say: "Great. Let's get on a Zoom call this week. That way we can research your market, answer any questions you have and see if you'd be a good fit for the program. Do you mind if I send you a link to my calendar?"
 6. Before sending the calendar link, ask permission in one short question: "Do you mind if I send you a link to my calendar?"
-7. If they say yes, send the booking link and tell them to choose a date/time that works for them.
+7. If they say yes, do not ask anything else. Send: "Great. Give me one sec and I'll grab that link for you. 💯\n\nHere's the link to my calendar 🗓️ - https://www.tidycal.com/palletprosga/15-minute-meeting"
 8. If they ask for a call, appointment, consultation, details, or scheduling directly, it is okay to send the booking link without asking permission again.
 9. If they mention a day/time instead of booking through the link, politely tell them to use the link to choose their time.
 10. If they ask for a direct phone call or share their phone number, tell them to book through the link instead.
@@ -150,6 +154,9 @@ Reply length rules:
 - If the prospect asks a question inside their message, answer that question before asking them to book or sending the calendar link.
 - If they ask multiple questions, answer the most important one briefly and then guide them to the call.
 - Do not repeat the same calendar ask, greeting, link message, or qualifying question in back-to-back replies.
+- Treat agreement broadly. "Yes", "yeah", "yep", "sure", "sureee", "that's fine", "fine", "ok", "okay", "absolutely", "send it", "send me the link", "go ahead", "let's do it", "I'm down", "that works", "bet", "I'm interested", "sounds good", "when are you available?", "how do I book?", "can we talk?", and "yes that is fine" all mean send the calendar link now.
+- If they ask what the call is about, say: "We'll take a look at your local market, talk about how the pallet business works, answer your questions and see if Pallet Pros Academy makes sense for what you're trying to build." Then ask: "Want me to send you the calendar link?"
+- If they ask about price before booking, say: "We have a few different options depending on the level of help you're looking for. The easiest thing is for us to talk for a few minutes, learn what you're trying to do, and point you in the right direction." Then ask: "Want me to send you the calendar link?"
 
 Standing facts:
 - Location: Marietta, Georgia, city/state only.
@@ -158,7 +165,7 @@ Standing facts:
 - Income: do not guarantee or imply typical income. If asked, frame this as one personal example only: "As an example, my own business runs around $400k/year in revenue, and I personally pay myself around $75k/year, but it did not start there, and results vary based on effort and market."
 - Program pricing: do not quote one fixed number. Say it depends on the individual and how much success they are prepared to have in the business. If they push for a range, solutions start as low as $37/month for people who are not business owners yet, up to $5,500 for existing business owners.
 - Calls: do not accept direct phone calls. If they want a call, the best way is to book time on the calendar:
-  https://www.tidycal.com/palletprosga/discovery
+  https://www.tidycal.com/palletprosga/15-minute-meeting
 
 Return only valid JSON in this exact shape:
 {
@@ -1501,7 +1508,7 @@ function updateQuestionMemory(memory, text) {
 function appointmentSetterCalendarAskReply() {
   return {
     reply:
-      "Great. Let's get on a Zoom call this week so we can research your market, answer your questions, and see if the academy fits your goals.\n\nDo you mind if I send the calendar link?",
+      "Great. Let's get on a Zoom call this week. That way we can research your market, answer any questions you have and see if you'd be a good fit for the program.\n\nDo you mind if I send you a link to my calendar?",
     needs_review: false,
     handled: true
   };
@@ -1594,8 +1601,8 @@ function withTrackedBookingUrl(replyText, messageLike = {}) {
 function appointmentSetterCalendarLinkReply(messageLike) {
   const calendarUrl = trackedBookingUrl(messageLike);
   const messages = [
-    `Solid. Here's the calendar: ${calendarUrl}`,
-    "Choose a date/time that works for you, and I'll verify it on my end."
+    "Great. Give me one sec and I'll grab that link for you. 💯",
+    `Here's the link to my calendar 🗓️ - ${calendarUrl}`
   ];
 
   return {
@@ -1635,7 +1642,7 @@ function appointmentSetterContentReply() {
 function appointmentSetterCostReply() {
   return {
     reply:
-      "It depends on where you're starting and what kind of help you need. The call is the best way to see what makes sense for you. Want me to send the calendar link?",
+      "We have a few different options depending on the level of help you're looking for. The easiest thing is for us to talk for a few minutes, learn what you're trying to do, and point you in the right direction.\n\nWant me to send you the calendar link?",
     needs_review: false,
     handled: true
   };
@@ -1644,7 +1651,7 @@ function appointmentSetterCostReply() {
 function appointmentSetterHowItWorksReply() {
   return {
     reply:
-      "The short version is we help you understand how to source, move, and sell pallets in your area. Want to hop on a quick Zoom so we can look at your market?",
+      "We'll take a look at your local market, talk about how the pallet business works, answer your questions and see if Pallet Pros Academy makes sense for what you're trying to build.\n\nWant me to send you the calendar link?",
     needs_review: false,
     handled: true
   };
@@ -1694,8 +1701,14 @@ function appointmentSetterWarmQualifierReply() {
 }
 
 function yesToCalendarLink(text) {
-  return /^(yes|yea|yeah|yep|sure|of course|that's fine|that is fine|ok|okay|please|send it|sounds good|lets do it|let's do it)\b/i.test(
-    String(text || "").trim()
+  const cleanText = String(text || "")
+    .toLowerCase()
+    .replace(/[^\w\s']/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return /^(yes|yea|yeah|yep|yup|sure|suree+|of course|that's fine|that is fine|fine|ok|okay|absolutely|please|send it|send me the link|go ahead|sounds good|that works|bet|i'm interested|im interested|interested|i'm down|im down|lets do it|let's do it|when are you available|how do i book|can we talk|yes that is fine)\b/i.test(
+    cleanText
   );
 }
 
@@ -1729,6 +1742,12 @@ function asksPriceOrCost(text) {
 
 function asksHowItWorks(text) {
   return /\b(how does (?:this|it|the business) work|how.*pallet.*work|what is the pallet business|explain.*pallet|what.*business model)\b/i.test(
+    String(text || "")
+  );
+}
+
+function asksWhatCallIsAbout(text) {
+  return /\b(what(?:'s| is)? (?:the )?(?:call|zoom|meeting|consultation|consult) (?:about|for)|what do we talk about|what will we discuss|what happens on (?:the )?(?:call|zoom|meeting))\b/i.test(
     String(text || "")
   );
 }
@@ -1924,6 +1943,14 @@ function appointmentSetterRuleReply(memory, incoming) {
     return null;
   }
 
+  if (
+    !memory?.booking_confirmed &&
+    lastAssistantAskedForCalendarPermission(memory) &&
+    yesToCalendarLink(text)
+  ) {
+    return appointmentSetterCalendarLinkReply(incoming);
+  }
+
   if (wantsDirectPhoneCall(text) && !hasRichProspectContext(text)) {
     return appointmentSetterPhoneReply(memory, incoming);
   }
@@ -1940,7 +1967,7 @@ function appointmentSetterRuleReply(memory, incoming) {
     return appointmentSetterCostReply();
   }
 
-  if (asksHowItWorks(text)) {
+  if (asksHowItWorks(text) || asksWhatCallIsAbout(text)) {
     return appointmentSetterHowItWorksReply();
   }
 
@@ -1994,14 +2021,6 @@ function appointmentSetterRuleReply(memory, incoming) {
   }
 
   if (
-    lastAssistantAskedForCalendarPermission(memory) &&
-    yesToCalendarLink(text) &&
-    !hasRichProspectContext(text)
-  ) {
-    return appointmentSetterCalendarLinkReply(incoming);
-  }
-
-  if (
     wantsContentOnly(text) &&
     !hasClearStartIntent(text) &&
     !wantsAppointmentOrScheduling(text) &&
@@ -2011,7 +2030,7 @@ function appointmentSetterRuleReply(memory, incoming) {
   }
 
   if (
-    isSimplePalletBusinessIntent(text) &&
+    (isSimplePalletBusinessIntent(text) || hasClearStartIntent(text)) &&
     !memory?.booking_link_sent &&
     !lastAssistantAskedForCalendarPermission(memory)
   ) {
