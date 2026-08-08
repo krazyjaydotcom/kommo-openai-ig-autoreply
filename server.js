@@ -43,7 +43,7 @@ const FOLLOW_UP_OFFSETS_MS = [
 ];
 const FOLLOW_UP_CHECK_MS = 60 * 1000;
 const FOLLOW_UP_WINDOW_MS = 23 * 60 * 60 * 1000;
-const APP_BUILD_MARKER = "2026-08-08-booking-flow-v1";
+const APP_BUILD_MARKER = "2026-08-08-mobile-app-shell-v1";
 const INCOMING_REPLY_DEBOUNCE_MS = Math.max(
   0,
   numberEnv("INCOMING_REPLY_DEBOUNCE_MS", 12_000)
@@ -7044,6 +7044,347 @@ function renderModernHomePage() {
       display: none;
     }
 
+    .mobile-shell {
+      display: none;
+    }
+
+    .ghost-link {
+      background: transparent;
+      color: var(--teal);
+      font-size: 12px;
+      font-weight: 900;
+      min-height: 34px;
+      padding: 0;
+    }
+
+    .mobile-screen {
+      display: none;
+    }
+
+    .mobile-screen.active {
+      display: grid;
+      gap: 14px;
+    }
+
+    .mobile-header h1 {
+      font-size: 32px;
+      line-height: 1;
+      margin: 0;
+    }
+
+    .mobile-header.compact h1 {
+      font-size: 28px;
+      margin-bottom: 4px;
+    }
+
+    .mobile-header p {
+      color: var(--muted);
+      font-size: 13px;
+      margin: 4px 0 0;
+    }
+
+    .bot-health {
+      align-items: center;
+      background: rgba(15, 23, 42, 0.52);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      display: flex;
+      justify-content: space-between;
+      min-height: 78px;
+      padding: 16px;
+    }
+
+    .bot-health strong {
+      align-items: center;
+      display: flex;
+      font-size: 18px;
+      gap: 10px;
+      margin-bottom: 4px;
+    }
+
+    .bot-health strong::before {
+      border-radius: 50%;
+      content: "";
+      height: 11px;
+      width: 11px;
+    }
+
+    .bot-health.ok strong::before {
+      background: var(--green);
+      box-shadow: 0 0 18px rgba(57, 223, 159, 0.52);
+    }
+
+    .bot-health.needs strong::before {
+      background: var(--red);
+      box-shadow: 0 0 18px rgba(255, 107, 122, 0.48);
+    }
+
+    .bot-health span {
+      color: var(--muted);
+      display: block;
+      font-size: 12px;
+    }
+
+    .hero-metric {
+      align-items: center;
+      background:
+        radial-gradient(circle at 80% 12%, rgba(57, 223, 159, 0.18), transparent 34%),
+        rgba(15, 23, 42, 0.56);
+      border: 1px solid rgba(57, 223, 159, 0.16);
+      border-radius: 24px;
+      display: grid;
+      justify-items: center;
+      min-height: 178px;
+      padding: 24px;
+      text-align: center;
+    }
+
+    .hero-metric strong {
+      font-size: 82px;
+      line-height: 0.9;
+    }
+
+    .hero-metric span {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 900;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .mobile-supporting-metrics {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .mobile-supporting-metrics article {
+      background: rgba(15, 23, 42, 0.46);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      min-height: 82px;
+      padding: 13px;
+    }
+
+    .mobile-supporting-metrics strong {
+      display: block;
+      font-size: 28px;
+      line-height: 1;
+      margin-bottom: 8px;
+    }
+
+    .mobile-supporting-metrics span {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 900;
+    }
+
+    .attention-row,
+    .more-menu button {
+      align-items: center;
+      background: rgba(15, 23, 42, 0.54);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      color: var(--text);
+      display: flex;
+      justify-content: space-between;
+      min-height: 58px;
+      padding: 0 16px;
+      width: 100%;
+    }
+
+    .attention-row strong {
+      color: var(--red);
+      font-size: 16px;
+    }
+
+    .mobile-funnel-card,
+    .more-panel {
+      background: rgba(15, 23, 42, 0.46);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 15px;
+    }
+
+    .funnel-summary,
+    .mobile-note {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+      margin: 0;
+    }
+
+    .mobile-search {
+      background: rgba(15, 23, 42, 0.62);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      color: var(--text);
+      min-height: 50px;
+      padding: 0 15px;
+      width: 100%;
+    }
+
+    .mobile-search:focus {
+      border-color: rgba(59, 130, 246, 0.6);
+      outline: none;
+    }
+
+    .mobile-filters {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 2px;
+    }
+
+    .mobile-filters button {
+      background: rgba(15, 23, 42, 0.54);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      color: var(--muted);
+      flex: 0 0 auto;
+      font-size: 12px;
+      font-weight: 900;
+      min-height: 40px;
+      padding: 0 15px;
+    }
+
+    .mobile-filters button.active {
+      background: #f8fafc;
+      color: #05080c;
+    }
+
+    .mobile-inbox-list,
+    .more-menu,
+    .mobile-control-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .mobile-thread-row {
+      align-items: center;
+      background: transparent;
+      border: 0;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+      color: var(--text);
+      display: grid;
+      gap: 10px;
+      grid-template-columns: 48px minmax(0, 1fr) auto;
+      min-height: 76px;
+      padding: 10px 0;
+      text-align: left;
+      width: 100%;
+    }
+
+    .mobile-thread-row .avatar {
+      height: 48px;
+      width: 48px;
+    }
+
+    .thread-name {
+      display: block;
+      font-size: 15px;
+      font-weight: 900;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .thread-preview {
+      color: var(--muted);
+      display: block;
+      font-size: 13px;
+      margin-top: 3px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .thread-side {
+      display: grid;
+      gap: 6px;
+      justify-items: end;
+    }
+
+    .thread-time {
+      color: var(--dim);
+      font-size: 11px;
+    }
+
+    .thread-state {
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 900;
+      padding: 4px 8px;
+      white-space: nowrap;
+    }
+
+    .thread-state.active { background: rgba(57, 223, 159, 0.12); color: #c9ffe9; }
+    .thread-state.needs { background: rgba(255, 107, 122, 0.14); color: #ffd7dd; }
+    .thread-state.link { background: rgba(96, 165, 250, 0.14); color: #d7e8ff; }
+    .thread-state.booked { background: rgba(57, 223, 159, 0.16); color: #c9ffe9; }
+    .thread-state.paused { background: rgba(244, 201, 93, 0.14); color: #ffe7a3; }
+
+    .more-menu button {
+      font-size: 15px;
+      font-weight: 850;
+    }
+
+    .more-menu span,
+    .more-menu strong {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .mobile-control {
+      align-items: center;
+      background: rgba(15, 23, 42, 0.52);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      color: var(--text);
+      display: grid;
+      gap: 3px;
+      grid-template-columns: minmax(0, 1fr) auto;
+      min-height: 64px;
+      padding: 12px 14px;
+      text-align: left;
+      width: 100%;
+    }
+
+    .mobile-control small {
+      color: var(--muted);
+      display: block;
+      font-size: 11px;
+      margin-top: 3px;
+    }
+
+    .switch-dot {
+      background: rgba(148, 163, 184, 0.58);
+      border-radius: 999px;
+      height: 26px;
+      position: relative;
+      width: 46px;
+    }
+
+    .switch-dot::after {
+      background: #fff;
+      border-radius: 50%;
+      content: "";
+      height: 20px;
+      left: 3px;
+      position: absolute;
+      top: 3px;
+      transition: transform 160ms ease;
+      width: 20px;
+    }
+
+    .mobile-control.on .switch-dot {
+      background: var(--green);
+    }
+
+    .mobile-control.on .switch-dot::after {
+      transform: translateX(20px);
+    }
+
     @media (prefers-color-scheme: light) {
       :root {
         color-scheme: dark;
@@ -7060,11 +7401,15 @@ function renderModernHomePage() {
       }
 
       .main {
-        padding: 18px 14px 90px;
+        padding: max(18px, env(safe-area-inset-top)) 16px 92px;
       }
 
-      .topbar {
-        display: grid;
+      .desktop-shell {
+        display: none !important;
+      }
+
+      .mobile-shell {
+        display: block;
       }
 
       .status-stack {
@@ -7081,13 +7426,13 @@ function renderModernHomePage() {
       .bottom-nav {
         background: rgba(5, 9, 13, 0.92);
         backdrop-filter: blur(20px);
-        border: 1px solid var(--border);
-        border-radius: 12px 12px 0 0;
+        border-top: 1px solid var(--border);
+        border-radius: 18px 18px 0 0;
         bottom: 0;
         display: grid;
-        grid-template-columns: repeat(4, 1fr);
+        grid-template-columns: repeat(3, 1fr);
         left: 0;
-        padding: 7px 8px max(7px, env(safe-area-inset-bottom));
+        padding: 8px 10px max(8px, env(safe-area-inset-bottom));
         position: fixed;
         right: 0;
         z-index: 20;
@@ -7102,6 +7447,48 @@ function renderModernHomePage() {
         min-height: 52px;
         padding: 5px 3px;
       }
+
+      .companion-backdrop {
+        background: var(--bg);
+        backdrop-filter: none;
+        padding: 0;
+        z-index: 80;
+      }
+
+      .companion {
+        border: 0;
+        border-radius: 0;
+        height: 100dvh;
+        max-width: none;
+        width: 100%;
+      }
+
+      .companion-head {
+        grid-template-columns: 42px minmax(0, 1fr) 42px;
+        padding: max(14px, env(safe-area-inset-top)) 14px 12px;
+      }
+
+      .companion-head .avatar {
+        height: 42px;
+        width: 42px;
+      }
+
+      .companion-close {
+        order: -1;
+      }
+
+      .companion-thread {
+        padding: 14px;
+      }
+
+      .companion-composer {
+        padding: 12px 12px max(12px, env(safe-area-inset-bottom));
+      }
+
+      .companion-composer textarea {
+        min-height: 52px;
+        resize: none;
+      }
     }
 
     @media (max-width: 560px) {
@@ -7111,11 +7498,13 @@ function renderModernHomePage() {
       }
 
       .timeframe {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
+        display: flex;
+        flex-wrap: nowrap;
+        overflow-x: auto;
       }
 
       .timeframe button {
+        flex: 1 0 auto;
         min-height: 44px;
         padding: 0 8px;
       }
@@ -7146,23 +7535,43 @@ function renderModernHomePage() {
         grid-template-columns: 1fr;
       }
 
-      .companion-backdrop {
-        padding: 0;
-      }
-
-      .companion {
-        border-radius: 0;
-        max-width: none;
-        width: 100%;
-      }
-
-      .companion-head {
-        padding-top: max(14px, env(safe-area-inset-top));
-      }
-
       .companion-actions {
         display: grid;
         grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 430px) {
+      .hero-metric {
+        min-height: 154px;
+      }
+
+      .hero-metric strong {
+        font-size: 70px;
+      }
+
+      .mobile-supporting-metrics {
+        gap: 8px;
+      }
+
+      .mobile-supporting-metrics article {
+        padding: 11px;
+      }
+    }
+
+    @media (max-width: 360px) {
+      .main {
+        padding-left: 8px;
+        padding-right: 8px;
+      }
+
+      .mobile-supporting-metrics strong {
+        font-size: 24px;
+      }
+
+      .thread-state {
+        font-size: 9px;
+        padding: 4px 6px;
       }
     }
   </style>
@@ -7183,7 +7592,7 @@ function renderModernHomePage() {
     </aside>
 
     <main class="main">
-      <section class="topbar" id="dashboard">
+      <section class="topbar desktop-shell" id="dashboard">
         <div>
           <p class="eyebrow">Instagram auto-reply and analytics</p>
           <h1>Your Lead Pulse</h1>
@@ -7198,7 +7607,122 @@ function renderModernHomePage() {
         </div>
       </section>
 
-      <section class="timeframe" aria-label="Timeframe selector">
+      <section class="mobile-shell">
+        <section class="mobile-screen active" data-screen="pulse" id="mobile-pulse">
+          <div class="mobile-header">
+            <p class="eyebrow">Pallet Pros</p>
+            <h1>Your Lead Pulse</h1>
+          </div>
+
+          <section class="bot-health ok" id="mobile-bot-health">
+            <div>
+              <strong id="mobile-health-label">Bot Working</strong>
+              <span id="mobile-health-detail">Checking latest activity...</span>
+            </div>
+            <button class="ghost-link" id="mobile-view-issue" type="button" hidden>View Issue</button>
+          </section>
+
+          <section class="timeframe mobile-timeframe" aria-label="Mobile timeframe selector">
+            <button type="button" data-range="24h" class="active">Today</button>
+            <button type="button" data-range="7d">7 Days</button>
+            <button type="button" data-range="30d">30 Days</button>
+          </section>
+
+          <section class="hero-metric">
+            <strong id="mobile-calls-booked">0</strong>
+            <span>Calls Booked</span>
+          </section>
+
+          <section class="mobile-supporting-metrics" aria-label="Supporting metrics">
+            <article><strong id="mobile-leads">0</strong><span>Leads</span></article>
+            <article><strong id="mobile-links-sent">0</strong><span>Links Sent</span></article>
+            <article><strong id="mobile-link-clicks">0</strong><span>Clicks</span></article>
+          </section>
+
+          <button class="attention-row" id="mobile-needs-attention" type="button">
+            <span>Needs Attention</span>
+            <strong><span id="mobile-attention-count">0</span> ></strong>
+          </button>
+
+          <section class="mobile-funnel-card">
+            <div class="panel-head">
+              <h2>Conversion Funnel</h2>
+              <button class="ghost-link" id="mobile-funnel-toggle" type="button">View Funnel</button>
+            </div>
+            <p id="mobile-funnel-summary" class="funnel-summary">0 Leads -> 0 Replies -> 0 Links -> 0 Calls</p>
+            <div class="funnel compact" id="mobile-funnel-detail" hidden></div>
+          </section>
+        </section>
+
+        <section class="mobile-screen" data-screen="inbox" id="mobile-inbox-screen">
+          <div class="mobile-header compact">
+            <h1>Inbox</h1>
+            <p id="mobile-inbox-count">0 conversations</p>
+          </div>
+          <input class="mobile-search" id="mobile-inbox-search" type="search" placeholder="Search conversations" aria-label="Search conversations">
+          <div class="mobile-filters" aria-label="Inbox filters">
+            <button type="button" data-inbox-filter="all" class="active">All</button>
+            <button type="button" data-inbox-filter="needs">Needs Me</button>
+            <button type="button" data-inbox-filter="booked">Booked</button>
+          </div>
+          <div class="mobile-inbox-list" id="mobile-inbox-list"></div>
+        </section>
+
+        <section class="mobile-screen" data-screen="more" id="mobile-more-screen">
+          <div class="mobile-header compact">
+            <h1>More</h1>
+            <p>Controls, drafts, analytics, and testing.</p>
+          </div>
+          <div class="more-menu">
+            <button type="button" data-more-panel="controls">AI Controls <span>></span></button>
+            <button type="button" data-more-panel="instructions">AI Instructions <span>></span></button>
+            <button type="button" data-more-panel="drafts">Pending Drafts <strong id="mobile-drafts-count">0</strong></button>
+            <button type="button" data-more-panel="analytics">Full Analytics <span>></span></button>
+            <button type="button" data-more-panel="tester">AI Tester <span>></span></button>
+            <button type="button" data-more-panel="system">System <span>></span></button>
+          </div>
+
+          <section class="more-panel" id="more-controls" hidden>
+            <div class="panel-head"><h2>AI Controls</h2><button class="ghost-link" data-more-close type="button">Close</button></div>
+            <div class="mobile-control-list" id="mobile-features"></div>
+          </section>
+
+          <section class="more-panel" id="more-instructions" hidden>
+            <div class="panel-head"><h2>AI Instructions</h2><button class="ghost-link" data-more-close type="button">Close</button></div>
+            <p class="mobile-note">The current playbook is optimized for short, booking-first Instagram conversations. Edit deeper business knowledge from the desktop prompt tools for now.</p>
+          </section>
+
+          <section class="more-panel" id="more-drafts" hidden>
+            <div class="panel-head"><h2>Pending Drafts</h2><button class="ghost-link" data-more-close type="button">Close</button></div>
+            <div id="mobile-drafts" class="drafts"></div>
+          </section>
+
+          <section class="more-panel" id="more-analytics" hidden>
+            <div class="panel-head"><h2>Full Analytics</h2><button class="ghost-link" data-more-close type="button">Close</button></div>
+            <div class="grid kpis" id="mobile-full-kpis"></div>
+            <div class="funnel" id="mobile-full-funnel"></div>
+          </section>
+
+          <section class="more-panel" id="more-tester" hidden>
+            <div class="panel-head"><h2>AI Tester</h2><button class="ghost-link" data-more-close type="button">Close</button></div>
+            <div class="test-grid">
+              <textarea id="mobile-test-transcript" aria-label="Mobile test transcript" placeholder="Prospect: I want to learn pallets&#10;You: Is this something you want to pursue?"></textarea>
+              <textarea id="mobile-test-new-message" aria-label="Mobile newest test message" placeholder="Newest prospect message"></textarea>
+            </div>
+            <div class="actions" style="margin-top:10px;">
+              <button id="mobile-test-button" class="action primary" type="button">Preview Reply</button>
+            </div>
+            <div id="mobile-test-result" class="result"></div>
+          </section>
+
+          <section class="more-panel" id="more-system" hidden>
+            <div class="panel-head"><h2>System</h2><button class="ghost-link" data-more-close type="button">Close</button></div>
+            <div class="events" id="mobile-automation-events"></div>
+          </section>
+        </section>
+      </section>
+
+      <section class="timeframe desktop-shell" aria-label="Timeframe selector">
         <button type="button" data-range="24h" class="active">24 Hours</button>
         <button type="button" data-range="7d">7 Days</button>
         <button type="button" data-range="30d">30 Days</button>
@@ -7207,9 +7731,9 @@ function renderModernHomePage() {
         <button type="button" data-range="all">All Time</button>
       </section>
 
-      <section class="grid kpis" id="kpis" aria-label="KPI summary"></section>
+      <section class="grid kpis desktop-shell" id="kpis" aria-label="KPI summary"></section>
 
-      <section class="grid content-grid">
+      <section class="grid content-grid desktop-shell">
         <section class="card panel" id="analytics">
           <div class="panel-head">
             <h2>Conversion Funnel</h2>
@@ -7231,7 +7755,7 @@ function renderModernHomePage() {
         </section>
       </section>
 
-      <section class="grid content-grid" style="margin-top:14px;">
+      <section class="grid content-grid desktop-shell" style="margin-top:14px;">
         <section class="card panel" id="activity">
           <div class="panel-head">
             <h2>DM Inbox</h2>
@@ -7256,7 +7780,7 @@ function renderModernHomePage() {
         </section>
       </section>
 
-      <section class="card panel" style="margin-top:14px;">
+      <section class="card panel desktop-shell" style="margin-top:14px;">
         <div class="panel-head">
           <h2>Pending Drafts</h2>
           <span class="panel-note">Approval queue</span>
@@ -7267,10 +7791,9 @@ function renderModernHomePage() {
   </div>
 
   <nav class="bottom-nav" aria-label="Mobile navigation">
-    <a class="active" href="#dashboard">Dash</a>
-    <a href="#activity">Inbox</a>
-    <a href="#settings">Settings</a>
-    <a href="#analytics">Stats</a>
+    <a class="active" href="#pulse" data-mobile-tab="pulse">Pulse</a>
+    <a href="#inbox" data-mobile-tab="inbox">Inbox</a>
+    <a href="#more" data-mobile-tab="more">More</a>
   </nav>
 
   <div class="companion-backdrop" id="dm-companion" hidden>
@@ -7295,7 +7818,17 @@ function renderModernHomePage() {
   </div>
 
   <script>
-    const state = { timeframe: "24h", conversations: [], activeConversationKey: "" };
+    const state = {
+      timeframe: "24h",
+      conversations: [],
+      activeConversationKey: "",
+      mobileScreen: "pulse",
+      inboxFilter: "all",
+      inboxSearch: "",
+      latestStats: null,
+      latestDrafts: [],
+      latestEvents: []
+    };
     const conversationsEl = document.getElementById("conversations");
     const draftsEl = document.getElementById("drafts");
     const featuresEl = document.getElementById("features");
@@ -7322,6 +7855,32 @@ function renderModernHomePage() {
     const companionCloseEl = document.getElementById("dm-companion-close");
     const companionBookingEl = document.getElementById("dm-companion-booking");
     const companionSendEl = document.getElementById("dm-companion-send");
+    const mobileCallsBookedEl = document.getElementById("mobile-calls-booked");
+    const mobileLeadsEl = document.getElementById("mobile-leads");
+    const mobileLinksSentEl = document.getElementById("mobile-links-sent");
+    const mobileLinkClicksEl = document.getElementById("mobile-link-clicks");
+    const mobileAttentionCountEl = document.getElementById("mobile-attention-count");
+    const mobileNeedsAttentionEl = document.getElementById("mobile-needs-attention");
+    const mobileHealthEl = document.getElementById("mobile-bot-health");
+    const mobileHealthLabelEl = document.getElementById("mobile-health-label");
+    const mobileHealthDetailEl = document.getElementById("mobile-health-detail");
+    const mobileViewIssueEl = document.getElementById("mobile-view-issue");
+    const mobileFunnelSummaryEl = document.getElementById("mobile-funnel-summary");
+    const mobileFunnelDetailEl = document.getElementById("mobile-funnel-detail");
+    const mobileFunnelToggleEl = document.getElementById("mobile-funnel-toggle");
+    const mobileInboxListEl = document.getElementById("mobile-inbox-list");
+    const mobileInboxCountEl = document.getElementById("mobile-inbox-count");
+    const mobileInboxSearchEl = document.getElementById("mobile-inbox-search");
+    const mobileFeaturesEl = document.getElementById("mobile-features");
+    const mobileDraftsEl = document.getElementById("mobile-drafts");
+    const mobileDraftsCountEl = document.getElementById("mobile-drafts-count");
+    const mobileFullKpisEl = document.getElementById("mobile-full-kpis");
+    const mobileFullFunnelEl = document.getElementById("mobile-full-funnel");
+    const mobileAutomationEventsEl = document.getElementById("mobile-automation-events");
+    const mobileTestButton = document.getElementById("mobile-test-button");
+    const mobileTestTranscript = document.getElementById("mobile-test-transcript");
+    const mobileTestNewMessage = document.getElementById("mobile-test-new-message");
+    const mobileTestResult = document.getElementById("mobile-test-result");
 
     function setStatus(message) {
       statusEl.textContent = message || "";
@@ -7353,6 +7912,79 @@ function renderModernHomePage() {
     function initials(conversation) {
       const source = conversation.username || conversation.contact_id || conversation.talk_id || "IG";
       return String(source).replace(/[^a-z0-9]/gi, "").slice(0, 2).toUpperCase() || "IG";
+    }
+
+    function relativeTime(value) {
+      if (!value) return "";
+      const time = new Date(value).getTime();
+      if (!Number.isFinite(time)) return "";
+      const seconds = Math.max(0, Math.round((Date.now() - time) / 1000));
+      if (seconds < 60) return seconds + "s";
+      const minutes = Math.round(seconds / 60);
+      if (minutes < 60) return minutes + "m";
+      const hours = Math.round(minutes / 60);
+      if (hours < 24) return hours + "h";
+      return Math.round(hours / 24) + "d";
+    }
+
+    function conversationTime(conversation) {
+      return conversation.last_incoming_at || conversation.last_outgoing_at || conversation.booking_confirmed_at || "";
+    }
+
+    function needsHumanAttention(conversation) {
+      const lastMessage = conversation.last_message || {};
+      const lastUserMs = Date.parse(conversation.last_incoming_at || "");
+      const lastOutMs = Date.parse(conversation.last_outgoing_at || "");
+      const newestUserNeedsReply =
+        lastMessage.role === "user" &&
+        (!Number.isFinite(lastOutMs) || (Number.isFinite(lastUserMs) && lastUserMs > lastOutMs));
+      const asksForOwner = /\b(real person|human|owner|you personally|can i talk to you|call me|speak to you)\b/i.test(
+        lastMessage.text || ""
+      );
+      const badScore =
+        conversation.reply_scorecard &&
+        conversation.reply_scorecard.rating &&
+        conversation.reply_scorecard.rating !== "good";
+
+      return Boolean(
+        conversation.ai_paused ||
+          conversation.manual_takeover_active ||
+          badScore ||
+          asksForOwner ||
+          (conversation.lead_status === "hot" && !conversation.booking_link_sent && !conversation.booking_confirmed) ||
+          newestUserNeedsReply
+      );
+    }
+
+    function primaryConversationState(conversation) {
+      if (conversation.booking_confirmed) return { label: "Booked", tone: "booked" };
+      if (conversation.ai_paused || conversation.manual_takeover_active) return { label: "Paused", tone: "paused" };
+      if (needsHumanAttention(conversation)) return { label: "Needs You", tone: "needs" };
+      if (conversation.booking_link_sent) return { label: "Link Sent", tone: "link" };
+      return { label: "AI Active", tone: "active" };
+    }
+
+    function attentionConversations() {
+      return state.conversations.filter(needsHumanAttention);
+    }
+
+    function setMobileScreen(screen) {
+      state.mobileScreen = screen;
+      document.querySelectorAll(".mobile-screen").forEach((section) => {
+        section.classList.toggle("active", section.dataset.screen === screen);
+      });
+      document.querySelectorAll("[data-mobile-tab]").forEach((tab) => {
+        tab.classList.toggle("active", tab.dataset.mobileTab === screen);
+      });
+      if (screen === "inbox") {
+        setTimeout(() => mobileInboxSearchEl && mobileInboxSearchEl.focus({ preventScroll: true }), 60);
+      }
+    }
+
+    function openMorePanel(name) {
+      document.querySelectorAll(".more-panel").forEach((panel) => {
+        panel.hidden = panel.id !== "more-" + name;
+      });
     }
 
     async function api(path, options) {
@@ -7389,6 +8021,37 @@ function renderModernHomePage() {
       });
     }
 
+    function metricCards(data) {
+      const funnel = data.funnel || {};
+      const touchpoints = data.touchpoints || {};
+      const totalDms = Math.max(Number((data.timeframe_stats || {}).prospects_touched || 0), Number(funnel.total_leads || 0));
+      return [
+        ["Accounts Interacted", touchpoints.accounts_interacted || 0, timeframeLabel(state.timeframe)],
+        ["Accounts Reached", touchpoints.accounts_reached || 0, "outbound touchpoints"],
+        ["Total IG Leads Captured", funnel.total_leads || totalDms || 0, "conversation memory"],
+        ["Booking Links Sent", funnel.booking_links_sent || 0, percent(funnel.link_sent_rate || 0) + " of leads"],
+        ["Booking Link Clicks", funnel.booking_link_clicks || 0, percent(funnel.click_through_rate || 0) + " CTR"],
+        ["Discovery Calls Scheduled", funnel.appointments_scheduled || 0, percent(funnel.booking_conversion_rate || 0) + " conversion"]
+      ];
+    }
+
+    function renderMetricCards(target, data) {
+      if (!target) return;
+      target.innerHTML = "";
+      metricCards(data).forEach(([label, value, detail]) => {
+        const card = document.createElement("article");
+        card.className = "card kpi";
+        const title = document.createElement("span");
+        title.textContent = label;
+        const metric = document.createElement("strong");
+        metric.textContent = value;
+        const small = document.createElement("small");
+        small.textContent = detail;
+        card.append(title, metric, small);
+        target.appendChild(card);
+      });
+    }
+
     function renderFunnel(data) {
       const funnel = data.funnel || {};
       const stages = [
@@ -7416,6 +8079,79 @@ function renderModernHomePage() {
       });
     }
 
+    function renderFunnelInto(target, data) {
+      if (!target) return;
+      const funnel = data.funnel || {};
+      const stages = [
+        ["Leads", funnel.total_leads || 0],
+        ["AI Replied", funnel.ai_replied || 0],
+        ["Link Sent", funnel.booking_links_sent || 0],
+        ["Clicked", funnel.booking_link_clicks || 0],
+        ["Booked", funnel.appointments_scheduled || 0]
+      ];
+      const max = Math.max(...stages.map(([, value]) => Number(value || 0)), 1);
+      target.innerHTML = "";
+      stages.forEach(([label, value]) => {
+        const row = document.createElement("div");
+        row.className = "funnel-row";
+        const top = document.createElement("div");
+        top.className = "funnel-label";
+        top.innerHTML =
+          "<span>" +
+          label +
+          "</span><strong>" +
+          value +
+          " · " +
+          percent((Number(value || 0) / max) * 100) +
+          "</strong>";
+        const bar = document.createElement("div");
+        bar.className = "bar";
+        const fill = document.createElement("span");
+        fill.style.width = Math.max(4, Math.round((Number(value || 0) / max) * 100)) + "%";
+        bar.appendChild(fill);
+        row.append(top, bar);
+        target.appendChild(row);
+      });
+    }
+
+    function renderMobilePulse(data) {
+      if (!data) return;
+      const funnel = data.funnel || {};
+      const settings = data.settings || {};
+      const attentionCount = attentionConversations().length;
+      const lastActivity = state.conversations
+        .map(conversationTime)
+        .filter(Boolean)
+        .sort()
+        .pop();
+      const healthy = Boolean(settings.auto_send && settings.zernio_configured && settings.knowledge_base_configured);
+
+      mobileHealthEl.className = "bot-health " + (healthy ? "ok" : "needs");
+      mobileHealthLabelEl.textContent = healthy ? "Bot Working" : "Bot Needs Attention";
+      mobileHealthDetailEl.textContent = healthy
+        ? "Last activity: " + (lastActivity ? relativeTime(lastActivity) + " ago" : "waiting for messages")
+        : "One or more connection/settings checks need attention.";
+      mobileViewIssueEl.hidden = healthy;
+
+      mobileCallsBookedEl.textContent = funnel.appointments_scheduled || 0;
+      mobileLeadsEl.textContent = funnel.total_leads || 0;
+      mobileLinksSentEl.textContent = funnel.booking_links_sent || 0;
+      mobileLinkClicksEl.textContent = funnel.booking_link_clicks || 0;
+      mobileAttentionCountEl.textContent = attentionCount;
+      mobileFunnelSummaryEl.textContent =
+        (funnel.total_leads || 0) +
+        " Leads -> " +
+        (funnel.ai_replied || 0) +
+        " Replies -> " +
+        (funnel.booking_links_sent || 0) +
+        " Links -> " +
+        (funnel.appointments_scheduled || 0) +
+        " Calls";
+      renderFunnelInto(mobileFunnelDetailEl, data);
+      renderMetricCards(mobileFullKpisEl, data);
+      renderFunnelInto(mobileFullFunnelEl, data);
+    }
+
     function renderStatuses(settings) {
       botStatusEl.textContent = "OpenAI Bot: " + (settings.auto_send ? "Active" : "Draft Mode");
       webhookStatusEl.textContent = "IG Webhook: " + (settings.zernio_configured ? "Operational" : "Needs Key");
@@ -7439,13 +8175,14 @@ function renderModernHomePage() {
 
     function renderFeatureControls(features) {
       featuresEl.innerHTML = "";
+      mobileFeaturesEl.innerHTML = "";
       [
-        ["auto_send", "Auto-send"],
-        ["approval_mode", "Approval mode"],
-        ["follow_ups", "Auto-follow-up"],
-        ["humanize_replies", "Human tone"],
-        ["conversation_memory", "Context memory"]
-      ].forEach(([feature, label]) => {
+        ["auto_send", "Auto-send Replies", "Send qualified replies without review."],
+        ["follow_ups", "AI Follow-ups", "Let the app follow up when a lead goes quiet."],
+        ["approval_mode", "Approval Mode", "Hold replies as drafts until approved."],
+        ["humanize_replies", "Human Tone", "Keep replies casual and natural."],
+        ["conversation_memory", "Contact Memory", "Use prior messages as context."]
+      ].forEach(([feature, label, description]) => {
         const enabled = Boolean(features[feature]);
         const button = document.createElement("button");
         button.className = "toggle " + (enabled ? "on" : "off");
@@ -7468,6 +8205,33 @@ function renderModernHomePage() {
           }
         });
         featuresEl.appendChild(button);
+
+        const mobileButton = document.createElement("button");
+        mobileButton.className = "mobile-control " + (enabled ? "on" : "off");
+        mobileButton.type = "button";
+        mobileButton.innerHTML =
+          "<span><strong>" +
+          label +
+          "</strong><small>" +
+          description +
+          "</small></span><span class=\\"switch-dot\\" aria-hidden=\\"true\\"></span>";
+        mobileButton.addEventListener("click", async () => {
+          mobileButton.disabled = true;
+          setStatus("Saving " + label + "...");
+          try {
+            await api("/api/features", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ feature, enabled: !enabled })
+            });
+            await loadAll(true);
+            setStatus(label + " saved.");
+          } catch (error) {
+            setStatus(error.message);
+            mobileButton.disabled = false;
+          }
+        });
+        mobileFeaturesEl.appendChild(mobileButton);
       });
     }
 
@@ -7752,6 +8516,92 @@ function renderModernHomePage() {
       return card;
     }
 
+    function renderMobileInbox(conversations) {
+      mobileInboxListEl.innerHTML = "";
+      const search = state.inboxSearch.trim().toLowerCase();
+      const filtered = (conversations || []).filter((conversation) => {
+        const haystack = [
+          conversation.username,
+          conversation.contact_id,
+          conversation.talk_id,
+          conversation.summary,
+          conversation.last_message && conversation.last_message.text
+        ]
+          .join(" ")
+          .toLowerCase();
+        const matchesSearch = !search || haystack.includes(search);
+        const matchesFilter =
+          state.inboxFilter === "all" ||
+          (state.inboxFilter === "needs" && needsHumanAttention(conversation)) ||
+          (state.inboxFilter === "booked" && conversation.booking_confirmed);
+        return matchesSearch && matchesFilter;
+      });
+
+      mobileInboxCountEl.textContent =
+        filtered.length + (filtered.length === 1 ? " conversation" : " conversations");
+
+      if (!filtered.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent =
+          state.inboxFilter === "needs"
+            ? "Nothing needs you right now."
+            : "No conversations match this view yet.";
+        mobileInboxListEl.appendChild(empty);
+        return;
+      }
+
+      filtered.slice(0, 60).forEach((conversation) => {
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "mobile-thread-row";
+        row.addEventListener("click", () => openCompanion(conversation));
+
+        const avatar = document.createElement("div");
+        avatar.className = "avatar";
+        if (conversation.avatar_url) {
+          const image = document.createElement("img");
+          image.src = conversation.avatar_url;
+          image.alt = "";
+          image.loading = "lazy";
+          image.onerror = () => {
+            avatar.textContent = initials(conversation);
+          };
+          avatar.appendChild(image);
+        } else {
+          avatar.textContent = initials(conversation);
+        }
+
+        const body = document.createElement("div");
+        const name = document.createElement("strong");
+        name.className = "thread-name";
+        name.textContent = conversation.username
+          ? "@" + conversation.username
+          : conversation.contact_id || conversation.talk_id || "Instagram lead";
+        const preview = document.createElement("span");
+        preview.className = "thread-preview";
+        preview.textContent =
+          (conversation.last_message && conversation.last_message.text) ||
+          conversation.summary ||
+          "No recent message yet.";
+        body.append(name, preview);
+
+        const side = document.createElement("div");
+        side.className = "thread-side";
+        const time = document.createElement("span");
+        time.className = "thread-time";
+        time.textContent = relativeTime(conversationTime(conversation));
+        const status = primaryConversationState(conversation);
+        const statusEl = document.createElement("span");
+        statusEl.className = "thread-state " + status.tone;
+        statusEl.textContent = status.label;
+        side.append(time, statusEl);
+
+        row.append(avatar, body, side);
+        mobileInboxListEl.appendChild(row);
+      });
+    }
+
     function renderConversations(conversations) {
       conversationsEl.innerHTML = "";
       const visible = (conversations || []).slice(0, 20);
@@ -7766,13 +8616,63 @@ function renderModernHomePage() {
       visible.forEach((conversation) => conversationsEl.appendChild(renderConversation(conversation)));
     }
 
+    function buildMobileDraftCard(draft) {
+      const card = document.createElement("article");
+      card.className = "lead";
+      const text = document.createElement("div");
+      text.className = "lead-message";
+      text.textContent = draft.reply || "Draft is empty.";
+      const actions = document.createElement("div");
+      actions.className = "actions";
+      const send = document.createElement("button");
+      send.className = "action primary";
+      send.type = "button";
+      send.textContent = "Send";
+      send.addEventListener("click", async () => {
+        send.disabled = true;
+        try {
+          await api("/api/drafts/" + encodeURIComponent(draft.id) + "/approve", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ reply: draft.reply })
+          });
+          await loadAll(true);
+          setStatus("Draft sent.");
+        } catch (error) {
+          setStatus(error.message);
+          send.disabled = false;
+        }
+      });
+      const discard = document.createElement("button");
+      discard.className = "action";
+      discard.type = "button";
+      discard.textContent = "Discard";
+      discard.addEventListener("click", async () => {
+        discard.disabled = true;
+        try {
+          await api("/api/drafts/" + encodeURIComponent(draft.id) + "/reject", { method: "POST" });
+          await loadAll(true);
+          setStatus("Draft discarded.");
+        } catch (error) {
+          setStatus(error.message);
+          discard.disabled = false;
+        }
+      });
+      actions.append(send, discard);
+      card.append(text, actions);
+      return card;
+    }
+
     function renderDrafts(drafts) {
       draftsEl.innerHTML = "";
+      mobileDraftsEl.innerHTML = "";
+      mobileDraftsCountEl.textContent = String((drafts || []).length || 0);
       if (!drafts || !drafts.length) {
         const empty = document.createElement("div");
         empty.className = "empty";
         empty.textContent = "No pending drafts.";
         draftsEl.appendChild(empty);
+        mobileDraftsEl.appendChild(empty.cloneNode(true));
         return;
       }
       drafts.slice(0, 8).forEach((draft) => {
@@ -7820,17 +8720,20 @@ function renderModernHomePage() {
         actions.append(send, discard);
         card.append(text, actions);
         draftsEl.appendChild(card);
+        mobileDraftsEl.appendChild(buildMobileDraftCard(draft));
       });
     }
 
     function renderAutomationEvents(events) {
       automationEventsEl.innerHTML = "";
+      mobileAutomationEventsEl.innerHTML = "";
       const visible = (events || []).slice(0, 8);
       if (!visible.length) {
         const empty = document.createElement("div");
         empty.className = "empty";
         empty.textContent = "No automation events yet.";
         automationEventsEl.appendChild(empty);
+        mobileAutomationEventsEl.appendChild(empty.cloneNode(true));
         return;
       }
 
@@ -7846,6 +8749,7 @@ function renderModernHomePage() {
         row.append(top, message);
         if (reason.textContent) row.appendChild(reason);
         automationEventsEl.appendChild(row);
+        mobileAutomationEventsEl.appendChild(row.cloneNode(true));
       });
     }
 
@@ -7864,7 +8768,12 @@ function renderModernHomePage() {
         renderFunnel(stats);
         renderStatuses(stats.settings || {});
         state.conversations = conversations.conversations || [];
+        state.latestStats = stats;
+        state.latestDrafts = drafts.drafts || [];
+        state.latestEvents = events.events || [];
         renderConversations(conversations.conversations || []);
+        renderMobileInbox(state.conversations);
+        renderMobilePulse(stats);
         if (!companionEl.hidden && state.activeConversationKey) {
           renderCompanion(activeConversation());
         }
@@ -7879,8 +8788,60 @@ function renderModernHomePage() {
     document.querySelectorAll("[data-range]").forEach((button) => {
       button.addEventListener("click", () => {
         state.timeframe = button.dataset.range;
-        document.querySelectorAll("[data-range]").forEach((item) => item.classList.toggle("active", item === button));
+        document.querySelectorAll("[data-range]").forEach((item) => item.classList.toggle("active", item.dataset.range === state.timeframe));
         loadAll();
+      });
+    });
+
+    document.querySelectorAll("[data-mobile-tab]").forEach((tab) => {
+      tab.addEventListener("click", (event) => {
+        event.preventDefault();
+        setMobileScreen(tab.dataset.mobileTab);
+      });
+    });
+
+    mobileNeedsAttentionEl.addEventListener("click", () => {
+      state.inboxFilter = "needs";
+      document.querySelectorAll("[data-inbox-filter]").forEach((button) => {
+        button.classList.toggle("active", button.dataset.inboxFilter === "needs");
+      });
+      renderMobileInbox(state.conversations);
+      setMobileScreen("inbox");
+    });
+
+    mobileViewIssueEl.addEventListener("click", () => {
+      setMobileScreen("more");
+      openMorePanel("system");
+    });
+
+    mobileFunnelToggleEl.addEventListener("click", () => {
+      const isHidden = mobileFunnelDetailEl.hidden;
+      mobileFunnelDetailEl.hidden = !isHidden;
+      mobileFunnelToggleEl.textContent = isHidden ? "Hide Funnel" : "View Funnel";
+    });
+
+    document.querySelectorAll("[data-inbox-filter]").forEach((button) => {
+      button.addEventListener("click", () => {
+        state.inboxFilter = button.dataset.inboxFilter;
+        document.querySelectorAll("[data-inbox-filter]").forEach((item) => item.classList.toggle("active", item === button));
+        renderMobileInbox(state.conversations);
+      });
+    });
+
+    mobileInboxSearchEl.addEventListener("input", () => {
+      state.inboxSearch = mobileInboxSearchEl.value || "";
+      renderMobileInbox(state.conversations);
+    });
+
+    document.querySelectorAll("[data-more-panel]").forEach((button) => {
+      button.addEventListener("click", () => openMorePanel(button.dataset.morePanel));
+    });
+
+    document.querySelectorAll("[data-more-close]").forEach((button) => {
+      button.addEventListener("click", () => {
+        document.querySelectorAll(".more-panel").forEach((panel) => {
+          panel.hidden = true;
+        });
       });
     });
 
@@ -7900,6 +8861,34 @@ function renderModernHomePage() {
         setStatus(error.message);
       } finally {
         testButton.disabled = false;
+      }
+    });
+
+    mobileTestButton.addEventListener("click", async () => {
+      mobileTestButton.disabled = true;
+      mobileTestResult.textContent = "";
+      setStatus("Generating preview...");
+      try {
+        const data = await api("/api/test-reply", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            transcript: mobileTestTranscript.value,
+            new_message: mobileTestNewMessage.value
+          })
+        });
+        mobileTestResult.textContent =
+          "Lead status: " +
+          String(data.lead_status || "cold").replace("_", " ") +
+          "\\nNeeds review: " +
+          (data.needs_review ? "yes" : "no") +
+          "\\n\\n" +
+          data.reply;
+        setStatus("Preview ready.");
+      } catch (error) {
+        setStatus(error.message);
+      } finally {
+        mobileTestButton.disabled = false;
       }
     });
 
