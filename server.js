@@ -44,7 +44,7 @@ const FOLLOW_UP_OFFSETS_MS = [
 ];
 const FOLLOW_UP_CHECK_MS = 60 * 1000;
 const FOLLOW_UP_WINDOW_MS = 23 * 60 * 60 * 1000;
-const APP_BUILD_MARKER = "2026-08-08-ig-inbox-tight-v1";
+const APP_BUILD_MARKER = "2026-08-08-winning-flow-ladder-v1";
 const DEFAULT_KPI_TARGETS = {
   daily_touch_points_target: 100,
   touch_pitch_min_rate: 10,
@@ -140,6 +140,8 @@ Core appointment-setting objective:
 - Keep the path extremely simple: interested in pallet business -> invite them to Zoom -> ask permission to send calendar -> they agree -> send calendar link.
 - Do not over-qualify in DMs. Do not ask a long series of questions. Do not teach the entire pallet business through Instagram messages.
 - Once the prospect gives permission to receive the calendar link, sending the link becomes the highest-priority action. Never qualify more first, never ask if they are still interested, and never ask the booking question again.
+- If the prospect asks a real question before they have agreed to the call, answer briefly first. Do not push the calendar in that same message. End with a soft bridge such as: "Is that something you'd want to learn more about?"
+- If they accept that soft bridge, then use the winning Zoom framing and ask permission to send the calendar link.
 
 Disqualify or redirect immediately to https://youtube.com/@palletprosacademy and do not continue qualifying if the person:
 - Is unemployed with no capital or real plan.
@@ -157,7 +159,7 @@ Best-performing DM flow:
 1. First touch, if there is no prior context: "Yoo 👋 Thanks for the follow! Are you just here for the content or are you wanting to start your own pallet business?"
 2. If they ask questions, answer briefly and naturally. Do not ignore the question just to push the call.
 3. If they give useful context, mirror one specific detail so they feel heard.
-4. If they are only lightly curious or vague, ask one open-ended question like: "Is this business something you'd be interested in pursuing?"
+4. If they are only lightly curious, vague, or asking follow-up questions, ask one soft bridge like: "Is that something you'd want to learn more about?"
 5. If they say yes or clearly show they want to pursue it, say: "Great. Let's get on a Zoom call this week. That way we can research your market, answer any questions you have and see if you'd be a good fit for the program. Do you mind if I send you a link to my calendar?"
 6. Before sending the calendar link, ask permission in one short question: "Do you mind if I send you a link to my calendar?"
 7. If they say yes, do not ask anything else. Send: "Great. Give me one sec and I'll grab that link for you. 💯\n\nHere's the link to my calendar 🗓️ - https://www.tidycal.com/palletprosga/15-minute-meeting"
@@ -175,6 +177,7 @@ Reply length rules:
 - Do not ask more than one question.
 - If the prospect gives details about their market, truck, job, location, money, yards, contracts, prices, or current situation, do not ignore those details.
 - If the prospect asks a question inside their message, answer that question before asking them to book or sending the calendar link.
+- When answering a question before the calendar step, do not end with "Want me to send you the calendar link?" unless they already asked for the link/call. End with a softer interest question first, then move to the calendar permission message only after they accept.
 - If they ask multiple questions, answer the most important one briefly and then guide them to the call.
 - Do not repeat the same calendar ask, greeting, link message, or qualifying question in back-to-back replies.
 - Treat agreement broadly. "Yes", "yeah", "yep", "sure", "sureee", "that's fine", "fine", "ok", "okay", "absolutely", "send it", "send me the link", "go ahead", "let's do it", "I'm down", "that works", "bet", "I'm interested", "sounds good", "when are you available?", "how do I book?", "can we talk?", and "yes that is fine" all mean send the calendar link now.
@@ -1740,7 +1743,7 @@ function appointmentSetterContentReply() {
 function appointmentSetterCostReply() {
   return {
     reply:
-      "We have a few different options depending on the level of help you're looking for. The easiest thing is for us to talk for a few minutes, learn what you're trying to do, and point you in the right direction.\n\nWant me to send you the calendar link?",
+      "We have a few different options depending on the level of help you're looking for, so I wouldn't want to throw out the wrong thing in the DM.\n\nIs that something you'd want to learn more about?",
     needs_review: false,
     handled: true
   };
@@ -1749,7 +1752,7 @@ function appointmentSetterCostReply() {
 function appointmentSetterHowItWorksReply() {
   return {
     reply:
-      "We'll take a look at your local market, talk about how the pallet business works, answer your questions and see if Pallet Pros Academy makes sense for what you're trying to build.\n\nWant me to send you the calendar link?",
+      "The short version is we help people understand how to source, move, and sell pallets in their area without trying to figure it all out alone.\n\nIs that something you'd want to learn more about?",
     needs_review: false,
     handled: true
   };
@@ -1758,7 +1761,7 @@ function appointmentSetterHowItWorksReply() {
 function appointmentSetterNoTruckReply() {
   return {
     reply:
-      "That's fine. A truck helps, but the first step is seeing if your area has the opportunity. Want to hop on a quick Zoom so we can look at it?",
+      "That's fine. A truck helps, but the first step is seeing if your area even has the right opportunity.\n\nIs that something you'd want to learn more about?",
     needs_review: false,
     handled: true
   };
@@ -1775,7 +1778,7 @@ function appointmentSetterNoMoneyReply() {
 function appointmentSetterSkepticReply() {
   return {
     reply:
-      "I get why you'd ask. I run this business myself, and the call is to see if the model makes sense in your area. Want me to send the calendar link?",
+      "I get why you'd ask. I run this business myself, and it still comes down to whether the model makes sense in your area.\n\nIs that something you'd want to learn more about?",
     needs_review: false,
     handled: true
   };
@@ -1917,6 +1920,18 @@ function lastAssistantAskedContentOrBusiness(memory) {
         message.role === "assistant" &&
         /content/i.test(message.text || "") &&
         /(start|looking to start|wanting to start).{0,40}(pallet|business)/i.test(
+          message.text || ""
+        )
+    );
+}
+
+function lastAssistantAskedSoftLearningBridge(memory) {
+  return (Array.isArray(memory?.last_messages) ? memory.last_messages : [])
+    .slice(-5)
+    .some(
+      (message) =>
+        message.role === "assistant" &&
+        /(want to learn more|want to know more|want to look into it|something you'd want to learn more about|something you would want to learn more about|how does that sound)/i.test(
           message.text || ""
         )
     );
@@ -2089,6 +2104,15 @@ function appointmentSetterRuleReply(memory, incoming) {
     };
   }
 
+  if (
+    lastAssistantAskedSoftLearningBridge(memory) &&
+    yesToBusinessInterest(text) &&
+    !memory?.booking_link_sent &&
+    !memory?.booking_confirmed
+  ) {
+    return appointmentSetterCalendarAskReply();
+  }
+
   if (wantsCalendarLinkNow(text) && !memory?.booking_confirmed) {
     return appointmentSetterCalendarLinkReply(incoming);
   }
@@ -2098,7 +2122,9 @@ function appointmentSetterRuleReply(memory, incoming) {
     !memory?.booking_link_sent &&
     !memory?.booking_confirmed
   ) {
-    return appointmentSetterCalendarLinkReply(incoming);
+    return prospectAskedQuestion(text)
+      ? appointmentSetterCalendarAskReply()
+      : appointmentSetterCalendarLinkReply(incoming);
   }
 
   if (
