@@ -44,7 +44,7 @@ const FOLLOW_UP_OFFSETS_MS = [
 ];
 const FOLLOW_UP_CHECK_MS = 60 * 1000;
 const FOLLOW_UP_WINDOW_MS = 23 * 60 * 60 * 1000;
-const APP_BUILD_MARKER = "2026-08-08-setter-kpis-v1";
+const APP_BUILD_MARKER = "2026-08-08-dm-bot-toggle-v1";
 const DEFAULT_KPI_TARGETS = {
   daily_touch_points_target: 100,
   touch_pitch_min_rate: 10,
@@ -8594,7 +8594,7 @@ function renderModernHomePage() {
       <form class="companion-composer" id="dm-companion-form">
         <textarea id="dm-companion-text" aria-label="Manual Instagram reply" maxlength="1200" placeholder="Type a short, natural reply..."></textarea>
         <div class="companion-actions">
-          <button class="action" id="dm-companion-booking" type="button">Send Booking Link</button>
+          <button class="action" id="dm-companion-booking" type="button">Turn Bot Off</button>
           <button class="action primary" id="dm-companion-send" type="submit">Send DM</button>
         </div>
       </form>
@@ -9071,6 +9071,18 @@ function renderModernHomePage() {
         companionAppointmentPanelEl.hidden = !conversation.booking_confirmed && !conversation.call_pitched;
         companionAppointmentStatusEl.textContent =
           String(conversation.appointment_status || "unknown").replace("_", " ");
+      }
+      if (companionBookingEl) {
+        const botPaused = Boolean(conversation.ai_paused || conversation.manual_takeover_active);
+        companionBookingEl.textContent = botPaused ? "Turn Bot On" : "Turn Bot Off";
+        companionBookingEl.classList.toggle("primary", botPaused);
+        companionBookingEl.setAttribute(
+          "aria-pressed",
+          botPaused ? "false" : "true"
+        );
+        companionBookingEl.title = botPaused
+          ? "Resume automation for this prospect"
+          : "Pause automation for this prospect while you reply manually";
       }
       companionThreadEl.innerHTML = "";
 
@@ -9810,11 +9822,17 @@ function renderModernHomePage() {
     companionBookingEl.addEventListener("click", async () => {
       const conversation = activeConversation();
       if (!conversation) return;
+      const botPaused = Boolean(conversation.ai_paused || conversation.manual_takeover_active);
       companionBookingEl.disabled = true;
       companionSendEl.disabled = true;
-      setStatus("Sending tracked booking link...");
+      setStatus(botPaused ? "Turning bot on for this lead..." : "Turning bot off for this lead...");
       try {
-        const data = await api("/api/conversations/" + encodeURIComponent(conversation.key) + "/send-booking-link", { method: "POST" });
+        const data = await api(
+          "/api/conversations/" +
+            encodeURIComponent(conversation.key) +
+            (botPaused ? "/resume" : "/pause"),
+          { method: "POST" }
+        );
         await loadAll(true);
         if (data.conversation) {
           state.activeConversationKey = data.conversation.key;
@@ -9822,7 +9840,7 @@ function renderModernHomePage() {
         } else {
           renderCompanion(activeConversation());
         }
-        setStatus("Tracked booking link sent.");
+        setStatus(botPaused ? "Bot is back on for this lead." : "Bot is off for this lead.");
       } catch (error) {
         setStatus(error.message);
       } finally {
