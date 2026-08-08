@@ -43,6 +43,23 @@ const FOLLOW_UP_OFFSETS_MS = [
 ];
 const FOLLOW_UP_CHECK_MS = 60 * 1000;
 const FOLLOW_UP_WINDOW_MS = 23 * 60 * 60 * 1000;
+const APP_BUILD_MARKER = "2026-08-08-context-debounce-v1";
+const INCOMING_REPLY_DEBOUNCE_MS = Math.max(
+  0,
+  numberEnv("INCOMING_REPLY_DEBOUNCE_MS", 12_000)
+);
+const SELF_INSTAGRAM_USERNAMES = new Set(
+  String(process.env.OWN_INSTAGRAM_USERNAME || "palletprosacademy")
+    .split(",")
+    .map((value) => value.trim().replace(/^@/, "").toLowerCase())
+    .filter(Boolean)
+);
+const SELF_INSTAGRAM_IDS = new Set(
+  String(process.env.OWN_INSTAGRAM_IDS || "17841462003997282")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+);
 const DEFAULT_STORE = {
   drafts: [],
   feedback: [],
@@ -61,6 +78,8 @@ const DEFAULT_STORE = {
   automationEvents: [],
   dailyStats: {}
 };
+let storeWriteQueue = Promise.resolve();
+const pendingIncomingReplies = new Map();
 
 const HOUSE_RULES = `You are replying to Instagram DMs for Pallet Pros Academy.
 
@@ -476,8 +495,9 @@ async function readStore() {
 }
 
 async function writeStore(store) {
+  const normalized = normalizeStore(store);
+
   if (storeBackend() === "supabase") {
-    const normalized = normalizeStore(store);
     await supabaseRestRequest(encodeURIComponent(SUPABASE_STATE_TABLE), {
       method: "POST",
       headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
@@ -491,10 +511,17 @@ async function writeStore(store) {
     return;
   }
 
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  const tempFile = `${DATA_FILE}.tmp`;
-  await fs.writeFile(tempFile, JSON.stringify(normalizeStore(store), null, 2));
-  await fs.rename(tempFile, DATA_FILE);
+  const writeJob = storeWriteQueue
+    .catch(() => {})
+    .then(async () => {
+      await fs.mkdir(DATA_DIR, { recursive: true });
+      const tempFile = `${DATA_FILE}.${process.pid}.${Date.now()}.${crypto.randomUUID()}.tmp`;
+      await fs.writeFile(tempFile, JSON.stringify(normalized, null, 2));
+      await fs.rename(tempFile, DATA_FILE);
+    });
+
+  storeWriteQueue = writeJob;
+  await writeJob;
 }
 
 function normalizeStore(store) {
@@ -822,7 +849,13 @@ function makeConversationKey({
   zernio_account_id
 }) {
   const channel = origin || "unknown";
-  const person = contact_id || chat_id || talk_id || "unknown";
+  const usableContactId =
+    normalizeProvider(provider) === "zernio"
+      ? isUsefulZernioContactId(contact_id, zernio_account_id)
+        ? contact_id
+        : ""
+      : contact_id;
+  const person = usableContactId || chat_id || talk_id || "unknown";
 
   if (normalizeProvider(provider) === "test") {
     return `test:${channel}:${person}`;
@@ -835,7 +868,49 @@ function isUsefulZernioContactId(contactId, accountId) {
   const contactText = String(contactId || "").trim();
   const accountText = String(accountId || "").trim();
 
-  return Boolean(contactText && (!accountText || contactText !== accountText));
+  return Boolean(contactText && !isSelfIdentity(contactText, "", accountText));
+}
+
+function cleanUsername(value) {
+  return String(value || "").trim().replace(/^@/, "");
+}
+
+function isSelfUsername(value) {
+  const username = cleanUsername(value).toLowerCase();
+  return Boolean(username && SELF_INSTAGRAM_USERNAMES.has(username));
+}
+
+function isSelfId(value, accountId = "") {
+  const id = String(value || "").trim();
+  const accountText = String(accountId || "").trim();
+  return Boolean(
+    id && ((accountText && id === accountText) || SELF_INSTAGRAM_IDS.has(id))
+  );
+}
+
+function isSelfIdentity(id, username = "", accountId = "") {
+  return isSelfId(id, accountId) || isSelfUsername(id) || isSelfUsername(username);
+}
+
+function usefulIdentityId(id, accountId = "", username = "") {
+  const value = String(id || "").trim();
+  return value && !isSelfIdentity(value, username, accountId) ? value : "";
+}
+
+function usefulUsername(username) {
+  const value = cleanUsername(username);
+  return value && !isSelfUsername(value) ? value : "";
+}
+
+function firstUsefulIdentity(candidates, accountId = "") {
+  for (const candidate of candidates) {
+    const id = usefulIdentityId(candidate?.id, accountId, candidate?.username);
+    if (id) {
+      return id;
+    }
+  }
+
+  return "";
 }
 
 function findExistingConversationKey(store, messageLike, proposedKey) {
@@ -1100,7 +1175,7 @@ function getConversationMemory(store, messageLike) {
       key,
       provider: normalizeProvider(messageLike.provider),
       contact_id: messageLike.contact_id || "",
-      username: messageLike.username || "",
+      username: usefulUsername(messageLike.username),
       avatar_url: messageLike.avatar_url || "",
       profile_last_checked_at: null,
       chat_id: messageLike.chat_id || "",
@@ -1147,7 +1222,7 @@ function getConversationMemory(store, messageLike) {
         : memory.contact_id || ""
       : messageLike.contact_id || memory.contact_id || "";
   memory.username =
-    String(messageLike.username || "").trim().replace(/^@/, "") || memory.username || "";
+    usefulUsername(messageLike.username) || memory.username || "";
   memory.avatar_url =
     cacheableAvatarUrl(messageLike.avatar_url) || cacheableAvatarUrl(memory.avatar_url);
   memory.profile_last_checked_at = memory.profile_last_checked_at || null;
@@ -1433,11 +1508,21 @@ function appointmentSetterCalendarAskReply() {
 }
 
 function leadTrackingId(messageLike = {}) {
+  const contactId =
+    normalizeProvider(messageLike.provider) === "zernio"
+      ? usefulIdentityId(
+          messageLike.contact_id,
+          messageLike.zernio_account_id,
+          messageLike.username
+        )
+      : String(messageLike.contact_id || "").trim();
+
   return String(
-    messageLike.contact_id ||
+    contactId ||
       messageLike.ig_user_id ||
       messageLike.zernio_contact_id ||
       messageLike.chat_id ||
+      messageLike.talk_id ||
       ""
   ).trim();
 }
@@ -1562,8 +1647,24 @@ function appointmentSetterWarmQualifierReply() {
 }
 
 function yesToCalendarLink(text) {
-  return /^(yes|yea|yeah|yep|sure|of course|that's fine|that is fine|ok|okay|send it|sounds good|lets do it|let's do it)\b/i.test(
+  return /^(yes|yea|yeah|yep|sure|of course|that's fine|that is fine|ok|okay|please|send it|sounds good|lets do it|let's do it)\b/i.test(
     String(text || "").trim()
+  );
+}
+
+function wantsCalendarLinkNow(text) {
+  const value = String(text || "").toLowerCase();
+  return (
+    /\b(send|drop|share|give|text)\b.{0,24}\b(calendar|booking|call|zoom|discovery)?\s*link\b/.test(value) ||
+    /\b(calendar|booking|call|zoom|discovery)\s*link\b/.test(value) ||
+    /\b(book|schedule|set up|setup|lock in)\b.{0,24}\b(call|zoom|appointment|discovery|calendar)\b/.test(value) ||
+    /\b(let'?s|lets)\s+(?:do|get)\s+it\s+(?:done|started)?\b/.test(value)
+  );
+}
+
+function saysTheyWillBook(text) {
+  return /\b(i'?ll|i will|im going to|i'm going to|gonna|going to)\s+(?:book|schedule|grab|choose|pick)|\b(book(?:ing)?\s+(?:it|on|now|soon|today|tomorrow))\b/i.test(
+    String(text || "")
   );
 }
 
@@ -1738,8 +1839,39 @@ function lastAssistantAskedForCalendarPermission(memory) {
     );
 }
 
+function latestProspectTurnText(memory, incoming) {
+  const messages = Array.isArray(memory?.last_messages) ? memory.last_messages : [];
+  const incomingId = String(incoming?.incoming_message_id || "");
+  const latestUserAtMs = toMessageTimestampMs(incoming?.created_at || Date.now());
+  const burst = [];
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role === "assistant") {
+      break;
+    }
+
+    if (message.role !== "user") {
+      continue;
+    }
+
+    const messageAtMs = message.at ? Date.parse(String(message.at)) : latestUserAtMs;
+    const closeEnough =
+      Number.isFinite(messageAtMs) && latestUserAtMs - messageAtMs <= 45 * 1000;
+
+    if (!closeEnough && (!incomingId || String(message.id || "") !== incomingId)) {
+      break;
+    }
+
+    burst.unshift(message.text || "");
+  }
+
+  const combined = burst.join(" ").replace(/\s+/g, " ").trim();
+  return combined || String(incoming?.text || "");
+}
+
 function appointmentSetterRuleReply(memory, incoming) {
-  const text = String(incoming?.text || "");
+  const text = latestProspectTurnText(memory, incoming);
 
   if (!text.trim()) {
     return null;
@@ -1771,6 +1903,22 @@ function appointmentSetterRuleReply(memory, incoming) {
 
   if (asksIfLegit(text)) {
     return appointmentSetterSkepticReply();
+  }
+
+  if (memory?.booking_confirmed) {
+    return null;
+  }
+
+  if (memory?.booking_link_sent && saysTheyWillBook(text) && !prospectAskedQuestion(text)) {
+    return {
+      reply: "Sounds good, grab the weekday time that works best and I'll verify it.",
+      needs_review: false,
+      handled: true
+    };
+  }
+
+  if (wantsCalendarLinkNow(text) && !memory?.booking_confirmed) {
+    return appointmentSetterCalendarLinkReply(incoming);
   }
 
   if (
@@ -2676,15 +2824,62 @@ function extractZernioIncomingMessage(payload) {
     "sender.id",
     "senderId"
   ]);
-  const username = pickValue(payload, [
+  const senderUsername = pickValue(payload, [
     "data.sender.username",
     "data.sender.handle",
-    "data.customer.username",
-    "data.customer.handle",
     "message.sender.username",
     "message.sender.handle",
     "sender.username",
-    "sender.handle",
+    "sender.handle"
+  ]);
+  const leadId = pickValue(payload, [
+    "data.customer.contactId",
+    "data.customer.contact_id",
+    "data.customer.id",
+    "data.customerId",
+    "data.customer_id",
+    "data.contact.contactId",
+    "data.contact.contact_id",
+    "data.contact.id",
+    "data.contactId",
+    "data.contact_id",
+    "data.participant.contactId",
+    "data.participant.contact_id",
+    "data.participant.id",
+    "data.participantId",
+    "data.participant_id",
+    "message.customer.contactId",
+    "message.customer.contact_id",
+    "message.customer.id",
+    "message.contact.contactId",
+    "message.contact.contact_id",
+    "message.contact.id",
+    "message.contactId",
+    "message.contact_id",
+    "contact.contactId",
+    "contact.contact_id",
+    "contact.id",
+    "customer.contactId",
+    "customer.contact_id",
+    "customer.id",
+    "contactId",
+    "contact_id"
+  ]);
+  const leadUsername = pickValue(payload, [
+    "data.customer.username",
+    "data.customer.handle",
+    "data.contact.username",
+    "data.contact.handle",
+    "data.participant.username",
+    "data.participant.handle",
+    "message.customer.username",
+    "message.customer.handle",
+    "message.contact.username",
+    "message.contact.handle",
+    "contact.username",
+    "contact.handle",
+    "customer.username",
+    "customer.handle",
     "username",
     "handle"
   ]);
@@ -2731,8 +2926,21 @@ function extractZernioIncomingMessage(payload) {
     "message.contact_id",
     "recipient.id",
     "recipientId",
-    "contactId",
-    "contact_id"
+    "recipient_id"
+  ]);
+  const recipientUsername = pickValue(payload, [
+    "data.recipient.username",
+    "data.recipient.handle",
+    "data.receiver.username",
+    "data.receiver.handle",
+    "message.recipient.username",
+    "message.recipient.handle",
+    "message.receiver.username",
+    "message.receiver.handle",
+    "recipient.username",
+    "recipient.handle",
+    "receiver.username",
+    "receiver.handle"
   ]);
   const timestamp = pickValue(payload, [
     "data.timestamp",
@@ -2752,9 +2960,27 @@ function extractZernioIncomingMessage(payload) {
   const senderText = senderId ? String(senderId) : "";
   const recipientText = recipientId ? String(recipientId) : "";
   const contactId =
-    normalizedDirection === "outgoing" || senderText === accountText
-      ? recipientText || (senderText !== accountText ? senderText : "")
-      : senderText || recipientText;
+    normalizedDirection === "outgoing"
+      ? firstUsefulIdentity(
+          [
+            { id: recipientText, username: recipientUsername },
+            { id: leadId, username: leadUsername },
+            { id: senderText, username: senderUsername }
+          ],
+          accountText
+        )
+      : firstUsefulIdentity(
+          [
+            { id: leadId, username: leadUsername },
+            { id: senderText, username: senderUsername },
+            { id: recipientText, username: recipientUsername }
+          ],
+          accountText
+        );
+  const username =
+    usefulUsername(leadUsername) ||
+    usefulUsername(senderUsername) ||
+    usefulUsername(recipientUsername);
 
   return {
     provider: "zernio",
@@ -3833,6 +4059,75 @@ async function processIncomingMessage(incoming, parsedPayload) {
     return;
   }
 
+  await scheduleIncomingReply(incoming, parsedPayload, conversationKey);
+}
+
+async function scheduleIncomingReply(incoming, parsedPayload, conversationKey) {
+  if (INCOMING_REPLY_DEBOUNCE_MS <= 0) {
+    await processIncomingReply(incoming, parsedPayload, conversationKey);
+    return;
+  }
+
+  const debounceKey = conversationKey || makeConversationKey(incoming);
+  const existing = pendingIncomingReplies.get(debounceKey);
+
+  if (existing?.timer) {
+    clearTimeout(existing.timer);
+  }
+
+  const timer = setTimeout(() => {
+    const pending = pendingIncomingReplies.get(debounceKey);
+    pendingIncomingReplies.delete(debounceKey);
+
+    if (!pending) {
+      return;
+    }
+
+    processIncomingReply(
+      pending.incoming,
+      pending.parsedPayload,
+      pending.conversationKey
+    ).catch((error) => {
+      appendAutomationEvent({
+        level: "error",
+        type: "processing_failed",
+        message: "Debounced webhook processing failed.",
+        talk_id: pending.incoming.talk_id,
+        contact_id: pending.incoming.contact_id,
+        conversation_key: pending.conversationKey,
+        reason: error.message
+      }).catch((loggingError) =>
+        console.error("Automation event logging failed:", loggingError)
+      );
+      console.error("Debounced webhook processing failed:", error);
+    });
+  }, INCOMING_REPLY_DEBOUNCE_MS);
+
+  pendingIncomingReplies.set(debounceKey, {
+    timer,
+    incoming,
+    parsedPayload,
+    conversationKey: debounceKey
+  });
+
+  await appendAutomationEvent({
+    level: "info",
+    type: "debounce_scheduled",
+    message: "Incoming reply queued briefly to combine rapid prospect messages.",
+    talk_id: incoming.talk_id,
+    contact_id: incoming.contact_id,
+    conversation_key: debounceKey,
+    reason: `${INCOMING_REPLY_DEBOUNCE_MS}ms`
+  });
+}
+
+async function processIncomingReply(incoming, parsedPayload, conversationKey) {
+  const memoryStore = await readStore();
+  const featureSettings = getFeatureSettings(memoryStore);
+  const memory = getConversationMemory(memoryStore, incoming);
+  const resolvedConversationKey = memory.key || conversationKey || makeConversationKey(incoming);
+  await writeStore(memoryStore);
+
   const ruleBasedReply = isBookingConfirmation(incoming.text)
     ? bookingConfirmationReply()
     : appointmentSetterRuleReply(memory, incoming);
@@ -3862,7 +4157,7 @@ async function processIncomingMessage(incoming, parsedPayload) {
           message: "Auto-sent rule-based reply.",
           talk_id: incoming.talk_id,
           contact_id: incoming.contact_id,
-          conversation_key: conversationKey
+          conversation_key: resolvedConversationKey
         });
         console.log(`Auto-sent rule-based reply for talk_id=${incoming.talk_id}.`);
         return;
@@ -4293,6 +4588,10 @@ app.get("/api/stats", async (req, res, next) => {
         follow_up_offsets_minutes: FOLLOW_UP_OFFSETS_MS.map((offsetMs) =>
           Math.round(offsetMs / 60_000)
         ),
+        app_build_marker: APP_BUILD_MARKER,
+        incoming_reply_debounce_ms: INCOMING_REPLY_DEBOUNCE_MS,
+        identity_guard_enabled: true,
+        self_usernames: Array.from(SELF_INSTAGRAM_USERNAMES),
         memory_store_messages: MAX_RECENT_MEMORY_MESSAGES,
         memory_prompt_messages: MAX_PROMPT_MEMORY_MESSAGES,
         custom_data_dir: Boolean(process.env.DATA_DIR),
