@@ -46,7 +46,7 @@ const FOLLOW_UP_OFFSETS_MS = [
 ];
 const FOLLOW_UP_CHECK_MS = 60 * 1000;
 const FOLLOW_UP_WINDOW_MS = 23 * 60 * 60 * 1000;
-const APP_BUILD_MARKER = "2026-08-09-calendar-sequence-booked-confirm-v1";
+const APP_BUILD_MARKER = "2026-08-09-segue-analytics-cleanup-v1";
 const DEFAULT_KPI_TARGETS = {
   daily_touch_points_target: 100,
   touch_pitch_min_rate: 10,
@@ -166,14 +166,14 @@ Best-performing DM flow:
 3. If they give useful context, mirror one specific detail so they feel heard.
 4. If they are only lightly curious, vague, or asking follow-up questions without clear start intent, say: "Got you. I have a short training video that explains how the pallet business works. Want me to send it?"
 5. If they say yes to the training video, send: "No problem. Here's the training video: https://www.palletprosacademy.com/training"
-6. If they say yes or clearly show they want to start, learn, get started, pursue it, or build a pallet business, say: "Great. Let's get on a Zoom call this week. That way we can research your market, answer any questions you have and see if you'd be a good fit for the program. Do you mind if I send you a link to my calendar?"
-6. Before sending the calendar link, ask permission in one short question: "Do you mind if I send you a link to my calendar?"
-7. If they say yes, do not ask anything else. Send the calendar in three short messages: first "Great. Give me one sec and I'll grab that link for you. ??", then after a 10-second pause "Here's the link to my calendar ??? - https://www.tidycal.com/palletprosga/15-minute-meeting", then 4 seconds later "I'll be by my phone for another 5 minutes. Choose a date/time that works for you and I'll verify it on my end."
-8. If they ask for a call, appointment, consultation, details, or scheduling directly, it is okay to send the booking link without asking permission again.
-9. If they mention a day/time instead of booking through the link, politely tell them to use the link to choose their time.
-10. If they ask for a direct phone call or share their phone number, tell them to book through the link instead.
-11. If they say they booked, reply: "Great. I'm looking forward to helping you get things started."
-12. Do not force every interested person through the exact same script. The flow is a guide, not a word-for-word requirement.
+6. If they say yes or clearly show they want to start, learn, get started, pursue it, or build a pallet business, use this segue first: "Solid. My academy can definitely help you get started making money in this business fast. Is that something you'd be interested in learning more about?"
+7. If they agree to that segue, say: "Great. Let's get on a Zoom call this week. That way we can research your market, answer any questions you have and see if you'd be a good fit for the program. Do you mind if I send you a link to my calendar?"
+8. If they agree to the calendar, do not ask anything else. Send the calendar in three short messages: first "Great. Give me one sec and I'll grab that link for you.", then after a 10-second pause "Here's the link to my calendar - https://www.tidycal.com/palletprosga/15-minute-meeting", then 4 seconds later "I'll be by my phone for another 5 minutes. Choose a date/time that works for you and I'll verify it on my end."
+9. If they ask for a call, appointment, consultation, details, or scheduling directly, it is okay to send the booking link without asking permission again.
+10. If they mention a day/time instead of booking through the link, politely tell them to use the link to choose their time.
+11. If they ask for a direct phone call or share their phone number, tell them to book through the link instead.
+12. If they say they booked, reply: "Great. I'm looking forward to helping you get things started."
+13. Do not force every interested person through the exact same script. The flow is a guide, not a word-for-word requirement.
 
 Reply length rules:
 - Default to 1 short sentence.
@@ -1778,6 +1778,15 @@ function appointmentSetterCalendarAskReply() {
   };
 }
 
+function appointmentSetterStartSegueReply() {
+  return {
+    reply:
+      "Solid. My academy can definitely help you get started making money in this business fast.\n\nIs that something you'd be interested in learning more about?",
+    needs_review: false,
+    handled: true
+  };
+}
+
 function leadTrackingId(messageLike = {}) {
   const contactId =
     normalizeProvider(messageLike.provider) === "zernio"
@@ -2127,7 +2136,7 @@ function lastAssistantAskedSoftLearningBridge(memory) {
     .some(
       (message) =>
         message.role === "assistant" &&
-        /(want to learn more|want to know more|want to look into it|something you'd want to learn more about|something you would want to learn more about|how does that sound)/i.test(
+        /(want to learn more|want to know more|want to look into it|something you'd want to learn more about|something you would want to learn more about|interested in learning more|how does that sound)/i.test(
           message.text || ""
         )
     );
@@ -2306,7 +2315,7 @@ function appointmentSetterRuleReply(memory, incoming) {
     !memory?.booking_link_sent &&
     !lastAssistantAskedForCalendarPermission(memory)
   ) {
-    return appointmentSetterCalendarAskReply();
+    return appointmentSetterStartSegueReply();
   }
 
   if (asksWhatCallIsAbout(text)) {
@@ -2366,7 +2375,7 @@ function appointmentSetterRuleReply(memory, incoming) {
     !memory?.booking_link_sent &&
     !memory?.booking_confirmed
   ) {
-    return appointmentSetterCalendarAskReply();
+    return appointmentSetterStartSegueReply();
   }
 
   if (
@@ -9898,7 +9907,7 @@ function renderModernHomePage() {
         <section class="mobile-screen" data-screen="stats" id="mobile-stats-screen">
           <div class="mobile-header compact">
             <h1>Stats</h1>
-            <p>Pipeline performance and goals.</p>
+            <p>Performance trends by timeframe.</p>
           </div>
           <div class="analytics-controls">
             <select id="analytics-range" aria-label="Analytics date range">
@@ -9927,8 +9936,6 @@ function renderModernHomePage() {
             <input id="analytics-start" type="date" aria-label="Custom start date">
             <input id="analytics-end" type="date" aria-label="Custom end date">
           </div>
-          <div class="grid kpis" id="mobile-full-kpis"></div>
-          <div class="funnel" id="mobile-full-funnel"></div>
           <div class="analytics-breakdown" id="analytics-breakdown"></div>
         </section>
 
@@ -10193,8 +10200,6 @@ function renderModernHomePage() {
     const mobileFeaturesEl = document.getElementById("mobile-features");
     const mobileDraftsEl = document.getElementById("mobile-drafts");
     const mobileDraftsCountEl = document.getElementById("mobile-drafts-count");
-    const mobileFullKpisEl = document.getElementById("mobile-full-kpis");
-    const mobileFullFunnelEl = document.getElementById("mobile-full-funnel");
     const analyticsRangeEl = document.getElementById("analytics-range");
     const analyticsGroupEl = document.getElementById("analytics-group");
     const analyticsStartEl = document.getElementById("analytics-start");
@@ -10668,8 +10673,6 @@ function renderModernHomePage() {
       mobileDiagnosisTitleEl.textContent = diagnosis.title || "Setter flow is healthy";
       mobileDiagnosisMessageEl.textContent = diagnosis.message || "Waiting for enough DM activity to diagnose.";
       renderFunnelInto(mobileFunnelDetailEl, data);
-      renderMetricCards(mobileFullKpisEl, data);
-      renderFunnelInto(mobileFullFunnelEl, data);
     }
 
     function renderStatuses(settings) {
