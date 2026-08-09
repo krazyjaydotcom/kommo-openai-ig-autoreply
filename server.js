@@ -44,7 +44,7 @@ const FOLLOW_UP_OFFSETS_MS = [
 ];
 const FOLLOW_UP_CHECK_MS = 60 * 1000;
 const FOLLOW_UP_WINDOW_MS = 23 * 60 * 60 * 1000;
-const APP_BUILD_MARKER = "2026-08-08-dashboard-clickfix-v1";
+const APP_BUILD_MARKER = "2026-08-08-touchpoint-namefix-v1";
 const DEFAULT_KPI_TARGETS = {
   daily_touch_points_target: 100,
   touch_pitch_min_rate: 10,
@@ -1008,6 +1008,21 @@ function usefulIdentityId(id, accountId = "", username = "") {
 function usefulUsername(username) {
   const value = cleanUsername(username);
   return value && !isSelfUsername(value) ? value : "";
+}
+
+function looksLikeInternalIdentifier(value) {
+  const text = String(value || "").trim();
+  if (!text) {
+    return true;
+  }
+
+  return Boolean(
+    text.includes(":") ||
+      /^zernio/i.test(text) ||
+      /^\d{8,}$/.test(text) ||
+      /^[a-f0-9]{16,}$/i.test(text) ||
+      /^[a-z0-9_-]{20,}$/i.test(text)
+  );
 }
 
 function firstUsefulIdentity(candidates, accountId = "") {
@@ -2939,19 +2954,60 @@ function derivedKpiEvents(store) {
   }
 
   for (const memory of Object.values(store.conversations || {})) {
+    const conversationId = conversationIdentifier(memory);
+    const prospectId = memory.contact_id || memory.chat_id || conversationId;
+    const touchedDays = new Map();
     const messages = Array.isArray(memory?.last_messages) ? memory.last_messages : [];
+    const touchTimes = messages
+      .map((message) => message?.at)
+      .filter(Boolean);
+
+    if (!touchTimes.length) {
+      [
+        memory.last_incoming_at,
+        memory.last_outgoing_at,
+        memory.booking_link_clicked_at,
+        memory.booking_confirmed_at
+      ]
+        .filter(Boolean)
+        .forEach((value) => touchTimes.push(value));
+    }
+
+    for (const at of touchTimes) {
+      const parsed = Date.parse(String(at || ""));
+      if (!Number.isFinite(parsed)) continue;
+      const timestamp = new Date(parsed).toISOString();
+      const day = businessDateKey(timestamp);
+      if (!touchedDays.has(day)) {
+        touchedDays.set(day, timestamp);
+      }
+    }
+
+    for (const [day, timestamp] of touchedDays) {
+      events.push({
+        id: `conversation-touch:${day}:${conversationId}`,
+        type: "touch_point",
+        timestamp,
+        business_day: day,
+        conversation_id: conversationId,
+        prospect_id: prospectId,
+        source: "conversation_memory",
+        derived: true
+      });
+    }
+
     const pitchedMessage = messages.find(
       (message) => message.role === "assistant" && replyPitchesCall(message.text)
     );
     if (memory.call_pitched || pitchedMessage) {
       const at = memory.call_pitched_at || pitchedMessage?.at || memory.last_outgoing_at || new Date().toISOString();
       events.push({
-        id: `legacy-pitch:${conversationIdentifier(memory)}:${businessDateKey(at)}`,
+        id: `legacy-pitch:${conversationId}:${businessDateKey(at)}`,
         type: "call_pitched",
         timestamp: at,
         business_day: businessDateKey(at),
-        conversation_id: conversationIdentifier(memory),
-        prospect_id: conversationIdentifier(memory),
+        conversation_id: conversationId,
+        prospect_id: prospectId,
         source: "conversation_memory",
         derived: true
       });
@@ -2959,12 +3015,12 @@ function derivedKpiEvents(store) {
     if (memory.appointment_status === "showed") {
       const at = memory.appointment_status_at || memory.booking_confirmed_at || memory.last_outgoing_at || new Date().toISOString();
       events.push({
-        id: `legacy-show:${conversationIdentifier(memory)}:${businessDateKey(at)}`,
+        id: `legacy-show:${conversationId}:${businessDateKey(at)}`,
         type: "call_showed",
         timestamp: at,
         business_day: businessDateKey(at),
-        conversation_id: conversationIdentifier(memory),
-        prospect_id: conversationIdentifier(memory),
+        conversation_id: conversationId,
+        prospect_id: prospectId,
         source: "manual_status",
         derived: true
       });
@@ -2972,12 +3028,12 @@ function derivedKpiEvents(store) {
     if (memory.appointment_status === "no_show") {
       const at = memory.appointment_status_at || new Date().toISOString();
       events.push({
-        id: `legacy-noshow:${conversationIdentifier(memory)}:${businessDateKey(at)}`,
+        id: `legacy-noshow:${conversationId}:${businessDateKey(at)}`,
         type: "call_no_show",
         timestamp: at,
         business_day: businessDateKey(at),
-        conversation_id: conversationIdentifier(memory),
-        prospect_id: conversationIdentifier(memory),
+        conversation_id: conversationId,
+        prospect_id: prospectId,
         source: "manual_status",
         derived: true
       });
@@ -3299,6 +3355,8 @@ function publicConversation(memory, settings = {}, store = null) {
     key: memory.key,
     provider: normalizeProvider(memory.provider),
     contact_id: memory.contact_id || "",
+    display_name: conversationDisplayName(memory),
+    profile_status: memory.username ? "resolved" : "missing_username",
     username: memory.username || "",
     avatar_url: cacheableAvatarUrl(memory.avatar_url),
     talk_id: memory.current_talk_id || "",
@@ -3350,7 +3408,16 @@ function publicConversation(memory, settings = {}, store = null) {
 }
 
 function conversationDisplayName(memory) {
-  return memory.username || memory.contact_id || memory.chat_id || memory.key || "Unknown";
+  if (memory.username) {
+    return `@${memory.username}`;
+  }
+
+  const candidate = memory.contact_id || memory.chat_id || memory.current_talk_id || memory.key;
+  if (candidate && !looksLikeInternalIdentifier(candidate)) {
+    return String(candidate);
+  }
+
+  return "Instagram lead";
 }
 
 function conversationGhosted(memory, nowMs = Date.now()) {
@@ -3714,36 +3781,109 @@ function extractZernioIncomingMessage(payload) {
     "contact_id"
   ]);
   const leadUsername = pickValue(payload, [
+    "data.user.username",
+    "data.user.handle",
+    "data.sender.username",
+    "data.sender.handle",
     "data.customer.username",
     "data.customer.handle",
+    "data.customer.profile.username",
+    "data.customer.profile.handle",
+    "data.customer.social.username",
+    "data.customer.social.handle",
     "data.contact.username",
     "data.contact.handle",
+    "data.contact.profile.username",
+    "data.contact.profile.handle",
+    "data.contact.social.username",
+    "data.contact.social.handle",
     "data.participant.username",
     "data.participant.handle",
+    "data.instagram.username",
+    "data.instagram.handle",
+    "message.user.username",
+    "message.user.handle",
+    "message.sender.username",
+    "message.sender.handle",
     "message.customer.username",
     "message.customer.handle",
+    "message.customer.profile.username",
+    "message.customer.profile.handle",
+    "message.customer.social.username",
+    "message.customer.social.handle",
     "message.contact.username",
     "message.contact.handle",
+    "message.contact.profile.username",
+    "message.contact.profile.handle",
+    "message.contact.social.username",
+    "message.contact.social.handle",
+    "message.participant.username",
+    "message.participant.handle",
+    "message.instagram.username",
+    "message.instagram.handle",
+    "sender.username",
+    "sender.handle",
     "contact.username",
     "contact.handle",
+    "contact.profile.username",
+    "contact.profile.handle",
+    "contact.social.username",
+    "contact.social.handle",
     "customer.username",
     "customer.handle",
+    "customer.profile.username",
+    "customer.profile.handle",
+    "customer.social.username",
+    "customer.social.handle",
+    "participant.username",
+    "participant.handle",
+    "instagram.username",
+    "instagram.handle",
+    "from.username",
+    "from.handle",
     "username",
     "handle"
   ]);
   const avatarUrl = pickValue(payload, [
+    "data.user.profile_pic",
+    "data.user.profilePic",
+    "data.user.avatar",
     "data.sender.profile_pic",
     "data.sender.profilePic",
     "data.sender.avatar",
     "data.customer.profile_pic",
     "data.customer.profilePic",
     "data.customer.avatar",
+    "data.customer.profile.profile_pic",
+    "data.customer.profile.profilePic",
+    "data.customer.profile.avatar",
+    "data.contact.profile_pic",
+    "data.contact.profilePic",
+    "data.contact.avatar",
+    "data.contact.profile.profile_pic",
+    "data.contact.profile.profilePic",
+    "data.contact.profile.avatar",
+    "data.instagram.profile_pic",
+    "data.instagram.profilePic",
+    "data.instagram.avatar",
+    "message.user.profile_pic",
+    "message.user.profilePic",
+    "message.user.avatar",
     "message.sender.profile_pic",
     "message.sender.profilePic",
     "message.sender.avatar",
     "sender.profile_pic",
     "sender.profilePic",
     "sender.avatar",
+    "contact.profile_pic",
+    "contact.profilePic",
+    "contact.avatar",
+    "customer.profile_pic",
+    "customer.profilePic",
+    "customer.avatar",
+    "instagram.profile_pic",
+    "instagram.profilePic",
+    "instagram.avatar",
     "profile_pic",
     "avatar",
     "avatar_url"
@@ -4450,6 +4590,14 @@ async function recordOutgoingForMemory(messageLike, replyText, options = {}) {
       dedupe_key: `booking_link_sent:${businessDateKey(sentAt)}:${conversationKey}`
     });
   }
+  recordKpiEvent(store, {
+    type: "touch_point",
+    timestamp: sentAt,
+    conversation_id: conversationKey,
+    prospect_id: messageLike.contact_id || messageLike.chat_id || conversationKey,
+    source: `${source}_outgoing`,
+    dedupe_key: `touch_point:${businessDateKey(sentAt)}:${conversationKey}`
+  });
   if (source === "follow_up") {
     recordKpiEvent(store, {
       type: "follow_up",
@@ -9404,8 +9552,47 @@ function renderModernHomePage() {
     }
 
     function initials(conversation) {
-      const source = conversation.username || conversation.contact_id || conversation.talk_id || "IG";
+      const source = displayLeadName(conversation) || "IG";
       return String(source).replace(/[^a-z0-9]/gi, "").slice(0, 2).toUpperCase() || "IG";
+    }
+
+    function looksLikeInternalId(value) {
+      const text = String(value || "").trim();
+      if (!text) return true;
+      return Boolean(
+        text.includes(":") ||
+          /^zernio/i.test(text) ||
+          /^\d{8,}$/.test(text) ||
+          /^[a-f0-9]{16,}$/i.test(text) ||
+          /^[a-z0-9_-]{20,}$/i.test(text)
+      );
+    }
+
+    function displayLeadName(conversation) {
+      if (!conversation) return "Instagram lead";
+      if (conversation.display_name && !looksLikeInternalId(conversation.display_name)) {
+        return conversation.display_name;
+      }
+      if (conversation.username) {
+        return "@" + String(conversation.username).replace(/^@/, "");
+      }
+      const candidate = conversation.contact_id || conversation.talk_id || conversation.key || "";
+      if (candidate && !looksLikeInternalId(candidate)) {
+        return String(candidate);
+      }
+      return "Instagram lead";
+    }
+
+    function displayLeadSubtitle(conversation) {
+      if (!conversation) return "Profile name unavailable";
+      if (conversation.username) {
+        return conversation.origin || "instagram";
+      }
+      const candidate = conversation.contact_id || conversation.talk_id || conversation.key || "";
+      if (candidate && looksLikeInternalId(candidate)) {
+        return "Profile name unavailable";
+      }
+      return conversation.origin || "instagram";
     }
 
     function relativeTime(value) {
@@ -9805,11 +9992,11 @@ function renderModernHomePage() {
     function renderCompanion(conversation) {
       if (!conversation) return;
       renderCompanionAvatar(conversation);
-      companionTitleEl.textContent = conversation.username ? "@" + conversation.username : conversation.contact_id || conversation.talk_id || "Instagram lead";
+      companionTitleEl.textContent = displayLeadName(conversation);
       companionSubtitleEl.textContent =
         conversation.ai_paused || conversation.manual_takeover_active
           ? "Bot paused"
-          : "Active now";
+          : displayLeadSubtitle(conversation);
       if (companionAppointmentPanelEl) {
         companionAppointmentPanelEl.hidden = !conversation.booking_confirmed && !conversation.call_pitched;
         companionAppointmentStatusEl.textContent =
@@ -10008,10 +10195,10 @@ function renderModernHomePage() {
       const info = document.createElement("div");
       const name = document.createElement("strong");
       name.className = "lead-name";
-      name.textContent = conversation.username ? "@" + conversation.username : conversation.contact_id || conversation.talk_id || "Instagram lead";
+      name.textContent = displayLeadName(conversation);
       const meta = document.createElement("div");
       meta.className = "lead-meta";
-      meta.textContent = formatDate(conversation.last_incoming_at || conversation.last_outgoing_at) + " · " + (conversation.origin || "instagram");
+      meta.textContent = formatDate(conversation.last_incoming_at || conversation.last_outgoing_at) + " | " + displayLeadSubtitle(conversation);
       info.append(name, meta);
 
       const status = document.createElement("span");
@@ -10089,6 +10276,7 @@ function renderModernHomePage() {
       const search = state.inboxSearch.trim().toLowerCase();
       const filtered = (conversations || []).filter((conversation) => {
         const haystack = [
+          conversation.display_name,
           conversation.username,
           conversation.contact_id,
           conversation.talk_id,
@@ -10140,9 +10328,7 @@ function renderModernHomePage() {
         const body = document.createElement("div");
         const name = document.createElement("strong");
         name.className = "thread-name";
-        name.textContent = conversation.username
-          ? "@" + conversation.username
-          : conversation.contact_id || conversation.talk_id || "Instagram lead";
+        name.textContent = displayLeadName(conversation);
         const preview = document.createElement("span");
         preview.className = "thread-preview";
         preview.textContent =
