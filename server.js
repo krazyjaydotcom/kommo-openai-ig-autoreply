@@ -44,7 +44,7 @@ const FOLLOW_UP_OFFSETS_MS = [
 ];
 const FOLLOW_UP_CHECK_MS = 60 * 1000;
 const FOLLOW_UP_WINDOW_MS = 23 * 60 * 60 * 1000;
-const APP_BUILD_MARKER = "2026-08-08-context-follow-ups-v1";
+const APP_BUILD_MARKER = "2026-08-08-setter-coach-v1";
 const DEFAULT_KPI_TARGETS = {
   daily_touch_points_target: 100,
   touch_pitch_min_rate: 10,
@@ -1305,6 +1305,13 @@ function getConversationMemory(store, messageLike) {
       ai_paused: false,
       manual_takeover_until: null,
       manual_takeover_since: null,
+      needs_human_review: false,
+      needs_human_review_reason: "",
+      needs_human_review_at: null,
+      hot_reason: "",
+      hot_at: null,
+      last_reply_reason: "",
+      reply_reason_history: [],
       pending_app_outgoing: [],
       last_incoming_at: null,
       last_outgoing_at: null,
@@ -1364,6 +1371,15 @@ function getConversationMemory(store, messageLike) {
   memory.lead_status = classifyLeadStatus(memory);
   memory.manual_takeover_until = memory.manual_takeover_until || null;
   memory.manual_takeover_since = memory.manual_takeover_since || null;
+  memory.needs_human_review = Boolean(memory.needs_human_review);
+  memory.needs_human_review_reason = memory.needs_human_review_reason || "";
+  memory.needs_human_review_at = memory.needs_human_review_at || null;
+  memory.hot_reason = memory.hot_reason || "";
+  memory.hot_at = memory.hot_at || null;
+  memory.last_reply_reason = memory.last_reply_reason || "";
+  memory.reply_reason_history = Array.isArray(memory.reply_reason_history)
+    ? memory.reply_reason_history
+    : [];
   memory.pending_app_outgoing = Array.isArray(memory.pending_app_outgoing)
     ? memory.pending_app_outgoing
     : [];
@@ -1378,7 +1394,8 @@ function addMemoryMessage(memory, message) {
     text: String(message.text || "").slice(0, 1200),
     at: message.at || new Date().toISOString(),
     id: message.id || "",
-    source: message.source || ""
+    source: message.source || "",
+    reason: message.reason || ""
   });
   memory.last_messages = memory.last_messages.slice(-MAX_RECENT_MEMORY_MESSAGES);
 }
@@ -1579,6 +1596,128 @@ function detectQuestionKeys(text) {
 
 function replyLooksLikeQuestion(text) {
   return String(text || "").includes("?");
+}
+
+function humanEscalationReason(text) {
+  const lower = String(text || "").toLowerCase();
+
+  if (/\b(stop|unsubscribe|remove me|leave me alone|don't message me|do not message me)\b/.test(lower)) {
+    return "Prospect asked not to be messaged.";
+  }
+
+  if (/\b(bot|automated|automation|real person|human|not a real person)\b/.test(lower)) {
+    return "Prospect questioned whether this is a real person.";
+  }
+
+  if (/\b(refund|chargeback|lawsuit|lawyer|attorney|legal|sue|complaint)\b/.test(lower)) {
+    return "Legal, refund, or complaint language needs manual handling.";
+  }
+
+  if (/\b(ssn|social security|bank account|routing number|credit card|debit card|password)\b/.test(lower)) {
+    return "Private financial or sensitive information was mentioned.";
+  }
+
+  if (/\b(fuck|bullshit|scam ass|fake ass|stop playing|you lying|you're lying|u lying)\b/.test(lower)) {
+    return "Angry or high-risk tone needs manual handling.";
+  }
+
+  return "";
+}
+
+function hotLeadReason(text) {
+  const lower = String(text || "").toLowerCase();
+
+  if (/\b(book|schedule|calendar|appointment|zoom|call|talk|consultation|meeting)\b/.test(lower)) {
+    return "Asked about booking or talking.";
+  }
+
+  if (/\b(ready|start now|get started|sign me up|join|program|academy|interested|i'm down|lets do it|let's do it)\b/.test(lower)) {
+    return "Showed direct interest in starting.";
+  }
+
+  if (/\b(price|cost|how much|payment|invest|investment)\b/.test(lower)) {
+    return "Asked about price or investment.";
+  }
+
+  if (/\b(truck|trailer|warehouse|pallet business|pallet company|buyers|contracts|clients|customers)\b/.test(lower)) {
+    return "Mentioned assets, current business, or buyer problem.";
+  }
+
+  return "";
+}
+
+function objectionReason(text) {
+  const lower = String(text || "").toLowerCase();
+
+  if (/\b(price|cost|how much|expensive|afford|money)\b/.test(lower)) return "price";
+  if (/\b(buyer|buyers|client|clients|customer|customers|contract|contracts)\b/.test(lower)) return "buyers";
+  if (/\b(truck|trailer|vehicle|flatbed)\b/.test(lower)) return "equipment";
+  if (/\b(area|market|city|state|near me|local)\b/.test(lower)) return "market";
+  if (/\b(legit|proof|scam|real|work)\b/.test(lower)) return "trust";
+  if (/\b(how does|how do|what is|explain)\b/.test(lower)) return "how_it_works";
+  return "";
+}
+
+function replyReasonForText(replyText, { source = "ai", memory = null } = {}) {
+  const text = String(replyText || "");
+
+  if (source === "manual" || source === "manual_approval" || source === "manual_booking_link") {
+    return source;
+  }
+
+  if (source === "follow_up") {
+    const trigger = String(memory?.follow_up?.trigger_type || "");
+    return trigger ? `follow_up_${trigger}` : "follow_up";
+  }
+
+  if (linkStatsForText(text).booking_links_sent) return "calendar_link_sent";
+  if (text.includes(YOUTUBE_URL) || text.includes(TRAINING_PLAYLIST_URL)) {
+    return memory?.booking_confirmed ? "booked_training_sent" : "content_redirect";
+  }
+  if (/send you a link to my calendar|send (?:you )?(?:the|a) calendar link|link to my calendar|calendar link/i.test(text)) {
+    return "calendar_permission_ask";
+  }
+  if (/something you(?:'d| would)? want to learn more about|want to learn more|learn more about/i.test(text)) {
+    return "answered_question_soft_bridge";
+  }
+  if (/research your market|see if you'd be a good fit|see where you may be able to find buyers/i.test(text)) {
+    return "zoom_positioning";
+  }
+  if (replyPitchesCall(text)) return "call_pitch";
+  return "context_reply";
+}
+
+function noteReplyReason(memory, reason, at = new Date().toISOString()) {
+  if (!reason) return;
+  memory.last_reply_reason = reason;
+  memory.reply_reason_history = Array.isArray(memory.reply_reason_history)
+    ? memory.reply_reason_history
+    : [];
+  memory.reply_reason_history.push({ reason, at });
+  memory.reply_reason_history = memory.reply_reason_history.slice(-50);
+}
+
+function noteIncomingSignals(memory, incomingText, incomingAt) {
+  const escalation = humanEscalationReason(incomingText);
+  if (escalation) {
+    memory.needs_human_review = true;
+    memory.needs_human_review_reason = escalation;
+    memory.needs_human_review_at = incomingAt;
+    memory.ai_paused = true;
+    cancelFollowUp(memory);
+  }
+
+  const hot = hotLeadReason(incomingText);
+  if (hot) {
+    memory.hot_reason = hot;
+    memory.hot_at = incomingAt;
+  }
+
+  const objection = objectionReason(incomingText);
+  if (objection) {
+    memory.last_objection = objection;
+    memory.last_objection_at = incomingAt;
+  }
 }
 
 function updateLinkMemory(memory, text) {
@@ -3187,6 +3326,17 @@ function publicConversation(memory, settings = {}, store = null) {
       settings.manual_takeover_until || memory.manual_takeover_until || null,
     call_pitched: Boolean(memory.call_pitched),
     call_pitched_at: memory.call_pitched_at || null,
+    needs_human_review: Boolean(memory.needs_human_review),
+    needs_human_review_reason: memory.needs_human_review_reason || "",
+    needs_human_review_at: memory.needs_human_review_at || null,
+    hot_reason: memory.hot_reason || "",
+    hot_at: memory.hot_at || null,
+    last_objection: memory.last_objection || "",
+    last_objection_at: memory.last_objection_at || null,
+    last_reply_reason: memory.last_reply_reason || "",
+    reply_reason_history: Array.isArray(memory.reply_reason_history)
+      ? memory.reply_reason_history.slice(-10)
+      : [],
     booking_link_sent: Boolean(memory.booking_link_sent),
     booking_link_clicked: Boolean(memory.booking_link_clicked),
     booking_link_clicked_at: memory.booking_link_clicked_at || null,
@@ -3196,6 +3346,101 @@ function publicConversation(memory, settings = {}, store = null) {
     appointment_status: memory.appointment_status || "unknown",
     appointment_status_at: memory.appointment_status_at || null,
     follow_up: memory.follow_up || {}
+  };
+}
+
+function conversationDisplayName(memory) {
+  return memory.username || memory.contact_id || memory.chat_id || memory.key || "Unknown";
+}
+
+function conversationGhosted(memory, nowMs = Date.now()) {
+  if (!memory || memory.booking_confirmed || memory.needs_human_review) return false;
+  const lastIncomingMs = memory.last_incoming_at ? Date.parse(memory.last_incoming_at) : 0;
+  const lastOutgoingMs = memory.last_outgoing_at ? Date.parse(memory.last_outgoing_at) : 0;
+  if (!lastOutgoingMs || (lastIncomingMs && lastIncomingMs > lastOutgoingMs)) return false;
+  return nowMs - lastOutgoingMs >= 4 * 60 * 60 * 1000;
+}
+
+function setterReviewForTimeframe(store, timeframe = "7d") {
+  const nowMs = Date.now();
+  const conversations = Object.values(store.conversations || {})
+    .filter((memory) => conversationInTimeframe(memory, timeframe))
+    .sort((a, b) => {
+      const left = Date.parse(b.last_incoming_at || b.last_outgoing_at || 0);
+      const right = Date.parse(a.last_incoming_at || a.last_outgoing_at || 0);
+      return left - right;
+    });
+  const replyReasons = {};
+  const objections = {};
+  const hot_leads = [];
+  const needs_me = [];
+  const ghosted = [];
+
+  for (const memory of conversations) {
+    for (const item of memory.reply_reason_history || []) {
+      const reason = String(item?.reason || "unknown");
+      replyReasons[reason] = (replyReasons[reason] || 0) + 1;
+    }
+
+    if (memory.last_objection) {
+      objections[memory.last_objection] = (objections[memory.last_objection] || 0) + 1;
+    }
+
+    const summary = {
+      key: memory.key,
+      name: conversationDisplayName(memory),
+      username: memory.username || "",
+      last_incoming_at: memory.last_incoming_at || "",
+      last_outgoing_at: memory.last_outgoing_at || "",
+      last_reply_reason: memory.last_reply_reason || "",
+      last_objection: memory.last_objection || "",
+      last_message:
+        (Array.isArray(memory.last_messages) && memory.last_messages.length
+          ? memory.last_messages[memory.last_messages.length - 1]?.text
+          : memory.summary) || ""
+    };
+
+    if (memory.hot_reason && !memory.booking_confirmed) {
+      hot_leads.push({ ...summary, reason: memory.hot_reason, at: memory.hot_at || "" });
+    }
+
+    if (memory.needs_human_review) {
+      needs_me.push({
+        ...summary,
+        reason: memory.needs_human_review_reason || "Needs manual review.",
+        at: memory.needs_human_review_at || ""
+      });
+    }
+
+    if (conversationGhosted(memory, nowMs)) {
+      ghosted.push({
+        ...summary,
+        reason: memory.last_reply_reason || "No prospect response after outgoing message.",
+        at: memory.last_outgoing_at || ""
+      });
+    }
+  }
+
+  const reasonBreakdown = Object.entries(replyReasons)
+    .sort(([, a], [, b]) => b - a)
+    .map(([reason, count]) => ({ reason, count }));
+  const objectionBreakdown = Object.entries(objections)
+    .sort(([, a], [, b]) => b - a)
+    .map(([reason, count]) => ({ reason, count }));
+
+  return {
+    timeframe,
+    totals: {
+      conversations: conversations.length,
+      hot_leads: hot_leads.length,
+      needs_me: needs_me.length,
+      ghosted: ghosted.length
+    },
+    reply_reasons: reasonBreakdown,
+    objections: objectionBreakdown,
+    hot_leads: hot_leads.slice(0, 25),
+    needs_me: needs_me.slice(0, 25),
+    ghosted: ghosted.slice(0, 25)
   };
 }
 
@@ -4119,6 +4364,7 @@ async function recordIncomingForMemory(incoming, featureSettings) {
       dedupe_key: `touch_point:${businessDateKey(incomingAt)}:${memory.key}`
     });
     memory.last_incoming_at = incomingAt;
+    noteIncomingSignals(memory, incoming.text, incomingAt);
     if (isBookingConfirmation(incoming.text)) {
       const wasConfirmed = Boolean(memory.booking_confirmed);
       memory.booking_confirmed = true;
@@ -4159,6 +4405,8 @@ async function recordOutgoingForMemory(messageLike, replyText, options = {}) {
   const sentAtMs = Date.now();
   const sentAt = new Date(sentAtMs).toISOString();
   const source = options.source || "ai";
+  const replyReason =
+    options.reason || replyReasonForText(replyText, { source, memory });
   const replyComparable = comparableText(replyText);
 
   memory.pending_app_outgoing = memory.pending_app_outgoing.filter((item) => {
@@ -4172,10 +4420,12 @@ async function recordOutgoingForMemory(messageLike, replyText, options = {}) {
     text: replyText,
     at: sentAt,
     id: options.messageId || "",
-    source
+    source,
+    reason: replyReason
   });
   memory.last_outgoing_at = sentAt;
   memory.last_outgoing_source = source;
+  noteReplyReason(memory, replyReason, sentAt);
   updateLinkMemory(memory, replyText);
   const linkStats = linkStatsForText(replyText);
   if (replyPitchesCall(replyText) || linkStats.booking_links_sent) {
@@ -4749,6 +4999,35 @@ async function processIncomingMessage(incoming, parsedPayload) {
       conversation_key: conversationKey,
       reason: incoming.incoming_message_id
     });
+    return;
+  }
+
+  if (memory?.needs_human_review && memory.needs_human_review_at === memory.last_incoming_at) {
+    await saveDraft({
+      provider: normalizeProvider(incoming.provider),
+      conversation_key: conversationKey,
+      talk_id: incoming.talk_id,
+      chat_id: incoming.chat_id,
+      contact_id: incoming.contact_id,
+      zernio_conversation_id: incoming.zernio_conversation_id,
+      zernio_account_id: incoming.zernio_account_id,
+      incoming_message_id: incoming.incoming_message_id,
+      incoming_text: incoming.text,
+      origin: incoming.origin,
+      reply: "",
+      needs_review: true,
+      reason: memory.needs_human_review_reason || "Needs manual review."
+    });
+    await appendAutomationEvent({
+      level: "warn",
+      type: "needs_human_review",
+      message: "Automation paused for this prospect; manual review required.",
+      talk_id: incoming.talk_id,
+      contact_id: incoming.contact_id,
+      conversation_key: conversationKey,
+      reason: memory.needs_human_review_reason || ""
+    });
+    console.log(`Paused automation for ${conversationKey}: ${memory.needs_human_review_reason}`);
     return;
   }
 
@@ -5604,6 +5883,16 @@ app.get("/api/conversations", async (req, res, next) => {
   }
 });
 
+app.get("/api/setter-review", async (req, res, next) => {
+  try {
+    const store = await readStore();
+    const timeframe = resolveTimeframe(req.query.timeframe || "7d");
+    res.json(setterReviewForTimeframe(store, timeframe));
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post("/api/conversations/:key/pause", async (req, res, next) => {
   try {
     const store = await readStore();
@@ -5645,6 +5934,9 @@ app.post("/api/conversations/:key/resume", async (req, res, next) => {
     memory.ai_paused = false;
     memory.manual_takeover_until = null;
     memory.manual_takeover_since = null;
+    memory.needs_human_review = false;
+    memory.needs_human_review_reason = "";
+    memory.needs_human_review_at = null;
     refreshMemorySummary(memory);
 
     await writeStore(store);
@@ -7643,6 +7935,56 @@ function renderModernHomePage() {
       color: #ffd8de;
     }
 
+    .review-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .review-card {
+      background: rgba(15, 23, 42, 0.5);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      min-height: 150px;
+    }
+
+    .review-card h3 {
+      margin: 0 0 8px;
+      font-size: 13px;
+    }
+
+    .review-card ul {
+      display: grid;
+      gap: 7px;
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+
+    .review-card li {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .review-card strong {
+      color: var(--text);
+      display: block;
+      font-size: 12px;
+    }
+
+    .review-card .reason-pill {
+      background: rgba(59, 130, 246, 0.12);
+      border: 1px solid rgba(59, 130, 246, 0.22);
+      border-radius: 999px;
+      color: #bfdbfe;
+      display: inline-block;
+      font-size: 10px;
+      margin-top: 3px;
+      padding: 2px 6px;
+    }
+
     .controls {
       display: grid;
       gap: 8px;
@@ -8910,6 +9252,14 @@ function renderModernHomePage() {
 
       <section class="card panel desktop-shell" style="margin-top:14px;">
         <div class="panel-head">
+          <h2>Setter Review</h2>
+          <span class="panel-note">Hot leads, ghosting, reply reasons</span>
+        </div>
+        <div class="review-grid" id="setter-review"></div>
+      </section>
+
+      <section class="card panel desktop-shell" style="margin-top:14px;">
+        <div class="panel-head">
           <h2>Pending Drafts</h2>
           <span class="panel-note">Approval queue</span>
         </div>
@@ -8960,6 +9310,7 @@ function renderModernHomePage() {
     };
     const conversationsEl = document.getElementById("conversations");
     const draftsEl = document.getElementById("drafts");
+    const setterReviewEl = document.getElementById("setter-review");
     const featuresEl = document.getElementById("features");
     const flagsEl = document.getElementById("flags");
     const automationEventsEl = document.getElementById("automation-events");
@@ -9075,6 +9426,10 @@ function renderModernHomePage() {
     }
 
     function needsHumanAttention(conversation) {
+      if (conversation.needs_human_review) {
+        return true;
+      }
+
       const lastMessage = conversation.last_message || {};
       const lastUserMs = Date.parse(conversation.last_incoming_at || "");
       const lastOutMs = Date.parse(conversation.last_outgoing_at || "");
@@ -9406,7 +9761,7 @@ function renderModernHomePage() {
           label +
           "</strong><small>" +
           description +
-          "</small></span><span class=\\"switch-dot\\" aria-hidden=\\"true\\"></span>";
+          "</small></span><span class=\"switch-dot\" aria-hidden=\"true\"></span>";
         mobileButton.addEventListener("click", async () => {
           mobileButton.disabled = true;
           setStatus("Saving " + label + "...");
@@ -9547,6 +9902,8 @@ function renderModernHomePage() {
 
     function statusTags(conversation) {
       const tags = [];
+      if (conversation.needs_human_review) tags.push(["Needs Me", "red"]);
+      if (conversation.hot_reason && !conversation.booking_confirmed) tags.push(["Hot", "gold"]);
       if (conversation.last_outgoing_at) tags.push(["AI Replied", "green"]);
       if (conversation.booking_link_sent) tags.push(["Link Sent", "blue"]);
       if (conversation.booking_link_clicked) tags.push(["Link Clicked", "gold"]);
@@ -9960,6 +10317,59 @@ function renderModernHomePage() {
       });
     }
 
+    function renderSetterReview(review) {
+      if (!setterReviewEl) return;
+      const safe = review || {};
+      const sections = [
+        ["Hot Leads", safe.hot_leads || [], "No hot leads in this range."],
+        ["Needs Me", safe.needs_me || [], "No manual-review threads."],
+        ["Ghosted", safe.ghosted || [], "No ghosted threads yet."],
+        [
+          "Reply Reasons",
+          (safe.reply_reasons || []).map((item) => ({
+            name: String(item.reason || "unknown").replaceAll("_", " "),
+            reason: String(item.count || 0) + " replies",
+            last_message: ""
+          })),
+          "No reply reasons logged yet."
+        ]
+      ];
+
+      setterReviewEl.innerHTML = "";
+      sections.forEach(([title, rows, emptyText]) => {
+        const card = document.createElement("article");
+        card.className = "review-card";
+        const heading = document.createElement("h3");
+        heading.textContent = title;
+        const list = document.createElement("ul");
+        const visible = rows.slice(0, 5);
+
+        if (!visible.length) {
+          const empty = document.createElement("li");
+          empty.textContent = emptyText;
+          list.appendChild(empty);
+        } else {
+          visible.forEach((row) => {
+            const item = document.createElement("li");
+            const name = document.createElement("strong");
+            name.textContent = row.name || row.username || "Unknown";
+            const detail = document.createElement("span");
+            detail.textContent = row.last_message || row.reason || "";
+            const pill = document.createElement("span");
+            pill.className = "reason-pill";
+            pill.textContent = String(row.reason || row.last_reply_reason || "").replaceAll("_", " ");
+            item.append(name);
+            if (detail.textContent) item.appendChild(detail);
+            if (pill.textContent) item.appendChild(pill);
+            list.appendChild(item);
+          });
+        }
+
+        card.append(heading, list);
+        setterReviewEl.appendChild(card);
+      });
+    }
+
     function renderAnalyticsBreakdown(analytics) {
       if (!analyticsBreakdownEl) return;
       const rows = analytics && Array.isArray(analytics.breakdown) ? analytics.breakdown.slice(-12) : [];
@@ -10021,11 +10431,12 @@ function renderModernHomePage() {
       if (!silent) setStatus("Refreshing...");
       try {
         const query = "?timeframe=" + encodeURIComponent(state.timeframe);
-        const [stats, conversations, drafts, events] = await Promise.all([
+        const [stats, conversations, drafts, events, review] = await Promise.all([
           api("/api/stats" + query),
           api("/api/conversations" + query),
           api("/api/drafts"),
-          api("/api/automation-events?limit=25")
+          api("/api/automation-events?limit=25"),
+          api("/api/setter-review" + query)
         ]);
         rangeLabelEl.textContent = timeframeLabel(state.timeframe);
         renderKpis(stats);
@@ -10045,6 +10456,7 @@ function renderModernHomePage() {
         }
         renderDrafts(drafts.drafts || []);
         renderAutomationEvents(events.events || []);
+        renderSetterReview(review);
         if (!silent) setStatus("Live.");
       } catch (error) {
         setStatus(error.message);
