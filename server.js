@@ -20,6 +20,7 @@ const YOUTUBE_URL = "https://youtube.com/@palletprosacademy";
 const BOOKING_URL = "https://www.tidycal.com/palletprosga/15-minute-meeting";
 const TRACKED_BOOKING_BASE_URL =
   process.env.TRACKED_BOOKING_BASE_URL || "https://go.palletprosacademy.com/discovery";
+const TRAINING_URL = "https://www.palletprosacademy.com/training";
 const BUSINESS_TIME_ZONE = process.env.BUSINESS_TIME_ZONE || "America/New_York";
 const META_GRAPH_VERSION = process.env.META_GRAPH_VERSION || "v20.0";
 const META_GRAPH_ACCESS_TOKEN =
@@ -44,7 +45,7 @@ const FOLLOW_UP_OFFSETS_MS = [
 ];
 const FOLLOW_UP_CHECK_MS = 60 * 1000;
 const FOLLOW_UP_WINDOW_MS = 23 * 60 * 60 * 1000;
-const APP_BUILD_MARKER = "2026-08-09-pulse-native-mobile-v1";
+const APP_BUILD_MARKER = "2026-08-09-direct-booking-training-v1";
 const DEFAULT_KPI_TARGETS = {
   daily_touch_points_target: 100,
   touch_pitch_min_rate: 10,
@@ -134,6 +135,9 @@ Core appointment-setting objective:
 - If someone plainly says they want to start, learn, get started, schedule, book, or talk about the pallet business, treat them as warm and move toward the call quickly.
 - The best-performing path is: interest -> Zoom call framing -> ask permission for calendar -> send calendar -> tell them to choose a time and you will verify it.
 - Do not add extra qualification questions after a clear "I want to start" unless their message includes a real question or important context that needs a brief answer first.
+- If someone is vague, lightly curious, or asking how the business works without clear start intent, offer the short training video first and ask permission to send it. If they agree, send:
+  https://www.palletprosacademy.com/training
+- Do not probe vague leads with reason, timeline, or obstacle questions. The next step for vague leads is the training-video permission ask.
 - When a prospect gives a lot of context, mirror one concrete detail, answer one useful point, then steer back to a call where you can research their market and see whether the academy fits.
 - The DM should feel like a confident human appointment setter, not a course explainer, FAQ bot, or coach.
 - Primary goal: move people interested in starting a pallet business toward booking a Zoom consultation with Pallet Pros Academy.
@@ -159,8 +163,9 @@ Best-performing DM flow:
 1. First touch, if there is no prior context: "Yoo 👋 Thanks for the follow! Are you just here for the content or are you wanting to start your own pallet business?"
 2. If they ask questions, answer briefly and naturally. Do not ignore the question just to push the call.
 3. If they give useful context, mirror one specific detail so they feel heard.
-4. If they are only lightly curious, vague, or asking follow-up questions, ask one soft bridge like: "Is that something you'd want to learn more about?"
-5. If they say yes or clearly show they want to pursue it, say: "Great. Let's get on a Zoom call this week. That way we can research your market, answer any questions you have and see if you'd be a good fit for the program. Do you mind if I send you a link to my calendar?"
+4. If they are only lightly curious, vague, or asking follow-up questions without clear start intent, say: "Got you. I have a short training video that explains how the pallet business works. Want me to send it?"
+5. If they say yes to the training video, send: "No problem. Here's the training video: https://www.palletprosacademy.com/training"
+6. If they say yes or clearly show they want to start, learn, get started, pursue it, or build a pallet business, say: "Great. Let's get on a Zoom call this week. That way we can research your market, answer any questions you have and see if you'd be a good fit for the program. Do you mind if I send you a link to my calendar?"
 6. Before sending the calendar link, ask permission in one short question: "Do you mind if I send you a link to my calendar?"
 7. If they say yes, do not ask anything else. Send: "Great. Give me one sec and I'll grab that link for you. 💯\n\nHere's the link to my calendar 🗓️ - https://www.tidycal.com/palletprosga/15-minute-meeting"
 8. If they ask for a call, appointment, consultation, details, or scheduling directly, it is okay to send the booking link without asking permission again.
@@ -223,7 +228,7 @@ const CONTEXT_RULES = `Context rules:
 - Bare replies like "yes", "ok", "sounds good", "how?", or "interested" depend on the previous assistant question. Use the last assistant message to decide what they are agreeing to.
 - If a bare reply cannot be confidently tied to the previous assistant question, set needs_review true instead of guessing.
 - If they already said they want to start, learn the business, get started, schedule, book, or talk through details, do not ask multiple warm-up questions. Move to the Zoom/calendar permission step.
-- Use one simple reason, timeline, or obstacle question only when the person is vague, lukewarm, or merely curious.
+- Do not use reason, timeline, or obstacle questions as the default. For vague, lukewarm, or merely curious replies, offer the training video and ask permission to send it.
 - If the history is missing, contradictory, or too thin to answer confidently, set needs_review true.`;
 
 const SCENARIO_PLAYBOOK_RULES = `Scenario playbook:
@@ -257,6 +262,8 @@ const SCENARIO_PLAYBOOK_RULES = `Scenario playbook:
   Answer one useful point, then nudge them back to the link so the details can be handled on the call.
 - Content-only, curiosity-only, jokes, or not ready:
   Send them to youtube.com/@palletprosacademy and do not push a call.
+- Vague, lightly curious, or asks how the business works without saying they want to start:
+  Offer the short training video and ask permission to send it. If they agree, send https://www.palletprosacademy.com/training. Do not ask reason, timeline, or obstacle questions.
 - Load-finding, freight, dispatch, or trucking loads:
   Clarify that this is not load-finding or dispatch. It teaches the pallet business model. If they are not interested in pallets, send YouTube or disengage.
 - Partner/spouse/family wants to discuss:
@@ -1740,6 +1747,7 @@ function updateLinkMemory(memory, text) {
 
   if (
     replyText.includes(YOUTUBE_URL) ||
+    replyText.includes(TRAINING_URL) ||
     replyText.includes(TRAINING_PLAYLIST_URL) ||
     replyText.includes("youtube.com/")
   ) {
@@ -1906,7 +1914,32 @@ function appointmentSetterCostReply() {
 function appointmentSetterHowItWorksReply() {
   return {
     reply:
-      "The short version is we help people understand how to source, move, and sell pallets in their area without trying to figure it all out alone.\n\nIs that something you'd want to learn more about?",
+      "Got you. I have a short training video that explains how the pallet business works. Want me to send it?",
+    needs_review: false,
+    handled: true
+  };
+}
+
+function appointmentSetterCallAboutReply() {
+  return {
+    reply:
+      "We'll take a look at your local market, answer your questions, and see if Pallet Pros Academy makes sense for what you're trying to build.\n\nWant me to send you the calendar link?",
+    needs_review: false,
+    handled: true
+  };
+}
+
+function appointmentSetterTrainingAskReply() {
+  return {
+    reply: "Got you. I have a short training video that explains how the pallet business works. Want me to send it?",
+    needs_review: false,
+    handled: true
+  };
+}
+
+function appointmentSetterTrainingLinkReply() {
+  return {
+    reply: `No problem. Here's the training video: ${TRAINING_URL}`,
     needs_review: false,
     handled: true
   };
@@ -1984,7 +2017,7 @@ function saysTheyWillBook(text) {
 }
 
 function wantsContentOnly(text) {
-  return /\b(just content|only content|free content|just looking|just curious|researching|youtube)\b/i.test(
+  return /\b(just content|only content|free content|here for content|just here for content|just looking|just curious|researching|youtube)\b/i.test(
     String(text || "")
   );
 }
@@ -2020,7 +2053,7 @@ function saysNoMoneyOrCapital(text) {
 }
 
 function asksIfLegit(text) {
-  return /\b(is this legit|legit|scam|real deal|does this really work|does it work|proof|testimonials?|results)\b/i.test(
+  return /\b(is this legit|legit|scam|real deal|does this really work|proof|testimonials?|results)\b/i.test(
     String(text || "")
   );
 }
@@ -2051,6 +2084,12 @@ function wantsPalletBusiness(text) {
 }
 
 function hasClearStartIntent(text) {
+  const cleanText = String(text || "").replace(/\s+/g, " ").trim();
+
+  if (cleanText.includes("?") || /^(how|what|where|when|why|who|can|do|does|is|are|would|could|should)\b/i.test(cleanText)) {
+    return false;
+  }
+
   return /\b(i'?m|im|i am|we'?re|were|we are|i|we)\s+(?:definitely\s+|really\s+|ready\s+|tryna\s+|trying\s+|looking\s+|want(?:ing)?\s+|wanna\s+)?(?:interested|ready|down|trying|tryna|looking|want(?:ing)?|wanna|ready)\b.{0,80}\b(start|get started|learn|business|pallet|pallets)\b/i.test(
     String(text || "")
   ) ||
@@ -2086,6 +2125,18 @@ function lastAssistantAskedSoftLearningBridge(memory) {
       (message) =>
         message.role === "assistant" &&
         /(want to learn more|want to know more|want to look into it|something you'd want to learn more about|something you would want to learn more about|how does that sound)/i.test(
+          message.text || ""
+        )
+    );
+}
+
+function lastAssistantAskedForTrainingPermission(memory) {
+  return (Array.isArray(memory?.last_messages) ? memory.last_messages : [])
+    .slice(-5)
+    .some(
+      (message) =>
+        message.role === "assistant" &&
+        /(training video|explains how the pallet business works|want me to send it|send it)/i.test(
           message.text || ""
         )
     );
@@ -2127,7 +2178,12 @@ function prospectAskedQuestion(text) {
 }
 
 function isSimplePalletBusinessIntent(text) {
-  return wantsPalletBusiness(text) && !hasRichProspectContext(text);
+  return (
+    wantsPalletBusiness(text) &&
+    !prospectAskedQuestion(text) &&
+    !wantsContentOnly(text) &&
+    !hasRichProspectContext(text)
+  );
 }
 
 function isAmbiguousShortReply(text) {
@@ -2218,6 +2274,14 @@ function appointmentSetterRuleReply(memory, incoming) {
     return appointmentSetterCalendarLinkReply(incoming);
   }
 
+  if (
+    !memory?.booking_confirmed &&
+    lastAssistantAskedForTrainingPermission(memory) &&
+    (yesToBusinessInterest(text) || yesToCalendarLink(text))
+  ) {
+    return appointmentSetterTrainingLinkReply();
+  }
+
   if (wantsDirectPhoneCall(text) && !hasRichProspectContext(text)) {
     return appointmentSetterPhoneReply(memory, incoming);
   }
@@ -2234,7 +2298,19 @@ function appointmentSetterRuleReply(memory, incoming) {
     return appointmentSetterCostReply();
   }
 
-  if (asksHowItWorks(text) || asksWhatCallIsAbout(text)) {
+  if (
+    (hasClearStartIntent(text) || isSimplePalletBusinessIntent(text)) &&
+    !memory?.booking_link_sent &&
+    !lastAssistantAskedForCalendarPermission(memory)
+  ) {
+    return appointmentSetterCalendarAskReply();
+  }
+
+  if (asksWhatCallIsAbout(text)) {
+    return appointmentSetterCallAboutReply();
+  }
+
+  if (asksHowItWorks(text)) {
     return appointmentSetterHowItWorksReply();
   }
 
@@ -2244,6 +2320,15 @@ function appointmentSetterRuleReply(memory, incoming) {
 
   if (asksIfLegit(text)) {
     return appointmentSetterSkepticReply();
+  }
+
+  if (
+    lastAssistantAskedSoftLearningBridge(memory) &&
+    yesToBusinessInterest(text) &&
+    !memory?.booking_link_sent &&
+    !memory?.booking_confirmed
+  ) {
+    return appointmentSetterCalendarAskReply();
   }
 
   if (memory?.booking_confirmed) {
@@ -2256,15 +2341,6 @@ function appointmentSetterRuleReply(memory, incoming) {
       needs_review: false,
       handled: true
     };
-  }
-
-  if (
-    lastAssistantAskedSoftLearningBridge(memory) &&
-    yesToBusinessInterest(text) &&
-    !memory?.booking_link_sent &&
-    !memory?.booking_confirmed
-  ) {
-    return appointmentSetterCalendarAskReply();
   }
 
   if (wantsCalendarLinkNow(text) && !memory?.booking_confirmed) {
@@ -2308,13 +2384,19 @@ function appointmentSetterRuleReply(memory, incoming) {
   }
 
   if (
-    (isSimplePalletBusinessIntent(text) || hasClearStartIntent(text)) &&
+    wantsPalletBusiness(text) &&
     !memory?.booking_link_sent &&
     !lastAssistantAskedForCalendarPermission(memory)
   ) {
-    return hasClearStartIntent(text) || askedWarmQualifier(memory)
-      ? appointmentSetterCalendarAskReply()
-      : appointmentSetterWarmQualifierReply();
+    return appointmentSetterTrainingAskReply();
+  }
+
+  if (
+    isAmbiguousShortReply(text) &&
+    !memory?.booking_link_sent &&
+    !lastAssistantAskedForCalendarPermission(memory)
+  ) {
+    return appointmentSetterTrainingAskReply();
   }
 
   return null;
