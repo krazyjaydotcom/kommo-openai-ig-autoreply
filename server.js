@@ -38,6 +38,7 @@ const DEFAULT_HUMAN_SEND_DELAY_MIN_MS = 6500;
 const DEFAULT_HUMAN_SEND_DELAY_MAX_MS = 18000;
 const APP_OUTGOING_ECHO_WINDOW_MS = 15 * 60 * 1000;
 const CALENDAR_SEQUENCE_GAP_MS = 8 * 1000;
+const CALENDAR_LINK_SEQUENCE_DELAYS_MS = [0, 10 * 1000, 4 * 1000];
 const FOLLOW_UP_OFFSETS_MS = [
   45 * 60 * 1000,
   4 * 60 * 60 * 1000,
@@ -45,7 +46,7 @@ const FOLLOW_UP_OFFSETS_MS = [
 ];
 const FOLLOW_UP_CHECK_MS = 60 * 1000;
 const FOLLOW_UP_WINDOW_MS = 23 * 60 * 60 * 1000;
-const APP_BUILD_MARKER = "2026-08-09-direct-booking-training-v1";
+const APP_BUILD_MARKER = "2026-08-09-calendar-sequence-booked-confirm-v1";
 const DEFAULT_KPI_TARGETS = {
   daily_touch_points_target: 100,
   touch_pitch_min_rate: 10,
@@ -167,11 +168,11 @@ Best-performing DM flow:
 5. If they say yes to the training video, send: "No problem. Here's the training video: https://www.palletprosacademy.com/training"
 6. If they say yes or clearly show they want to start, learn, get started, pursue it, or build a pallet business, say: "Great. Let's get on a Zoom call this week. That way we can research your market, answer any questions you have and see if you'd be a good fit for the program. Do you mind if I send you a link to my calendar?"
 6. Before sending the calendar link, ask permission in one short question: "Do you mind if I send you a link to my calendar?"
-7. If they say yes, do not ask anything else. Send: "Great. Give me one sec and I'll grab that link for you. 💯\n\nHere's the link to my calendar 🗓️ - https://www.tidycal.com/palletprosga/15-minute-meeting"
+7. If they say yes, do not ask anything else. Send the calendar in three short messages: first "Great. Give me one sec and I'll grab that link for you. ??", then after a 10-second pause "Here's the link to my calendar ??? - https://www.tidycal.com/palletprosga/15-minute-meeting", then 4 seconds later "I'll be by my phone for another 5 minutes. Choose a date/time that works for you and I'll verify it on my end."
 8. If they ask for a call, appointment, consultation, details, or scheduling directly, it is okay to send the booking link without asking permission again.
 9. If they mention a day/time instead of booking through the link, politely tell them to use the link to choose their time.
 10. If they ask for a direct phone call or share their phone number, tell them to book through the link instead.
-11. If they say they booked, acknowledge it naturally and do not ask another qualifying question.
+11. If they say they booked, reply: "Great. I'm looking forward to helping you get things started."
 12. Do not force every interested person through the exact same script. The flow is a guide, not a word-for-word requirement.
 
 Reply length rules:
@@ -1865,12 +1866,14 @@ function appointmentSetterCalendarLinkReply(messageLike) {
   const calendarUrl = trackedBookingUrl(messageLike);
   const messages = [
     "Great. Give me one sec and I'll grab that link for you. 💯",
-    `Here's the link to my calendar 🗓️ - ${calendarUrl}`
+    `Here's the link to my calendar 🗓️ - ${calendarUrl}`,
+    "I'll be by my phone for another 5 minutes. Choose a date/time that works for you and I'll verify it on my end."
   ];
 
   return {
     reply: messages.join("\n\n"),
     messages,
+    message_delays_ms: CALENDAR_LINK_SEQUENCE_DELAYS_MS,
     needs_review: false,
     handled: true
   };
@@ -2433,8 +2436,7 @@ function isBookingConfirmation(text) {
 
 function bookingConfirmationReply() {
   return {
-    reply:
-      `Perfect, glad you got it booked. Before the call, go through this free training so you have a better feel for the opportunity: ${TRAINING_PLAYLIST_URL}`,
+    reply: "Great. I'm looking forward to helping you get things started.",
     needs_review: false,
     handled: true
   };
@@ -4498,10 +4500,15 @@ function joinedReplyText(replyLike) {
 
 async function sendReplySequence(messageLike, replyLike, featureSettings) {
   const messages = replyMessages(replyLike);
+  const messageDelays = Array.isArray(replyLike?.message_delays_ms)
+    ? replyLike.message_delays_ms
+    : [];
 
   for (let index = 0; index < messages.length; index += 1) {
-    if (index > 0) {
-      await sleep(CALENDAR_SEQUENCE_GAP_MS);
+    const delayMs = Number(messageDelays[index]);
+
+    if (index > 0 || delayMs > 0) {
+      await sleep(Number.isFinite(delayMs) && delayMs >= 0 ? delayMs : CALENDAR_SEQUENCE_GAP_MS);
     }
 
     const sendSettings =
