@@ -44,7 +44,7 @@ const FOLLOW_UP_OFFSETS_MS = [
 ];
 const FOLLOW_UP_CHECK_MS = 60 * 1000;
 const FOLLOW_UP_WINDOW_MS = 23 * 60 * 60 * 1000;
-const APP_BUILD_MARKER = "2026-08-08-touchpoint-namefix-v1";
+const APP_BUILD_MARKER = "2026-08-09-pulse-native-mobile-v1";
 const DEFAULT_KPI_TARGETS = {
   daily_touch_points_target: 100,
   touch_pitch_min_rate: 10,
@@ -7412,10 +7412,10 @@ function renderModernHomePage() {
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#09110f">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-title" content="DM Setter">
+  <meta name="apple-mobile-web-app-title" content="Pulse">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/app-icon.svg" type="image/svg+xml">
-  <title>Pallet Pros AI Setter</title>
+  <title>Pulse by KRAZYJAYDOTCOM</title>
   <style>
     :root {
       color-scheme: dark;
@@ -7435,6 +7435,12 @@ function renderModernHomePage() {
       --gold: #f4c95d;
       --red: #ff6b7a;
       --blue: #2f73ff;
+      --pulse-purple: #6d28ff;
+      --pulse-magenta: #db2cff;
+      --pulse-pink: #ff3f8f;
+      --pulse-orange: #ff9f1c;
+      --ig-gradient: linear-gradient(135deg, #5b2cff 0%, #b12cff 34%, #ff367f 66%, #ff9f1c 100%);
+      --pulse-glow: 0 0 18px rgba(219, 44, 255, 0.34), 0 0 42px rgba(255, 63, 143, 0.18);
       --shadow: 0 18px 52px rgba(0, 0, 0, 0.28);
       --radius: 8px;
     }
@@ -8756,6 +8762,274 @@ function renderModernHomePage() {
       transform: translateX(20px);
     }
 
+    .pulse-brand-title {
+      background: var(--ig-gradient);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      font-weight: 950;
+      letter-spacing: 0;
+      text-shadow: 0 0 30px rgba(255, 63, 143, 0.18);
+    }
+
+    .pulse-brand-subtitle {
+      color: rgba(255, 255, 255, 0.62);
+      font-size: 10px;
+      font-weight: 850;
+      letter-spacing: 0.32em;
+      margin: 6px 0 0;
+      text-transform: uppercase;
+    }
+
+    .pulse-bot-art {
+      border: 2px solid rgba(255, 63, 143, 0.38);
+      border-radius: 18px;
+      box-shadow: inset 0 -18px 35px rgba(255, 159, 28, 0.1);
+      height: 58px;
+      opacity: 0.72;
+      position: relative;
+      width: 68px;
+    }
+
+    .pulse-bot-art::before,
+    .pulse-bot-art::after {
+      background: rgba(255, 63, 143, 0.58);
+      border-radius: 50%;
+      content: "";
+      height: 10px;
+      position: absolute;
+      top: 24px;
+      width: 10px;
+    }
+
+    .pulse-bot-art::before { left: 18px; }
+    .pulse-bot-art::after { right: 18px; }
+
+    .pulse-bot-antenna {
+      background: rgba(255, 63, 143, 0.48);
+      border-radius: 999px;
+      height: 22px;
+      left: 50%;
+      position: absolute;
+      top: -23px;
+      transform: translateX(-50%);
+      width: 4px;
+    }
+
+    .pulse-bot-antenna::before {
+      background: rgba(219, 44, 255, 0.68);
+      border-radius: 50%;
+      content: "";
+      height: 20px;
+      left: 50%;
+      position: absolute;
+      top: -12px;
+      transform: translateX(-50%);
+      width: 20px;
+    }
+
+    .mobile-status-orb {
+      background: rgba(57, 223, 159, 0.1);
+      border: 1px solid rgba(57, 223, 159, 0.32);
+      border-radius: 999px;
+      box-shadow: 0 0 22px rgba(57, 223, 159, 0.18);
+      display: grid !important;
+      flex: 0 0 auto;
+      height: 58px;
+      place-items: center;
+      width: 58px;
+    }
+
+    .mobile-status-orb::before {
+      background: #35f6a6;
+      border-radius: 50%;
+      box-shadow: 0 0 18px rgba(57, 223, 159, 0.88), 0 0 42px rgba(57, 223, 159, 0.28);
+      content: "";
+      display: block;
+      height: 20px;
+      width: 20px;
+    }
+
+    .hero-metric.pulse-card {
+      isolation: isolate;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .hero-metric.pulse-card::before {
+      background:
+        radial-gradient(circle at 92% 18%, rgba(255, 159, 28, 0.42), transparent 24%),
+        radial-gradient(circle at 18% 8%, rgba(109, 40, 255, 0.28), transparent 35%),
+        linear-gradient(135deg, rgba(109, 40, 255, 0.24), rgba(255, 63, 143, 0.14) 58%, rgba(255, 159, 28, 0.2));
+      content: "";
+      inset: 0;
+      position: absolute;
+      z-index: -2;
+    }
+
+    .hero-metric.pulse-card::after {
+      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.22), transparent);
+      content: "";
+      height: 1px;
+      left: 14%;
+      opacity: 0.5;
+      position: absolute;
+      right: 14%;
+      top: 50%;
+      z-index: -1;
+    }
+
+    .pulse-ecg {
+      bottom: 18px;
+      height: 76px;
+      left: 0;
+      opacity: 0.92;
+      overflow: visible;
+      position: absolute;
+      right: 0;
+      width: 100%;
+      z-index: -1;
+    }
+
+    .pulse-ecg .ecg-line {
+      filter: drop-shadow(0 0 10px rgba(255, 63, 143, 0.58));
+      stroke-dasharray: 440;
+      stroke-dashoffset: 0;
+      animation: ecgIdle 8s linear infinite;
+    }
+
+    .pulse-ecg .ecg-glow {
+      opacity: 0;
+      stroke-dasharray: 48 440;
+      stroke-dashoffset: 440;
+    }
+
+    .pulse-card.message-pulse .ecg-line {
+      animation: ecgMessage 1.15s ease-out;
+    }
+
+    .pulse-card.message-pulse .ecg-glow {
+      animation: ecgGlow 1.15s ease-out;
+    }
+
+    .pulse-card.booking-pulse {
+      animation: bookingCardPulse 1.35s ease-out;
+    }
+
+    .pulse-card.booking-pulse .ecg-line {
+      animation: ecgBooking 1.35s ease-out;
+    }
+
+    .pulse-card.booking-pulse .ecg-glow {
+      animation: ecgGlow 1.35s ease-out;
+    }
+
+    .count-pop {
+      animation: countPop 460ms ease-out;
+    }
+
+    .attention-row.has-attention {
+      border-color: rgba(255, 63, 143, 0.56);
+      box-shadow: 0 0 30px rgba(255, 63, 143, 0.12);
+    }
+
+    .attention-row.has-attention strong {
+      color: #ff3f8f;
+      text-shadow: 0 0 18px rgba(255, 63, 143, 0.34);
+    }
+
+    .sound-toggle {
+      align-items: center;
+      background: rgba(255, 255, 255, 0.045);
+      border: 1px solid rgba(255, 255, 255, 0.11);
+      border-radius: 16px;
+      color: var(--text);
+      display: grid;
+      gap: 4px;
+      grid-template-columns: minmax(0, 1fr) auto;
+      min-height: 62px;
+      padding: 12px 14px;
+      text-align: left;
+      width: 100%;
+    }
+
+    .sound-toggle small {
+      color: var(--muted);
+      display: block;
+      font-size: 11px;
+      margin-top: 2px;
+    }
+
+    .sound-toggle.on .switch-dot {
+      background: var(--ig-gradient);
+      box-shadow: 0 0 18px rgba(255, 63, 143, 0.24);
+    }
+
+    .sound-toggle.on .switch-dot::after {
+      transform: translateX(20px);
+    }
+
+    @keyframes mobileScreenEnter {
+      from {
+        opacity: 0;
+        transform: translate3d(18px, 0, 0) scale(0.992);
+      }
+      to {
+        opacity: 1;
+        transform: translate3d(0, 0, 0) scale(1);
+      }
+    }
+
+    @keyframes ecgIdle {
+      0% { stroke-dashoffset: 0; }
+      100% { stroke-dashoffset: -34; }
+    }
+
+    @keyframes ecgMessage {
+      0% { transform: translateY(0) scaleY(1); }
+      28% { transform: translateY(-3px) scaleY(1.22); }
+      64% { transform: translateY(2px) scaleY(0.94); }
+      100% { transform: translateY(0) scaleY(1); }
+    }
+
+    @keyframes ecgBooking {
+      0% { transform: translateY(0) scaleY(1); }
+      18% { transform: translateY(-5px) scaleY(1.34); }
+      38% { transform: translateY(3px) scaleY(0.92); }
+      58% { transform: translateY(-4px) scaleY(1.26); }
+      100% { transform: translateY(0) scaleY(1); }
+    }
+
+    @keyframes ecgGlow {
+      0% { opacity: 0; stroke-dashoffset: 440; }
+      18% { opacity: 1; }
+      78% { opacity: 0.75; }
+      100% { opacity: 0; stroke-dashoffset: 0; }
+    }
+
+    @keyframes bookingCardPulse {
+      0% { box-shadow: var(--pulse-glow); }
+      34% { box-shadow: 0 0 34px rgba(255, 159, 28, 0.38), 0 0 70px rgba(255, 63, 143, 0.2); }
+      100% { box-shadow: var(--pulse-glow); }
+    }
+
+    @keyframes countPop {
+      0% { transform: scale(1); }
+      45% { transform: scale(1.08); }
+      100% { transform: scale(1); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+        transition-duration: 0.001ms !important;
+      }
+    }
+
     @media (prefers-color-scheme: light) {
       :root {
         color-scheme: dark;
@@ -8772,7 +9046,7 @@ function renderModernHomePage() {
       }
 
       .main {
-        padding: max(18px, env(safe-area-inset-top)) 16px 92px;
+        padding: max(22px, env(safe-area-inset-top)) 18px 82px;
       }
 
       .desktop-shell {
@@ -8781,11 +9055,30 @@ function renderModernHomePage() {
 
       .mobile-shell {
         display: block;
+        margin: 0 auto;
+        max-width: 460px;
+        min-height: 0;
+        position: relative;
+      }
+
+      .mobile-screen {
+        min-height: 0;
+        transform-origin: center;
+      }
+
+      .mobile-screen.active {
+        animation: mobileScreenEnter 240ms cubic-bezier(0.2, 0.72, 0.2, 1);
+      }
+
+      #mobile-pulse.active {
+        align-content: start;
+        display: grid;
+        gap: 14px;
       }
 
       #mobile-inbox-screen.active {
         align-content: start;
-        background: #fff;
+        background: rgba(255, 255, 255, 0.965);
         border-radius: 24px;
         color: #050505;
         display: grid;
@@ -8794,6 +9087,202 @@ function renderModernHomePage() {
         margin: -4px -4px 0;
         min-height: calc(100dvh - 126px);
         padding: 12px 16px 18px;
+      }
+
+      #mobile-stats-screen.active {
+        align-content: start;
+        display: grid;
+        gap: 12px;
+      }
+
+      #mobile-more-screen.active {
+        align-content: start;
+        display: grid;
+        gap: 12px;
+      }
+
+      .mobile-header {
+        padding: 4px 2px 8px;
+      }
+
+      .mobile-header h1 {
+        font-size: 36px;
+        line-height: 0.95;
+      }
+
+      .mobile-header.compact h1 {
+        font-size: 28px;
+      }
+
+      .bot-health {
+        background:
+          radial-gradient(circle at 98% 82%, rgba(255, 159, 28, 0.22), transparent 24%),
+          radial-gradient(circle at 6% 50%, rgba(57, 223, 159, 0.12), transparent 24%),
+          rgba(14, 7, 24, 0.78);
+        border-color: rgba(219, 44, 255, 0.42);
+        border-radius: 26px;
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.035), var(--pulse-glow);
+        min-height: 116px;
+        overflow: hidden;
+        padding: 20px;
+        position: relative;
+      }
+
+      .bot-health > div:first-child {
+        align-items: center;
+        display: flex;
+        gap: 16px;
+        min-width: 0;
+      }
+
+      .bot-health strong {
+        font-size: 24px;
+      }
+
+      .bot-health span {
+        font-size: 15px;
+      }
+
+      .bot-health strong::before {
+        display: none;
+      }
+
+      .timeframe.mobile-timeframe {
+        background: rgba(255, 255, 255, 0.045);
+        border: 1px solid rgba(219, 44, 255, 0.22);
+        border-radius: 22px;
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.025);
+        display: grid;
+        gap: 0;
+        grid-template-columns: repeat(3, 1fr);
+        padding: 8px;
+      }
+
+      .timeframe.mobile-timeframe button {
+        background: transparent;
+        border: 0;
+        border-radius: 18px;
+        color: rgba(255, 255, 255, 0.62);
+        font-size: 15px;
+        font-weight: 850;
+        min-height: 52px;
+      }
+
+      .timeframe.mobile-timeframe button.active {
+        background: var(--ig-gradient);
+        box-shadow: 0 0 24px rgba(255, 63, 143, 0.32), 0 0 42px rgba(255, 159, 28, 0.16);
+        color: #fff;
+      }
+
+      .hero-metric {
+        border: 1px solid rgba(255, 63, 143, 0.56);
+        border-radius: 28px;
+        box-shadow: var(--pulse-glow);
+        min-height: 224px;
+        padding: 28px 22px;
+      }
+
+      .hero-metric strong {
+        font-size: 86px;
+        letter-spacing: 0;
+        text-shadow: 0 6px 40px rgba(255, 255, 255, 0.18);
+      }
+
+      .hero-metric span {
+        color: rgba(255, 255, 255, 0.62);
+        font-size: 13px;
+        letter-spacing: 0.36em;
+      }
+
+      .mobile-supporting-metrics {
+        gap: 12px;
+      }
+
+      .mobile-supporting-metrics article {
+        background: rgba(255, 255, 255, 0.04);
+        border-color: rgba(255, 63, 143, 0.28);
+        border-radius: 22px;
+        box-shadow: 0 16px 34px rgba(0, 0, 0, 0.18);
+        min-height: 118px;
+        padding: 16px 14px;
+      }
+
+      .mobile-supporting-metrics article::before {
+        background: var(--ig-gradient);
+        border-radius: 50%;
+        box-shadow: 0 0 22px rgba(255, 63, 143, 0.26);
+        color: #fff;
+        display: grid;
+        font-size: 18px;
+        height: 42px;
+        margin-bottom: 12px;
+        place-items: center;
+        width: 42px;
+      }
+
+      .mobile-supporting-metrics article:nth-child(1)::before { content: "T"; }
+      .mobile-supporting-metrics article:nth-child(2)::before { content: "P"; }
+      .mobile-supporting-metrics article:nth-child(3)::before { content: "S"; }
+
+      .mobile-supporting-metrics strong {
+        font-size: 34px;
+        margin-bottom: 6px;
+      }
+
+      .mobile-supporting-metrics span {
+        color: rgba(255, 255, 255, 0.62);
+        font-size: 12px;
+      }
+
+      .mobile-ratios {
+        background: rgba(255, 255, 255, 0.04);
+        border-color: rgba(255, 159, 28, 0.28);
+        border-radius: 22px;
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.025);
+        gap: 0;
+        padding: 16px 6px;
+      }
+
+      .mobile-ratios article {
+        border-right: 1px solid rgba(255, 255, 255, 0.14);
+        padding: 0 10px;
+        text-align: center;
+      }
+
+      .mobile-ratios article:last-child {
+        border-right: 0;
+      }
+
+      .mobile-ratios strong {
+        font-size: 28px;
+      }
+
+      .mobile-ratios span {
+        font-size: 12px;
+      }
+
+      .attention-row {
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 63, 143, 0.32);
+        border-radius: 22px;
+        color: #fff;
+        min-height: 76px;
+      }
+
+      .mobile-funnel-card,
+      .mobile-diagnosis,
+      .analytics-controls,
+      .analytics-breakdown,
+      .target-grid,
+      .appointment-panel {
+        background: rgba(255, 255, 255, 0.04);
+        border-color: rgba(255, 255, 255, 0.1);
+        border-radius: 20px;
+      }
+
+      #mobile-pulse .mobile-funnel-card,
+      #mobile-pulse .mobile-diagnosis {
+        display: none;
       }
 
       #mobile-inbox-screen .mobile-header {
@@ -8886,28 +9375,36 @@ function renderModernHomePage() {
       }
 
       .bottom-nav {
-        background: rgba(5, 9, 13, 0.92);
-        backdrop-filter: blur(20px);
-        border-top: 1px solid var(--border);
-        border-radius: 18px 18px 0 0;
+        background: rgba(7, 7, 15, 0.86);
+        backdrop-filter: blur(24px);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 26px;
         bottom: 0;
         display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        left: 0;
-        padding: 8px 10px max(8px, env(safe-area-inset-bottom));
+        grid-template-columns: repeat(4, 1fr);
+        left: 8px;
+        padding: 8px;
         position: fixed;
-        right: 0;
+        right: 8px;
+        bottom: max(8px, env(safe-area-inset-bottom));
         z-index: 20;
       }
 
       .bottom-nav a {
-        border-radius: 14px;
+        border: 0;
+        border-radius: 20px;
         display: grid;
-        font-size: 11px;
+        font-size: 12px;
         gap: 2px;
         justify-items: center;
-        min-height: 52px;
-        padding: 5px 3px;
+        min-height: 54px;
+        padding: 8px 4px;
+      }
+
+      .bottom-nav a.active {
+        background: var(--ig-gradient);
+        box-shadow: 0 0 24px rgba(255, 63, 143, 0.3), 0 0 38px rgba(255, 159, 28, 0.13);
+        color: #fff;
       }
 
       .companion-backdrop {
@@ -9103,12 +9600,61 @@ function renderModernHomePage() {
     }
 
     @media (max-width: 430px) {
+      .main {
+        padding-top: max(14px, env(safe-area-inset-top));
+      }
+
+      #mobile-pulse.active {
+        gap: 8px;
+      }
+
+      .mobile-header h1 {
+        font-size: 32px;
+      }
+
+      .pulse-brand-subtitle {
+        font-size: 9px;
+        letter-spacing: 0.24em;
+      }
+
+      .bot-health {
+        min-height: 86px;
+        padding: 14px;
+      }
+
+      .bot-health strong {
+        font-size: 21px;
+      }
+
+      .bot-health span {
+        font-size: 13px;
+      }
+
+      .mobile-status-orb {
+        height: 50px;
+        width: 50px;
+      }
+
+      .pulse-bot-art {
+        height: 48px;
+        width: 56px;
+      }
+
+      .timeframe.mobile-timeframe {
+        padding: 6px;
+      }
+
+      .timeframe.mobile-timeframe button {
+        min-height: 46px;
+      }
+
       .hero-metric {
-        min-height: 154px;
+        min-height: 138px;
+        padding: 16px;
       }
 
       .hero-metric strong {
-        font-size: 70px;
+        font-size: 62px;
       }
 
       .mobile-supporting-metrics {
@@ -9116,7 +9662,26 @@ function renderModernHomePage() {
       }
 
       .mobile-supporting-metrics article {
+        min-height: 86px;
         padding: 11px;
+      }
+
+      .mobile-supporting-metrics article::before {
+        height: 34px;
+        margin-bottom: 8px;
+        width: 34px;
+      }
+
+      .mobile-ratios {
+        padding: 12px 4px;
+      }
+
+      .mobile-ratios strong {
+        font-size: 22px;
+      }
+
+      .attention-row {
+        min-height: 58px;
       }
     }
 
@@ -9171,16 +9736,20 @@ function renderModernHomePage() {
       <section class="mobile-shell">
         <section class="mobile-screen active" data-screen="pulse" id="mobile-pulse">
           <div class="mobile-header">
-            <p class="eyebrow">Pallet Pros</p>
-            <h1>Your Lead Pulse</h1>
+            <h1 class="pulse-brand-title">Pulse</h1>
+            <p class="pulse-brand-subtitle">by KRAZYJAYDOTCOM</p>
           </div>
 
           <section class="bot-health ok" id="mobile-bot-health">
             <div>
-              <strong id="mobile-health-label">Bot Working</strong>
-              <span id="mobile-health-detail">Checking latest activity...</span>
+              <span class="mobile-status-orb" aria-hidden="true"></span>
+              <span>
+                <strong id="mobile-health-label">Bot Working</strong>
+                <span id="mobile-health-detail">Checking latest activity...</span>
+              </span>
             </div>
             <button class="ghost-link" id="mobile-view-issue" type="button" hidden>View Issue</button>
+            <span class="pulse-bot-art" aria-hidden="true"><span class="pulse-bot-antenna"></span></span>
           </section>
 
           <section class="timeframe mobile-timeframe" aria-label="Mobile timeframe selector">
@@ -9189,7 +9758,19 @@ function renderModernHomePage() {
             <button type="button" data-range="30d">30 Days</button>
           </section>
 
-          <section class="hero-metric">
+          <section class="hero-metric pulse-card" id="mobile-calls-card">
+            <svg class="pulse-ecg" viewBox="0 0 420 120" preserveAspectRatio="none" aria-hidden="true">
+              <defs>
+                <linearGradient id="pulseGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stop-color="#5b2cff"></stop>
+                  <stop offset="38%" stop-color="#db2cff"></stop>
+                  <stop offset="68%" stop-color="#ff3f8f"></stop>
+                  <stop offset="100%" stop-color="#ff9f1c"></stop>
+                </linearGradient>
+              </defs>
+              <path class="ecg-line" d="M0 72 C62 72 70 70 100 70 C132 70 140 78 164 74 C188 70 198 60 220 60 C244 60 252 70 274 68 C302 66 318 48 338 24 C358 2 374 16 392 0 C402 -8 414 -10 420 -12" fill="none" stroke="url(#pulseGradient)" stroke-width="3.5" stroke-linecap="round"></path>
+              <path class="ecg-glow" d="M0 72 C62 72 70 70 100 70 C132 70 140 78 164 74 C188 70 198 60 220 60 C244 60 252 70 274 68 C302 66 318 48 338 24 C358 2 374 16 392 0 C402 -8 414 -10 420 -12" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round"></path>
+            </svg>
             <strong id="mobile-calls-booked">0</strong>
             <span>Calls Booked</span>
           </section>
@@ -9225,6 +9806,43 @@ function renderModernHomePage() {
           </section>
         </section>
 
+        <section class="mobile-screen" data-screen="stats" id="mobile-stats-screen">
+          <div class="mobile-header compact">
+            <h1>Stats</h1>
+            <p>Pipeline performance and goals.</p>
+          </div>
+          <div class="analytics-controls">
+            <select id="analytics-range" aria-label="Analytics date range">
+              <option value="today">Today</option>
+              <option value="yesterday">Yesterday</option>
+              <option value="7d" selected>Last 7 Days</option>
+              <option value="30d">Last 30 Days</option>
+              <option value="this_week">This Week</option>
+              <option value="last_week">Last Week</option>
+              <option value="this_month">This Month</option>
+              <option value="last_month">Last Month</option>
+              <option value="this_quarter">This Quarter</option>
+              <option value="last_quarter">Last Quarter</option>
+              <option value="ytd">YTD</option>
+              <option value="this_year">This Year</option>
+              <option value="last_year">Last Year</option>
+              <option value="all">All Time</option>
+              <option value="custom">Custom Date Range</option>
+            </select>
+            <select id="analytics-group" aria-label="Analytics grouping">
+              <option value="day">Group by Day</option>
+              <option value="week">Group by Week</option>
+              <option value="month">Group by Month</option>
+              <option value="year">Group by Year</option>
+            </select>
+            <input id="analytics-start" type="date" aria-label="Custom start date">
+            <input id="analytics-end" type="date" aria-label="Custom end date">
+          </div>
+          <div class="grid kpis" id="mobile-full-kpis"></div>
+          <div class="funnel" id="mobile-full-funnel"></div>
+          <div class="analytics-breakdown" id="analytics-breakdown"></div>
+        </section>
+
         <section class="mobile-screen" data-screen="inbox" id="mobile-inbox-screen">
           <div class="mobile-header compact">
             <h1>Inbox</h1>
@@ -9254,7 +9872,6 @@ function renderModernHomePage() {
             <button type="button" data-more-panel="controls">AI Controls <span>></span></button>
             <button type="button" data-more-panel="instructions">AI Instructions <span>></span></button>
             <button type="button" data-more-panel="drafts">Pending Drafts <strong id="mobile-drafts-count">0</strong></button>
-            <button type="button" data-more-panel="analytics">Full Analytics <span>></span></button>
             <button type="button" data-more-panel="targets">KPI Targets <span>></span></button>
             <button type="button" data-more-panel="tester">AI Tester <span>></span></button>
             <button type="button" data-more-panel="system">System <span>></span></button>
@@ -9262,6 +9879,10 @@ function renderModernHomePage() {
 
           <section class="more-panel" id="more-controls" hidden>
             <div class="panel-head"><h2>AI Controls</h2><button class="ghost-link" data-more-close type="button">Close</button></div>
+            <button class="sound-toggle" id="booking-sound-toggle" type="button" aria-pressed="true">
+              <span><strong>Booking Sounds</strong><small>Soft ping when a new call is booked.</small></span>
+              <span class="switch-dot" aria-hidden="true"></span>
+            </button>
             <div class="mobile-control-list" id="mobile-features"></div>
           </section>
 
@@ -9273,40 +9894,6 @@ function renderModernHomePage() {
           <section class="more-panel" id="more-drafts" hidden>
             <div class="panel-head"><h2>Pending Drafts</h2><button class="ghost-link" data-more-close type="button">Close</button></div>
             <div id="mobile-drafts" class="drafts"></div>
-          </section>
-
-          <section class="more-panel" id="more-analytics" hidden>
-            <div class="panel-head"><h2>Full Analytics</h2><button class="ghost-link" data-more-close type="button">Close</button></div>
-            <div class="analytics-controls">
-              <select id="analytics-range" aria-label="Analytics date range">
-                <option value="today">Today</option>
-                <option value="yesterday">Yesterday</option>
-                <option value="7d" selected>Last 7 Days</option>
-                <option value="30d">Last 30 Days</option>
-                <option value="this_week">This Week</option>
-                <option value="last_week">Last Week</option>
-                <option value="this_month">This Month</option>
-                <option value="last_month">Last Month</option>
-                <option value="this_quarter">This Quarter</option>
-                <option value="last_quarter">Last Quarter</option>
-                <option value="ytd">YTD</option>
-                <option value="this_year">This Year</option>
-                <option value="last_year">Last Year</option>
-                <option value="all">All Time</option>
-                <option value="custom">Custom Date Range</option>
-              </select>
-              <select id="analytics-group" aria-label="Analytics grouping">
-                <option value="day">Group by Day</option>
-                <option value="week">Group by Week</option>
-                <option value="month">Group by Month</option>
-                <option value="year">Group by Year</option>
-              </select>
-              <input id="analytics-start" type="date" aria-label="Custom start date">
-              <input id="analytics-end" type="date" aria-label="Custom end date">
-            </div>
-            <div class="grid kpis" id="mobile-full-kpis"></div>
-            <div class="funnel" id="mobile-full-funnel"></div>
-            <div class="analytics-breakdown" id="analytics-breakdown"></div>
           </section>
 
           <section class="more-panel" id="more-targets" hidden>
@@ -9419,6 +10006,7 @@ function renderModernHomePage() {
   <nav class="bottom-nav" aria-label="Mobile navigation">
     <a class="active" href="#pulse" data-mobile-tab="pulse">Pulse</a>
     <a href="#inbox" data-mobile-tab="inbox">Inbox</a>
+    <a href="#stats" data-mobile-tab="stats">Stats</a>
     <a href="#more" data-mobile-tab="more">More</a>
   </nav>
 
@@ -9454,7 +10042,12 @@ function renderModernHomePage() {
       latestStats: null,
       latestDrafts: [],
       latestEvents: [],
-      latestAnalytics: null
+      latestAnalytics: null,
+      hasLoadedOnce: false,
+      lastIncomingSignature: "",
+      lastBookedCount: null,
+      bookingSoundEnabled: localStorage.getItem("pulseBookingSound") !== "off",
+      audioUnlocked: false
     };
     const conversationsEl = document.getElementById("conversations");
     const draftsEl = document.getElementById("drafts");
@@ -9486,6 +10079,7 @@ function renderModernHomePage() {
     const companionAppointmentPanelEl = document.getElementById("dm-appointment-panel");
     const companionAppointmentStatusEl = document.getElementById("dm-appointment-status");
     const mobileCallsBookedEl = document.getElementById("mobile-calls-booked");
+    const mobileCallsCardEl = document.getElementById("mobile-calls-card");
     const mobileLeadsEl = document.getElementById("mobile-leads");
     const mobileLinksSentEl = document.getElementById("mobile-links-sent");
     const mobileLinkClicksEl = document.getElementById("mobile-link-clicks");
@@ -9523,10 +10117,112 @@ function renderModernHomePage() {
     const mobileTestTranscript = document.getElementById("mobile-test-transcript");
     const mobileTestNewMessage = document.getElementById("mobile-test-new-message");
     const mobileTestResult = document.getElementById("mobile-test-result");
+    const bookingSoundToggleEl = document.getElementById("booking-sound-toggle");
 
     function setStatus(message) {
       statusEl.textContent = message || "";
     }
+
+    function restartClassAnimation(element, className) {
+      if (!element) return;
+      element.classList.remove(className);
+      void element.offsetWidth;
+      element.classList.add(className);
+      window.setTimeout(() => element.classList.remove(className), className === "booking-pulse" ? 1500 : 1250);
+    }
+
+    function triggerMessagePulse() {
+      restartClassAnimation(mobileCallsCardEl, "message-pulse");
+    }
+
+    function triggerBookingPulse(previousValue, nextValue) {
+      restartClassAnimation(mobileCallsCardEl, "booking-pulse");
+      restartClassAnimation(mobileCallsBookedEl, "count-pop");
+      animateCount(mobileCallsBookedEl, previousValue, nextValue);
+      playBookingSound();
+    }
+
+    function animateCount(element, fromValue, toValue) {
+      if (!element) return;
+      const from = Number(fromValue || 0);
+      const to = Number(toValue || 0);
+      if (!Number.isFinite(from) || !Number.isFinite(to) || from === to) {
+        element.textContent = to;
+        return;
+      }
+      const start = performance.now();
+      const duration = 420;
+      function tick(now) {
+        const progress = Math.min(1, (now - start) / duration);
+        const eased = 1 - Math.pow(1 - progress, 3);
+        element.textContent = Math.round(from + (to - from) * eased);
+        if (progress < 1) requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    }
+
+    function unlockBookingAudio() {
+      state.audioUnlocked = true;
+    }
+
+    function playBookingSound() {
+      if (!state.bookingSoundEnabled || !state.audioUnlocked) return;
+      try {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContext) return;
+        const context = new AudioContext();
+        const now = context.currentTime;
+        const gain = context.createGain();
+        const first = context.createOscillator();
+        const second = context.createOscillator();
+        first.type = "sine";
+        second.type = "triangle";
+        first.frequency.setValueAtTime(740, now);
+        first.frequency.exponentialRampToValueAtTime(980, now + 0.18);
+        second.frequency.setValueAtTime(1240, now + 0.04);
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.exponentialRampToValueAtTime(0.075, now + 0.025);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.55);
+        first.connect(gain);
+        second.connect(gain);
+        gain.connect(context.destination);
+        first.start(now);
+        second.start(now + 0.04);
+        first.stop(now + 0.52);
+        second.stop(now + 0.46);
+        window.setTimeout(() => context.close().catch(() => {}), 650);
+      } catch (error) {
+        // Browsers may block audio until interaction; the visual booking pulse still runs.
+      }
+    }
+
+    function renderBookingSoundToggle() {
+      if (!bookingSoundToggleEl) return;
+      bookingSoundToggleEl.classList.toggle("on", state.bookingSoundEnabled);
+      bookingSoundToggleEl.setAttribute("aria-pressed", state.bookingSoundEnabled ? "true" : "false");
+    }
+
+    function latestIncomingSignature(conversations) {
+      const incoming = [];
+      (conversations || []).forEach((conversation) => {
+        (conversation.recent_messages || []).forEach((message) => {
+          if (message && message.role === "user") {
+            incoming.push([
+              Date.parse(String(message.at || "")) || 0,
+              conversation.key || "",
+              message.id || "",
+              message.text || ""
+            ].join(":"));
+          }
+        });
+      });
+      incoming.sort();
+      return incoming.length + "|" + (incoming[incoming.length - 1] || "");
+    }
+
+    window.triggerMessagePulse = triggerMessagePulse;
+    window.triggerBookingPulse = triggerBookingPulse;
+    window.playBookingSound = playBookingSound;
 
     function timeframeLabel(value) {
       return {
@@ -9869,6 +10565,7 @@ function renderModernHomePage() {
       mobilePitchBookEl.textContent = percent(kpis.pitch_to_book_rate || 0);
       mobileShowRateEl.textContent = percent(kpis.book_to_show_rate || 0);
       mobileAttentionCountEl.textContent = attentionCount;
+      mobileNeedsAttentionEl.classList.toggle("has-attention", attentionCount > 0);
       mobileFunnelSummaryEl.textContent =
         (kpis.touch_points || 0) +
         " Touch -> " +
@@ -10632,10 +11329,29 @@ function renderModernHomePage() {
         state.latestStats = stats;
         state.latestDrafts = drafts.drafts || [];
         state.latestEvents = events.events || [];
+        const incomingSignature = latestIncomingSignature(state.conversations);
+        const bookedCount = Number(stats.setter_kpis?.calls_booked || 0);
+        const hasNewIncoming =
+          state.hasLoadedOnce &&
+          incomingSignature &&
+          state.lastIncomingSignature &&
+          incomingSignature !== state.lastIncomingSignature;
+        const hasNewBooking =
+          state.hasLoadedOnce &&
+          state.lastBookedCount !== null &&
+          bookedCount > state.lastBookedCount;
         fillTargetForm(stats.kpi_targets || {});
         renderConversations(conversations.conversations || []);
         renderMobileInbox(state.conversations);
         renderMobilePulse(stats);
+        if (hasNewBooking) {
+          triggerBookingPulse(state.lastBookedCount, bookedCount);
+        } else if (hasNewIncoming) {
+          triggerMessagePulse();
+        }
+        state.lastIncomingSignature = incomingSignature;
+        state.lastBookedCount = bookedCount;
+        state.hasLoadedOnce = true;
         loadKpiAnalytics();
         if (!companionEl.hidden && state.activeConversationKey) {
           renderCompanion(activeConversation());
@@ -10660,9 +11376,24 @@ function renderModernHomePage() {
     document.querySelectorAll("[data-mobile-tab]").forEach((tab) => {
       tab.addEventListener("click", (event) => {
         event.preventDefault();
+        unlockBookingAudio();
         setMobileScreen(tab.dataset.mobileTab);
       });
     });
+
+    ["pointerdown", "keydown", "touchstart"].forEach((eventName) => {
+      window.addEventListener(eventName, unlockBookingAudio, { once: true, passive: true });
+    });
+
+    if (bookingSoundToggleEl) {
+      bookingSoundToggleEl.addEventListener("click", () => {
+        unlockBookingAudio();
+        state.bookingSoundEnabled = !state.bookingSoundEnabled;
+        localStorage.setItem("pulseBookingSound", state.bookingSoundEnabled ? "on" : "off");
+        renderBookingSoundToggle();
+      });
+      renderBookingSoundToggle();
+    }
 
     mobileNeedsAttentionEl.addEventListener("click", () => {
       state.inboxFilter = "needs";
