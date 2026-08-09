@@ -9761,7 +9761,7 @@ function renderModernHomePage() {
           label +
           "</strong><small>" +
           description +
-          "</small></span><span class=\"switch-dot\" aria-hidden=\"true\"></span>";
+          "</small></span><span class='switch-dot' aria-hidden='true'></span>";
         mobileButton.addEventListener("click", async () => {
           mobileButton.disabled = true;
           setStatus("Saving " + label + "...");
