@@ -44,7 +44,7 @@ const FOLLOW_UP_OFFSETS_MS = [
 ];
 const FOLLOW_UP_CHECK_MS = 60 * 1000;
 const FOLLOW_UP_WINDOW_MS = 23 * 60 * 60 * 1000;
-const APP_BUILD_MARKER = "2026-08-08-winning-flow-ladder-v1";
+const APP_BUILD_MARKER = "2026-08-08-context-follow-ups-v1";
 const DEFAULT_KPI_TARGETS = {
   daily_touch_points_target: 100,
   touch_pitch_min_rate: 10,
@@ -2204,8 +2204,28 @@ function bookingConfirmationReply() {
   };
 }
 
+function followUpTriggerType(replyText) {
+  const text = String(replyText || "");
+
+  if (linkStatsForText(text).booking_links_sent) {
+    return "booking_link_sent";
+  }
+
+  if (/send you a link to my calendar|send (?:you )?(?:the|a) calendar link|link to my calendar|calendar link/i.test(text)) {
+    return "calendar_permission";
+  }
+
+  if (/something you(?:'d| would)? want to learn more about|want to learn more|learn more about/i.test(text)) {
+    return "soft_learning_bridge";
+  }
+
+  return replyLooksLikeQuestion(text) ? "question" : "";
+}
+
 function scheduleFollowUpIfNeeded(memory, replyText, sentAtMs = Date.now(), settings) {
-  if (!isFollowUpsEnabled(settings) || !replyLooksLikeQuestion(replyText)) {
+  const triggerType = followUpTriggerType(replyText);
+
+  if (!isFollowUpsEnabled(settings) || !triggerType || memory.booking_confirmed) {
     memory.follow_up.active = false;
     return;
   }
@@ -2213,6 +2233,7 @@ function scheduleFollowUpIfNeeded(memory, replyText, sentAtMs = Date.now(), sett
   memory.follow_up = {
     active: true,
     count: 0,
+    trigger_type: triggerType,
     question_text: String(replyText || "").slice(0, 500),
     question_sent_at: new Date(sentAtMs).toISOString(),
     due_at: new Date(sentAtMs + FOLLOW_UP_OFFSETS_MS[0]).toISOString(),
@@ -4032,11 +4053,44 @@ async function sendReplySequence(messageLike, replyLike, featureSettings) {
 
 async function generateFollowUpReply(memory, featureSettings) {
   const followUpNumber = Number(memory.follow_up?.count || 0) + 1;
-  const replies = [
-    "Still interested in getting this started?",
-    "No pressure, just checking if this is still something you want to look into.",
-    "I'll leave it with you for now. If you want the next step, just message me back."
-  ];
+  const triggerType = String(memory.follow_up?.trigger_type || "");
+  const questionText = String(memory.follow_up?.question_text || "");
+  let replies;
+
+  if (
+    triggerType === "booking_link_sent" ||
+    (memory.booking_link_sent && !memory.booking_confirmed)
+  ) {
+    replies = [
+      "Were you able to grab a time yet?",
+      "No pressure, just making sure you got the calendar link.",
+      "I'll leave it with you for now. If you want us to look at your market, just grab a time on the link."
+    ];
+  } else if (
+    triggerType === "calendar_permission" ||
+    /send you a link to my calendar|send (?:you )?(?:the|a) calendar link|link to my calendar|calendar link/i.test(questionText)
+  ) {
+    replies = [
+      "Were you cool with me sending that calendar link?",
+      "No pressure, just checking if you wanted me to send it.",
+      "I'll leave it with you for now. If you want the next step, just message me back."
+    ];
+  } else if (
+    triggerType === "soft_learning_bridge" ||
+    /something you(?:'d| would)? want to learn more about|want to learn more|learn more about/i.test(questionText)
+  ) {
+    replies = [
+      "Did you want me to show you how this could work in your area?",
+      "No pressure, just checking if this is something you want to look into.",
+      "I'll leave it with you for now. If you want to learn more, just message me back."
+    ];
+  } else {
+    replies = [
+      "Still interested in getting this started?",
+      "No pressure, just checking if this is still something you want to look into.",
+      "I'll leave it with you for now. If you want the next step, just message me back."
+    ];
+  }
 
   return {
     reply: replies[Math.min(followUpNumber, replies.length) - 1],
@@ -4372,6 +4426,7 @@ async function processDueFollowUps() {
 
       return (
         memory.follow_up?.active &&
+        !memory.booking_confirmed &&
         isProviderEnabled(store, memory.provider) &&
         !memoryAutomationPaused(memory) &&
         memory.current_talk_id &&
@@ -4399,6 +4454,13 @@ async function sendDueFollowUp(conversationKey) {
   const memory = store.conversations[conversationKey];
 
   if (!memory || !memory.follow_up?.active || memoryAutomationPaused(memory)) {
+    return;
+  }
+
+  if (memory.booking_confirmed) {
+    memory.follow_up.active = false;
+    memory.follow_up.due_at = null;
+    await writeStore(store);
     return;
   }
 
