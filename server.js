@@ -46,7 +46,7 @@ const FOLLOW_UP_OFFSETS_MS = [
 ];
 const FOLLOW_UP_CHECK_MS = 60 * 1000;
 const FOLLOW_UP_WINDOW_MS = 23 * 60 * 60 * 1000;
-const APP_BUILD_MARKER = "2026-08-09-segue-analytics-cleanup-v1";
+const APP_BUILD_MARKER = "2026-08-09-restore-analytics-breakdowns-v1";
 const DEFAULT_KPI_TARGETS = {
   daily_touch_points_target: 100,
   touch_pitch_min_rate: 10,
@@ -8557,6 +8557,10 @@ function renderModernHomePage() {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
+    .analytics-subhead {
+      margin-top: 14px;
+    }
+
     .analytics-controls select,
     .analytics-controls input,
     .target-grid input {
@@ -10041,6 +10045,11 @@ function renderModernHomePage() {
             <span class="panel-note" id="range-label">24 Hours</span>
           </div>
           <div class="funnel" id="funnel"></div>
+          <div class="panel-head analytics-subhead">
+            <h2>Performance Breakdown</h2>
+            <span class="panel-note">Grouped by selected range</span>
+          </div>
+          <div class="analytics-breakdown" id="desktop-analytics-breakdown"></div>
         </section>
 
         <section class="card panel" id="settings">
@@ -10205,6 +10214,7 @@ function renderModernHomePage() {
     const analyticsStartEl = document.getElementById("analytics-start");
     const analyticsEndEl = document.getElementById("analytics-end");
     const analyticsBreakdownEl = document.getElementById("analytics-breakdown");
+    const desktopAnalyticsBreakdownEl = document.getElementById("desktop-analytics-breakdown");
     const kpiTargetFormEl = document.getElementById("kpi-target-form");
     const mobileAutomationEventsEl = document.getElementById("mobile-automation-events");
     const mobileTestButton = document.getElementById("mobile-test-button");
@@ -11346,31 +11356,51 @@ function renderModernHomePage() {
     }
 
     function renderAnalyticsBreakdown(analytics) {
-      if (!analyticsBreakdownEl) return;
+      const targets = [analyticsBreakdownEl, desktopAnalyticsBreakdownEl].filter(Boolean);
+      if (!targets.length) return;
       const rows = analytics && Array.isArray(analytics.breakdown) ? analytics.breakdown.slice(-12) : [];
-      analyticsBreakdownEl.innerHTML = "";
-      if (!rows.length) {
-        const empty = document.createElement("div");
-        empty.className = "empty";
-        empty.textContent = "No KPI events in this range yet.";
-        analyticsBreakdownEl.appendChild(empty);
-        return;
-      }
-      rows.forEach((row) => {
-        const item = document.createElement("article");
-        item.innerHTML =
-          "<strong>" +
-          row.key +
-          "</strong><span>" +
-          (row.touch_points || 0) +
-          " touches · " +
-          (row.calls_pitched || 0) +
-          " pitched · " +
-          (row.calls_booked || 0) +
-          " booked · " +
-          (row.calls_showed || 0) +
+      const totals = analytics?.totals || {};
+
+      targets.forEach((target) => {
+        target.innerHTML = "";
+
+        const totalItem = document.createElement("article");
+        totalItem.innerHTML =
+          "<strong>Totals</strong><span>" +
+          (totals.touch_points || 0) +
+          " touches - " +
+          (totals.calls_pitched || 0) +
+          " pitched - " +
+          (totals.calls_booked || 0) +
+          " booked - " +
+          (totals.calls_showed || 0) +
           " showed</span>";
-        analyticsBreakdownEl.appendChild(item);
+        target.appendChild(totalItem);
+
+        if (!rows.length) {
+          const empty = document.createElement("div");
+          empty.className = "empty";
+          empty.textContent = "No grouped KPI events in this range yet.";
+          target.appendChild(empty);
+          return;
+        }
+
+        rows.forEach((row) => {
+          const item = document.createElement("article");
+          item.innerHTML =
+            "<strong>" +
+            row.key +
+            "</strong><span>" +
+            (row.touch_points || 0) +
+            " touches - " +
+            (row.calls_pitched || 0) +
+            " pitched - " +
+            (row.calls_booked || 0) +
+            " booked - " +
+            (row.calls_showed || 0) +
+            " showed</span>";
+          target.appendChild(item);
+        });
       });
     }
 
