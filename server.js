@@ -33,9 +33,9 @@ const MAX_PROMPT_MEMORY_MESSAGES = 20;
 const MAX_SUMMARY_SOURCE_MESSAGES = 12;
 const MAX_MEMORY_SUMMARY_CHARS = 1800;
 const MAX_PROCESSED_MESSAGE_IDS = 100;
-const DEFAULT_MANUAL_TAKEOVER_MINUTES = 8;
-const DEFAULT_HUMAN_SEND_DELAY_MIN_MS = 6500;
-const DEFAULT_HUMAN_SEND_DELAY_MAX_MS = 18000;
+const DEFAULT_MANUAL_TAKEOVER_MINUTES = 4;
+const DEFAULT_HUMAN_SEND_DELAY_MIN_MS = 2500;
+const DEFAULT_HUMAN_SEND_DELAY_MAX_MS = 7000;
 const APP_OUTGOING_ECHO_WINDOW_MS = 15 * 60 * 1000;
 const CALENDAR_SEQUENCE_GAP_MS = 8 * 1000;
 const CALENDAR_LINK_SEQUENCE_DELAYS_MS = [0, 10 * 1000, 4 * 1000];
@@ -46,7 +46,7 @@ const FOLLOW_UP_OFFSETS_MS = [
 ];
 const FOLLOW_UP_CHECK_MS = 60 * 1000;
 const FOLLOW_UP_WINDOW_MS = 23 * 60 * 60 * 1000;
-const APP_BUILD_MARKER = "2026-08-09-restore-analytics-breakdowns-v1";
+const APP_BUILD_MARKER = "2026-08-09-restore-low-friction-booking-v1";
 const DEFAULT_KPI_TARGETS = {
   daily_touch_points_target: 100,
   touch_pitch_min_rate: 10,
@@ -2315,7 +2315,7 @@ function appointmentSetterRuleReply(memory, incoming) {
     !memory?.booking_link_sent &&
     !lastAssistantAskedForCalendarPermission(memory)
   ) {
-    return appointmentSetterStartSegueReply();
+    return appointmentSetterCalendarAskReply();
   }
 
   if (asksWhatCallIsAbout(text)) {
@@ -2375,7 +2375,7 @@ function appointmentSetterRuleReply(memory, incoming) {
     !memory?.booking_link_sent &&
     !memory?.booking_confirmed
   ) {
-    return appointmentSetterStartSegueReply();
+    return appointmentSetterCalendarAskReply();
   }
 
   if (
