@@ -3772,7 +3772,7 @@ async function openAiLearningReview(store, timeframe = "7d") {
         {
           role: "system",
           content:
-            "You are a senior Instagram appointment-setting strategist for Pallet Pros Academy. Analyze 7-day DM outcomes and return practical guidance that can improve future replies. Do not recommend long qualification, pressure, income claims, or fake certainty."
+            "You are a senior Instagram appointment-setting strategist for Pallet Pros Academy. Analyze 7-day DM outcomes and return practical guidance that can improve future replies. The winning flow is direct and low-friction: clear pallet-business interest -> frame Zoom as market research and Q&A -> ask permission for calendar -> send calendar after permission. Do not recommend long qualification, generic open-ended discovery questions, pressure, vague urgency, storytelling, personalized videos, income claims, or fake certainty."
         },
         {
           role: "user",
@@ -3809,6 +3809,37 @@ function normalizeStringList(value, limit = 8) {
     .slice(0, limit);
 }
 
+function usefulLearningGuidance(item) {
+  const text = String(item || "").toLowerCase();
+  if (!text.trim()) {
+    return false;
+  }
+
+  return !/\b(increase urgency|open[- ]ended questions?|storytelling|personalized video|different messaging styles|resonates|more engagement|value proposition)\b/i.test(
+    text
+  );
+}
+
+function mergeUniqueLearningList(primary = [], secondary = [], limit = 8) {
+  const seen = new Set();
+  const merged = [];
+
+  for (const item of [...primary, ...secondary]) {
+    const clean = String(item || "").replace(/\s+/g, " ").trim();
+    const key = clean.toLowerCase();
+    if (!clean || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    merged.push(clean);
+    if (merged.length >= limit) {
+      break;
+    }
+  }
+
+  return merged;
+}
+
 function normalizeLearningReview(raw, source = "deterministic") {
   const fallback = raw && typeof raw === "object" ? raw : {};
   return {
@@ -3818,6 +3849,33 @@ function normalizeLearningReview(raw, source = "deterministic") {
     guardrails: normalizeStringList(fallback.guardrails, 10),
     experiments: normalizeStringList(fallback.experiments, 8),
     source
+  };
+}
+
+function mergeLearningReviews(aiReview, baseReview) {
+  if (!aiReview) {
+    return baseReview;
+  }
+
+  const filteredAiGuidance = normalizeStringList(aiReview.prompt_guidance, 10).filter(
+    usefulLearningGuidance
+  );
+
+  return {
+    summary: aiReview.summary || baseReview.summary,
+    observations: mergeUniqueLearningList(aiReview.observations, baseReview.observations, 10),
+    prompt_guidance: mergeUniqueLearningList(
+      filteredAiGuidance,
+      baseReview.prompt_guidance,
+      10
+    ),
+    guardrails: mergeUniqueLearningList(aiReview.guardrails, baseReview.guardrails, 10),
+    experiments: mergeUniqueLearningList(
+      normalizeStringList(aiReview.experiments, 8).filter(usefulLearningGuidance),
+      baseReview.experiments,
+      8
+    ),
+    source: filteredAiGuidance.length ? "openai" : "deterministic"
   };
 }
 
@@ -3880,7 +3938,7 @@ async function runLearningReview(store, { timeframe = "7d", force = false } = {}
     errorMessage = error.message;
   }
 
-  const selected = aiReview || baseReview;
+  const selected = mergeLearningReviews(aiReview, baseReview);
   const insight = {
     id: crypto.randomUUID(),
     status: "complete",
