@@ -6,6 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node scripts/start.js",
+    "history:import": "node scripts/import-json-history-to-supabase.js",
     "check": "node --check server.js && node --check scripts/start.js && node --check scripts/upgrade-conversation-engine.js && node --check scripts/upgrade-short-links.js && node --check scripts/upgrade-booking-nurture.js && node scripts/test-kpi-calculations.js"
   },
   "engines": {
