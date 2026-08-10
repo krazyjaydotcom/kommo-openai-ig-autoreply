@@ -33,6 +33,8 @@ const MAX_PROMPT_MEMORY_MESSAGES = 20;
 const MAX_SUMMARY_SOURCE_MESSAGES = 12;
 const MAX_MEMORY_SUMMARY_CHARS = 1800;
 const MAX_PROCESSED_MESSAGE_IDS = 100;
+const MAX_LEARNING_PROMPT_CHARS = 2200;
+const MAX_LEARNING_TRANSCRIPT_CHARS = 9000;
 const DEFAULT_MANUAL_TAKEOVER_MINUTES = 4;
 const DEFAULT_HUMAN_SEND_DELAY_MIN_MS = 2500;
 const DEFAULT_HUMAN_SEND_DELAY_MAX_MS = 7000;
@@ -46,7 +48,9 @@ const FOLLOW_UP_OFFSETS_MS = [
 ];
 const FOLLOW_UP_CHECK_MS = 60 * 1000;
 const FOLLOW_UP_WINDOW_MS = 23 * 60 * 60 * 1000;
-const APP_BUILD_MARKER = "2026-08-09-tighten-booking-intent-and-followups-v1";
+const LEARNING_REVIEW_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
+const LEARNING_REVIEW_CHECK_MS = 60 * 60 * 1000;
+const APP_BUILD_MARKER = "2026-08-09-weekly-learning-loop-v1";
 const DEFAULT_KPI_TARGETS = {
   daily_touch_points_target: 100,
   touch_pitch_min_rate: 10,
@@ -99,6 +103,8 @@ const DEFAULT_STORE = {
   bookingEvents: [],
   profileCache: {},
   automationEvents: [],
+  learningInsights: [],
+  learningState: {},
   dailyStats: {},
   kpiEvents: [],
   kpiTargets: DEFAULT_KPI_TARGETS
@@ -166,8 +172,8 @@ Best-performing DM flow:
 3. If they give useful context, mirror one specific detail so they feel heard.
 4. If they are only lightly curious, vague, or asking follow-up questions without clear start intent, say: "Got you. I have a short training video that explains how the pallet business works. Want me to send it?"
 5. If they say yes to the training video, send: "No problem. Here's the training video: https://www.palletprosacademy.com/training"
-6. If they say yes or clearly show they want to start, learn, get started, pursue it, or build a pallet business, use this segue first: "Solid. My academy can definitely help you get started making money in this business fast. Is that something you'd be interested in learning more about?"
-7. If they agree to that segue, say: "Great. Let's get on a Zoom call this week. That way we can research your market, answer any questions you have and see if you'd be a good fit for the program. Do you mind if I send you a link to my calendar?"
+6. If they say yes or clearly show they want to start, learn, get started, pursue it, or build a pallet business, use the Zoom framing directly: "Great. Let's get on a Zoom call this week. That way we can research your market, answer any questions you have and see if you'd be a good fit for the program. Do you mind if I send you a link to my calendar?"
+7. Use the softer "Is that something you'd be interested in learning more about?" bridge only when they asked a real question or gave context that needs a brief answer before the Zoom ask.
 8. If they agree to the calendar, do not ask anything else. Send the calendar in three short messages: first "Great. Give me one sec and I'll grab that link for you.", then after a 10-second pause "Here's the link to my calendar - https://www.tidycal.com/palletprosga/15-minute-meeting", then 4 seconds later "I'll be by my phone for another 5 minutes. Choose a date/time that works for you and I'll verify it on my end."
 9. If they ask for a call, appointment, consultation, details, or scheduling directly, it is okay to send the booking link without asking permission again.
 10. If they mention a day/time instead of booking through the link, politely tell them to use the link to choose their time.
@@ -591,6 +597,13 @@ function normalizeStore(store) {
     automationEvents: Array.isArray(parsed.automationEvents)
       ? parsed.automationEvents
       : [],
+    learningInsights: Array.isArray(parsed.learningInsights)
+      ? parsed.learningInsights.slice(-12)
+      : [],
+    learningState:
+      parsed.learningState && typeof parsed.learningState === "object"
+        ? parsed.learningState
+        : {},
     dailyStats:
       parsed.dailyStats && typeof parsed.dailyStats === "object"
         ? parsed.dailyStats
@@ -3629,6 +3642,288 @@ function setterReviewForTimeframe(store, timeframe = "7d") {
   };
 }
 
+function conversationOutcomeLabel(memory) {
+  if (memory?.booking_confirmed) return "booked";
+  if (memory?.booking_link_clicked) return "clicked_calendar_not_booked";
+  if (memory?.booking_link_sent) return "calendar_sent_not_clicked";
+  if (memory?.training_link_sent || memory?.youtube_link_sent) return "training_or_content_sent";
+  if (memory?.call_pitched) return "call_pitched_no_link";
+  if (conversationGhosted(memory)) return "ghosted";
+  return memory?.lead_status || "unknown";
+}
+
+function learningConversationSamples(store, timeframe = "7d", limit = 35) {
+  const conversations = Object.values(store.conversations || {})
+    .filter((memory) => conversationInTimeframe(memory, timeframe))
+    .sort((a, b) => latestConversationTime(b) - latestConversationTime(a))
+    .slice(0, limit);
+
+  return conversations.map((memory) => ({
+    name: conversationDisplayName(memory),
+    outcome: conversationOutcomeLabel(memory),
+    lead_status: memory.lead_status || "",
+    call_pitched: Boolean(memory.call_pitched),
+    booking_link_sent: Boolean(memory.booking_link_sent),
+    booking_link_clicked: Boolean(memory.booking_link_clicked),
+    booking_confirmed: Boolean(memory.booking_confirmed),
+    last_reply_reason: memory.last_reply_reason || "",
+    messages: (Array.isArray(memory.last_messages) ? memory.last_messages : [])
+      .slice(-12)
+      .map((message) => ({
+        role: message.role === "user" ? "prospect" : "assistant",
+        source: message.source || "",
+        text: compactMemoryText(message.text, 260)
+      }))
+  }));
+}
+
+function deterministicLearningReview(store, timeframe = "7d") {
+  const analytics = kpiAnalytics(store, { range: timeframe });
+  const review = setterReviewForTimeframe(store, timeframe);
+  const stats = statsForTimeframe(store, timeframe);
+  const totals = analytics.totals;
+  const promptGuidance = [];
+  const observations = [];
+  const experiments = [];
+  const guardrails = [
+    "Keep replies short and human. One clear question per message.",
+    "Do not over-qualify clear start intent. Move toward Zoom/calendar permission quickly.",
+    "Do not invent prices, earnings, guarantees, or program details."
+  ];
+
+  observations.push(
+    `${totals.touch_points || 0} touch points, ${totals.calls_pitched || 0} calls pitched, ${totals.calls_booked || 0} calls booked in ${timeframe}.`
+  );
+
+  if ((totals.booking_link_clicks || 0) > (totals.calls_booked || 0)) {
+    observations.push(
+      "Calendar clicks are higher than confirmed bookings, so some prospects are interested enough to click but are not finishing the booking step."
+    );
+    promptGuidance.push(
+      "If the prospect clicked or received the calendar link but did not book, follow up by checking whether the page opened or whether they saw a time that works."
+    );
+    experiments.push(
+      "For calendar-click/no-book leads, test a friction-removal follow-up instead of another generic reminder."
+    );
+  }
+
+  if (totals.touch_points && safeRate(totals.calls_pitched, totals.touch_points) < 12) {
+    observations.push("Call pitch rate is low relative to touch points.");
+    promptGuidance.push(
+      "Treat phrases like 'my own business', 'have my business', 'both', 'want to learn', and 'start a business' as warm enough to pitch the Zoom call."
+    );
+  }
+
+  if (review.ghosted.length >= 3) {
+    observations.push(`${review.ghosted.length} conversations look ghosted after the assistant replied.`);
+    promptGuidance.push(
+      "When a prospect gives context, mirror one concrete detail and position the call around solving that specific problem instead of making the call sound like the goal."
+    );
+  }
+
+  if ((stats.training_links_sent || 0) > (stats.booking_links_sent || 0)) {
+    observations.push("Training links outnumber booking links.");
+    promptGuidance.push(
+      "Use the training video for vague curiosity, but do not send training first when the prospect clearly says they want to start or own a pallet business."
+    );
+  }
+
+  if (!promptGuidance.length) {
+    promptGuidance.push(
+      "Keep using the direct winning flow: interest -> Zoom framing -> ask permission for calendar -> send calendar when they agree."
+    );
+  }
+
+  return {
+    summary: observations.join(" "),
+    observations,
+    prompt_guidance: promptGuidance.slice(0, 8),
+    guardrails,
+    experiments: experiments.slice(0, 5),
+    source: "deterministic"
+  };
+}
+
+async function openAiLearningReview(store, timeframe = "7d") {
+  if (!process.env.OPENAI_API_KEY) {
+    return null;
+  }
+
+  const payload = {
+    timeframe,
+    generated_at: new Date().toISOString(),
+    analytics: kpiAnalytics(store, { range: timeframe }),
+    setter_review: setterReviewForTimeframe(store, timeframe),
+    conversation_samples: learningConversationSamples(store, timeframe)
+  };
+  const compactPayload = JSON.stringify(payload, null, 2).slice(0, MAX_LEARNING_TRANSCRIPT_CHARS);
+
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: process.env.OPENAI_MODEL || DEFAULT_OPENAI_MODEL,
+      temperature: 0.2,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a senior Instagram appointment-setting strategist for Pallet Pros Academy. Analyze 7-day DM outcomes and return practical guidance that can improve future replies. Do not recommend long qualification, pressure, income claims, or fake certainty."
+        },
+        {
+          role: "user",
+          content:
+            "Return JSON with keys: summary, observations, prompt_guidance, guardrails, experiments. Each array should use short direct strings. Focus on what should change in future replies based on the data.\n" +
+            compactPayload
+        }
+      ]
+    })
+  });
+
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`OpenAI learning review failed ${response.status}: ${text}`);
+  }
+
+  const parsed = safeJsonParse(responseBodyContent(text));
+  if (!parsed) {
+    return null;
+  }
+
+  return normalizeLearningReview(parsed, "openai");
+}
+
+function responseBodyContent(responseText) {
+  const body = safeJsonParse(responseText);
+  return body?.choices?.[0]?.message?.content || responseText;
+}
+
+function normalizeStringList(value, limit = 8) {
+  return (Array.isArray(value) ? value : [])
+    .map((item) => String(item || "").replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
+function normalizeLearningReview(raw, source = "deterministic") {
+  const fallback = raw && typeof raw === "object" ? raw : {};
+  return {
+    summary: String(fallback.summary || "").replace(/\s+/g, " ").trim().slice(0, 700),
+    observations: normalizeStringList(fallback.observations, 10),
+    prompt_guidance: normalizeStringList(fallback.prompt_guidance, 10),
+    guardrails: normalizeStringList(fallback.guardrails, 10),
+    experiments: normalizeStringList(fallback.experiments, 8),
+    source
+  };
+}
+
+function latestLearningGuidance(store) {
+  const insights = Array.isArray(store?.learningInsights) ? store.learningInsights : [];
+  const latest = insights
+    .slice()
+    .reverse()
+    .find((item) => item && item.status === "complete");
+
+  if (!latest) {
+    return null;
+  }
+
+  return {
+    generated_at: latest.generated_at,
+    timeframe: latest.timeframe,
+    source: latest.source,
+    summary: latest.summary,
+    prompt_guidance: latest.prompt_guidance || [],
+    guardrails: latest.guardrails || []
+  };
+}
+
+function learningGuidanceForPrompt(store) {
+  const guidance = latestLearningGuidance(store);
+  if (!guidance) {
+    return null;
+  }
+
+  return {
+    ...guidance,
+    summary: compactMemoryText(guidance.summary, 500),
+    prompt_guidance: normalizeStringList(guidance.prompt_guidance, 8),
+    guardrails: normalizeStringList(guidance.guardrails, 8)
+  };
+}
+
+async function runLearningReview(store, { timeframe = "7d", force = false } = {}) {
+  const normalized = normalizeStore(store);
+  normalized.learningState =
+    normalized.learningState && typeof normalized.learningState === "object"
+      ? normalized.learningState
+      : {};
+
+  const now = Date.now();
+  const lastRunMs = Date.parse(String(normalized.learningState.last_run_at || ""));
+  if (!force && Number.isFinite(lastRunMs) && now - lastRunMs < LEARNING_REVIEW_INTERVAL_MS) {
+    return { ran: false, reason: "not_due", insight: latestLearningGuidance(normalized) };
+  }
+
+  normalized.learningState.last_attempt_at = new Date(now).toISOString();
+  const baseReview = normalizeLearningReview(deterministicLearningReview(normalized, timeframe));
+  let aiReview = null;
+  let errorMessage = "";
+
+  try {
+    aiReview = await openAiLearningReview(normalized, timeframe);
+  } catch (error) {
+    errorMessage = error.message;
+  }
+
+  const selected = aiReview || baseReview;
+  const insight = {
+    id: crypto.randomUUID(),
+    status: "complete",
+    timeframe,
+    generated_at: new Date().toISOString(),
+    source: selected.source || "deterministic",
+    summary: selected.summary || baseReview.summary,
+    observations: selected.observations.length ? selected.observations : baseReview.observations,
+    prompt_guidance: selected.prompt_guidance.length
+      ? selected.prompt_guidance
+      : baseReview.prompt_guidance,
+    guardrails: selected.guardrails.length ? selected.guardrails : baseReview.guardrails,
+    experiments: selected.experiments.length ? selected.experiments : baseReview.experiments,
+    fallback_reason: aiReview ? "" : errorMessage
+  };
+
+  normalized.learningInsights = Array.isArray(normalized.learningInsights)
+    ? normalized.learningInsights
+    : [];
+  normalized.learningInsights.push(insight);
+  normalized.learningInsights = normalized.learningInsights.slice(-12);
+  normalized.learningState.last_run_at = insight.generated_at;
+  normalized.learningState.last_error = errorMessage;
+
+  addAutomationEvent(normalized, {
+    type: "learning_review",
+    level: "info",
+    message: "7-day learning review completed.",
+    reason: insight.source
+  });
+
+  return { ran: true, insight, store: normalized };
+}
+
+async function processLearningReviewIfDue() {
+  const store = await readStore();
+  const result = await runLearningReview(store, { timeframe: "7d", force: false });
+  if (result.ran && result.store) {
+    await writeStore(result.store);
+  }
+  return result;
+}
+
 function parseTranscriptForTest(transcript) {
   return String(transcript || "")
     .split(/\r?\n/)
@@ -4379,15 +4674,19 @@ async function generateReply({
 }) {
   const promptMemory = memoryForPrompt(memory, featureSettings);
   const businessKnowledge = await loadKnowledgeBase();
+  const learningStore = await readStore();
+  const learningInsights = learningGuidanceForPrompt(learningStore);
   const payload = {
     conversation_history: thread.slice(-30),
     conversation_memory: promptMemory,
     business_knowledge: businessKnowledge || null,
+    learning_insights: learningInsights,
     context_status: {
       provider: normalizeProvider(newMessage.provider),
       history_messages_loaded: thread.length,
       memory_messages_loaded: promptMemory?.recent_messages?.length || 0,
-      business_knowledge_loaded: Boolean(businessKnowledge)
+      business_knowledge_loaded: Boolean(businessKnowledge),
+      learning_insights_loaded: Boolean(learningInsights)
     },
     new_message: newMessage.text,
     context_warning: contextWarning || null
@@ -4411,6 +4710,7 @@ async function generateReply({
             "Use this JSON conversation data to write the next Instagram DM reply. Return JSON only.\n" +
             "Use conversation_history and conversation_memory to understand where the conversation is and avoid repeating links or qualifying questions.\n" +
             "Use business_knowledge for Pallet Pros facts and voice, but do not invent missing details.\n" +
+            "Use learning_insights as recent performance guidance, but never violate house rules, safety rules, or business_knowledge.\n" +
             JSON.stringify(payload, null, 2)
         }
       ]
@@ -5794,6 +6094,45 @@ app.get("/api/automation-events", async (req, res, next) => {
   }
 });
 
+app.get("/api/learning-review", async (_req, res, next) => {
+  try {
+    const store = await readStore();
+    res.json({
+      state: store.learningState || {},
+      latest: latestLearningGuidance(store),
+      insights: (Array.isArray(store.learningInsights) ? store.learningInsights : [])
+        .slice()
+        .sort((a, b) => Date.parse(b.generated_at || 0) - Date.parse(a.generated_at || 0))
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/learning-review/run", async (req, res, next) => {
+  try {
+    const store = await readStore();
+    const timeframe = resolveTimeframe(req.body?.timeframe || req.query.timeframe || "7d");
+    const result = await runLearningReview(store, {
+      timeframe,
+      force: req.body?.force !== false
+    });
+
+    if (result.store) {
+      await writeStore(result.store);
+    }
+
+    res.json({
+      ok: true,
+      ran: result.ran,
+      reason: result.reason || "",
+      insight: result.insight || null
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get("/api/stats", async (req, res, next) => {
   try {
     const store = await readStore();
@@ -5829,6 +6168,13 @@ app.get("/api/stats", async (req, res, next) => {
       },
       kpi_targets: analytics.targets,
       kpi_diagnosis: analytics.diagnosis,
+      learning_review: {
+        latest: latestLearningGuidance(store),
+        cadence_days: Math.round(LEARNING_REVIEW_INTERVAL_MS / (24 * 60 * 60 * 1000)),
+        last_run_at: store.learningState?.last_run_at || null,
+        last_attempt_at: store.learningState?.last_attempt_at || null,
+        last_error: store.learningState?.last_error || ""
+      },
       business_time_zone: BUSINESS_TIME_ZONE,
       settings: {
         auto_send: isAutoSendEnabled(featureSettings),
@@ -9998,6 +10344,7 @@ function renderModernHomePage() {
           <div class="more-menu">
             <button type="button" data-more-panel="controls">AI Controls <span>></span></button>
             <button type="button" data-more-panel="instructions">AI Instructions <span>></span></button>
+            <button type="button" data-more-panel="learning">Learning Review <span>></span></button>
             <button type="button" data-more-panel="drafts">Pending Drafts <strong id="mobile-drafts-count">0</strong></button>
             <button type="button" data-more-panel="targets">KPI Targets <span>></span></button>
             <button type="button" data-more-panel="tester">AI Tester <span>></span></button>
@@ -10016,6 +10363,15 @@ function renderModernHomePage() {
           <section class="more-panel" id="more-instructions" hidden>
             <div class="panel-head"><h2>AI Instructions</h2><button class="ghost-link" data-more-close type="button">Close</button></div>
             <p class="mobile-note">The current playbook is optimized for short, booking-first Instagram conversations. Edit deeper business knowledge from the desktop prompt tools for now.</p>
+          </section>
+
+          <section class="more-panel" id="more-learning" hidden>
+            <div class="panel-head"><h2>Learning Review</h2><button class="ghost-link" data-more-close type="button">Close</button></div>
+            <p class="mobile-note">Every 7 days, Pulse reviews recent DMs and feeds the newest guidance into future AI replies.</p>
+            <div class="events" id="mobile-learning-review"></div>
+            <div class="actions" style="margin-top:10px;">
+              <button id="mobile-learning-run" class="action primary" type="button">Run Review Now</button>
+            </div>
           </section>
 
           <section class="more-panel" id="more-drafts" hidden>
@@ -10087,6 +10443,10 @@ function renderModernHomePage() {
           <div class="controls">
             <div class="control-row" id="features"></div>
             <div class="control-row" id="flags"></div>
+            <div class="events" id="learning-review"></div>
+            <div class="actions" style="margin:10px 0 12px;">
+              <button id="learning-run" class="action primary" type="button">Run 7-Day Learning Review</button>
+            </div>
             <div class="events" id="automation-events"></div>
           </div>
         </section>
@@ -10174,6 +10534,7 @@ function renderModernHomePage() {
       latestStats: null,
       latestDrafts: [],
       latestEvents: [],
+      latestLearning: null,
       latestAnalytics: null,
       hasLoadedOnce: false,
       lastIncomingSignature: "",
@@ -10187,6 +10548,7 @@ function renderModernHomePage() {
     const featuresEl = document.getElementById("features");
     const flagsEl = document.getElementById("flags");
     const automationEventsEl = document.getElementById("automation-events");
+    const learningReviewEl = document.getElementById("learning-review");
     const kpisEl = document.getElementById("kpis");
     const funnelEl = document.getElementById("funnel");
     const statusEl = document.getElementById("status");
@@ -10244,6 +10606,9 @@ function renderModernHomePage() {
     const desktopAnalyticsBreakdownEl = document.getElementById("desktop-analytics-breakdown");
     const kpiTargetFormEl = document.getElementById("kpi-target-form");
     const mobileAutomationEventsEl = document.getElementById("mobile-automation-events");
+    const mobileLearningReviewEl = document.getElementById("mobile-learning-review");
+    const learningRunButton = document.getElementById("learning-run");
+    const mobileLearningRunButton = document.getElementById("mobile-learning-run");
     const mobileTestButton = document.getElementById("mobile-test-button");
     const mobileTestTranscript = document.getElementById("mobile-test-transcript");
     const mobileTestNewMessage = document.getElementById("mobile-test-new-message");
@@ -11329,6 +11694,46 @@ function renderModernHomePage() {
       });
     }
 
+    function renderLearningReview(data) {
+      const targets = [learningReviewEl, mobileLearningReviewEl].filter(Boolean);
+      const latest = data && data.latest ? data.latest : null;
+      targets.forEach((target) => {
+        target.innerHTML = "";
+        if (!latest) {
+          const empty = document.createElement("div");
+          empty.className = "empty";
+          empty.textContent = "No learning review yet. Run one after you have recent DM activity.";
+          target.appendChild(empty);
+          return;
+        }
+
+        const row = document.createElement("div");
+        row.className = "event info";
+        const title = document.createElement("strong");
+        title.textContent =
+          "Latest review · " +
+          formatDate(latest.generated_at) +
+          " · " +
+          String(latest.source || "analysis");
+        const summary = document.createElement("span");
+        summary.textContent = latest.summary || "Review completed.";
+        row.append(title, summary);
+        target.appendChild(row);
+
+        const guidance = (latest.prompt_guidance || []).slice(0, 5);
+        guidance.forEach((item) => {
+          const note = document.createElement("div");
+          note.className = "event success";
+          const top = document.createElement("strong");
+          top.textContent = "Reply guidance";
+          const text = document.createElement("span");
+          text.textContent = item;
+          note.append(top, text);
+          target.appendChild(note);
+        });
+      });
+    }
+
     function renderSetterReview(review) {
       if (!setterReviewEl) return;
       const safe = review || {};
@@ -11463,12 +11868,13 @@ function renderModernHomePage() {
       if (!silent) setStatus("Refreshing...");
       try {
         const query = "?timeframe=" + encodeURIComponent(state.timeframe);
-        const [stats, conversations, drafts, events, review] = await Promise.all([
+        const [stats, conversations, drafts, events, review, learning] = await Promise.all([
           api("/api/stats" + query),
           api("/api/conversations" + query),
           api("/api/drafts"),
           api("/api/automation-events?limit=25"),
-          api("/api/setter-review" + query)
+          api("/api/setter-review" + query),
+          api("/api/learning-review")
         ]);
         rangeLabelEl.textContent = timeframeLabel(state.timeframe);
         renderKpis(stats);
@@ -11478,6 +11884,7 @@ function renderModernHomePage() {
         state.latestStats = stats;
         state.latestDrafts = drafts.drafts || [];
         state.latestEvents = events.events || [];
+        state.latestLearning = learning || null;
         const incomingSignature = latestIncomingSignature(state.conversations);
         const bookedCount = Number(stats.setter_kpis?.calls_booked || 0);
         const hasNewIncoming =
@@ -11508,6 +11915,7 @@ function renderModernHomePage() {
         renderDrafts(drafts.drafts || []);
         renderAutomationEvents(events.events || []);
         renderSetterReview(review);
+        renderLearningReview(learning);
         if (!silent) setStatus("Live.");
       } catch (error) {
         setStatus(error.message);
@@ -11543,6 +11951,29 @@ function renderModernHomePage() {
       });
       renderBookingSoundToggle();
     }
+
+    async function runLearningReviewNow(button) {
+      if (button) button.disabled = true;
+      setStatus("Running 7-day learning review...");
+      try {
+        const result = await api("/api/learning-review/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ timeframe: "7d", force: true })
+        });
+        renderLearningReview({ latest: result.insight, insights: result.insight ? [result.insight] : [] });
+        await loadAll(true);
+        setStatus("Learning review saved.");
+      } catch (error) {
+        setStatus(error.message);
+      } finally {
+        if (button) button.disabled = false;
+      }
+    }
+
+    [learningRunButton, mobileLearningRunButton].filter(Boolean).forEach((button) => {
+      button.addEventListener("click", () => runLearningReviewNow(button));
+    });
 
     mobileNeedsAttentionEl.addEventListener("click", () => {
       state.inboxFilter = "needs";
@@ -11756,6 +12187,12 @@ ensureStoreFile()
         console.error("Follow-up interval failed:", error);
       });
     }, FOLLOW_UP_CHECK_MS);
+
+    setInterval(() => {
+      processLearningReviewIfDue().catch((error) => {
+        console.error("Learning review interval failed:", error);
+      });
+    }, LEARNING_REVIEW_CHECK_MS);
 
     app.listen(PORT, () => {
       console.log(`Zernio OpenAI IG auto-reply app listening on port ${PORT}`);
