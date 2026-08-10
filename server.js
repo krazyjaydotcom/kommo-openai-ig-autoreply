@@ -46,7 +46,7 @@ const FOLLOW_UP_OFFSETS_MS = [
 ];
 const FOLLOW_UP_CHECK_MS = 60 * 1000;
 const FOLLOW_UP_WINDOW_MS = 23 * 60 * 60 * 1000;
-const APP_BUILD_MARKER = "2026-08-09-restore-low-friction-booking-v1";
+const APP_BUILD_MARKER = "2026-08-09-tighten-booking-intent-and-followups-v1";
 const DEFAULT_KPI_TARGETS = {
   daily_touch_points_target: 100,
   touch_pitch_min_rate: 10,
@@ -1957,6 +1957,15 @@ function appointmentSetterTrainingLinkReply() {
   };
 }
 
+function appointmentSetterNotReadyReply() {
+  return {
+    reply:
+      "No problem. If timing isn't right yet, the training video is probably the best next step for now.\n\nWant me to send it?",
+    needs_review: false,
+    handled: true
+  };
+}
+
 function appointmentSetterNoTruckReply() {
   return {
     reply:
@@ -2034,6 +2043,12 @@ function wantsContentOnly(text) {
   );
 }
 
+function saysNotReadyYet(text) {
+  return /\b(not now|not right now|not ready|when i'?m ready|when im ready|i'?ll let you know|i will let you know|later|another time|not at the moment|not today|maybe later)\b/i.test(
+    String(text || "")
+  );
+}
+
 function asksPriceOrCost(text) {
   return /\b(price|cost|how much|what.*charge|program.*cost|academy.*cost|pay for|investment)\b/i.test(
     String(text || "")
@@ -2105,6 +2120,12 @@ function hasClearStartIntent(text) {
   return /\b(i'?m|im|i am|we'?re|were|we are|i|we)\s+(?:definitely\s+|really\s+|ready\s+|tryna\s+|trying\s+|looking\s+|want(?:ing)?\s+|wanna\s+)?(?:interested|ready|down|trying|tryna|looking|want(?:ing)?|wanna|ready)\b.{0,80}\b(start|get started|learn|business|pallet|pallets)\b/i.test(
     String(text || "")
   ) ||
+    /\b(i|we)\s+(?:would\s+like|want|wanna|wanting|ready|trying|tryna|looking|waiting)\b.{0,80}\b(?:own|have|start|get|build)\b.{0,50}\b(?:my|our|a|own)?\s*(?:pallet\s+)?business\b/i.test(
+      String(text || "")
+    ) ||
+    /\b(my own business|own business|have my business|have a business|start my business|start a business|start the business)\b/i.test(
+      String(text || "")
+    ) ||
     /\b(start|get started|learn|get into)\b.{0,40}\b(pallet|pallets|business)\b/i.test(
       String(text || "")
     ) ||
@@ -2161,7 +2182,7 @@ function yesToBusinessInterest(text) {
     .replace(/\s+/g, " ")
     .trim();
 
-  return /^(yes|yea|yeah|yep|yup|most definitely|definitely|for sure|sure|yea definitely|yeah definitely|i am|i'm|im|interested|i'm interested|im interested|trying|tryna|i'm tryna|im tryna|i want|wanting|wanna|ready|down|let's do it|lets do it)\b/.test(
+  return /^(yes|yea|yeah|yep|yup|both|most definitely|definitely|for sure|sure|yea definitely|yeah definitely|i am|i'm|im|interested|i'm interested|im interested|trying|tryna|i'm tryna|im tryna|i want|wanting|wanna|ready|down|let's do it|lets do it)\b/.test(
     cleanText
   );
 }
@@ -2300,6 +2321,10 @@ function appointmentSetterRuleReply(memory, incoming) {
 
   if (saysNoMoneyOrCapital(text)) {
     return appointmentSetterNoMoneyReply();
+  }
+
+  if (saysNotReadyYet(text) && !memory?.booking_link_sent) {
+    return appointmentSetterNotReadyReply();
   }
 
   if (existingOperatorBuyerProblem(memory, text)) {
@@ -4545,9 +4570,11 @@ async function generateFollowUpReply(memory, featureSettings) {
     (memory.booking_link_sent && !memory.booking_confirmed)
   ) {
     replies = [
-      "Were you able to grab a time yet?",
-      "No pressure, just making sure you got the calendar link.",
-      "I'll leave it with you for now. If you want us to look at your market, just grab a time on the link."
+      memory.booking_link_clicked
+        ? "Did the calendar page open okay for you?"
+        : "Were you able to open the calendar link?",
+      "If you don't see a time that works, just let me know.",
+      "I'll leave it with you for now. When you're ready, grab a time and we'll look at your market together."
     ];
   } else if (
     triggerType === "calendar_permission" ||
