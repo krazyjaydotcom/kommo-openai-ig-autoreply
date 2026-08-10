@@ -50,7 +50,7 @@ const FOLLOW_UP_CHECK_MS = 60 * 1000;
 const FOLLOW_UP_WINDOW_MS = 23 * 60 * 60 * 1000;
 const LEARNING_REVIEW_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
 const LEARNING_REVIEW_CHECK_MS = 60 * 60 * 1000;
-const APP_BUILD_MARKER = "2026-08-09-weekly-learning-loop-v1";
+const APP_BUILD_MARKER = "2026-08-09-weekly-learning-loop-v2";
 const DEFAULT_KPI_TARGETS = {
   daily_touch_points_target: 100,
   touch_pitch_min_rate: 10,
