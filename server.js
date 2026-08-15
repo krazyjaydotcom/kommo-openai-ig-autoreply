@@ -248,7 +248,7 @@ const SCENARIO_PLAYBOOK_RULES = `Scenario playbook:
 - Has a truck, trailer, business, warehouse, route, or pallet-yard access:
   Treat as warmer. Mirror the asset they have, then move toward the call quickly.
 - Existing pallet operator, slowed-down business, buyer/client problem, contracts, or pricing pressure:
-  Treat them as experienced, not beginner. Do not give generic sympathy and do not pounce with "want me to send the calendar link?" First name the business problem they gave you. Position the academy/call as a way to research their market and find better buyers or buyer channels. Use this flavor: "Got you. That's exactly the type of thing my academy helps people with. If you want, we can get on a call, research your market, and see where you may be able to find buyers. How does that sound?"
+  Treat them as experienced, not beginner. First name the business problem they gave you. Position the academy/call as a way to research their market and find better buyers or buyer channels, then ask permission for the calendar. Use this flavor: "Got you. That's exactly the type of thing my academy helps people with. We can get on a call, research your market, and see where you may be able to find better buyers. Do you mind if I send you a link to my calendar?"
 - No money, no capital, unemployed, or "I can't afford anything":
   Do not hard sell. If they have no capital or no plan, send them to YouTube. If they are serious but early, say YouTube is the best starting point for now.
 - Location or market question:
@@ -2008,7 +2008,7 @@ function appointmentSetterSkepticReply() {
 function appointmentSetterExistingBuyerProblemReply() {
   return {
     reply:
-      "Got you. That's exactly the type of thing my academy helps people with. If you want, we can get on a call, research your market, and see where you may be able to find buyers. How does that sound?",
+      "Got you. That's exactly the type of thing my academy helps people with. We can get on a call, research your market, and see where you may be able to find better buyers.\n\nDo you mind if I send you a link to my calendar?",
     needs_review: false,
     handled: true
   };
@@ -4929,34 +4929,34 @@ async function generateFollowUpReply(memory, featureSettings) {
   ) {
     replies = [
       memory.booking_link_clicked
-        ? "Did the calendar page open okay for you?"
+        ? "Did you see a time on the calendar that works for you?"
         : "Were you able to open the calendar link?",
-      "If you don't see a time that works, just let me know.",
-      "I'll leave it with you for now. When you're ready, grab a time and we'll look at your market together."
+      "If the calendar opened but you didn't see a time that works, just let me know.",
+      "When you get a second, grab a weekday time and we'll look at your market together."
     ];
   } else if (
     triggerType === "calendar_permission" ||
     /send you a link to my calendar|send (?:you )?(?:the|a) calendar link|link to my calendar|calendar link/i.test(questionText)
   ) {
     replies = [
-      "Were you cool with me sending that calendar link?",
-      "No pressure, just checking if you wanted me to send it.",
-      "I'll leave it with you for now. If you want the next step, just message me back."
+      "Want me to send that calendar link over?",
+      "If you want to look at a time, I can send the calendar link.",
+      "When you're ready for the next step, just tell me to send the link."
     ];
   } else if (
     triggerType === "soft_learning_bridge" ||
     /something you(?:'d| would)? want to learn more about|want to learn more|learn more about/i.test(questionText)
   ) {
     replies = [
-      "Did you want me to show you how this could work in your area?",
-      "No pressure, just checking if this is something you want to look into.",
-      "I'll leave it with you for now. If you want to learn more, just message me back."
+      "Did you want to see how this could work in your area?",
+      "If you're still curious, the next step is seeing if your market makes sense.",
+      "If you want to look into it later, message me and we'll take it from there."
     ];
   } else {
     replies = [
       "Still interested in getting this started?",
       "No pressure, just checking if this is still something you want to look into.",
-      "I'll leave it with you for now. If you want the next step, just message me back."
+      "If you want the next step, message me back and I'll point you in the right direction."
     ];
   }
 
