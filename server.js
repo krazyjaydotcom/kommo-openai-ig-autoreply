@@ -27,6 +27,7 @@ const META_GRAPH_ACCESS_TOKEN =
   process.env.META_GRAPH_ACCESS_TOKEN || process.env.INSTAGRAM_ACCESS_TOKEN || "";
 const TRAINING_PLAYLIST_URL =
   "https://www.youtube.com/playlist?list=PLPFyOjF-83nJ0B5xCreYqoQzcGx-SQsvs";
+const DEFAULT_WARM_TRAINING_ROUTE_PERCENT = 25;
 const MAX_KNOWLEDGE_CHARS = 12_000;
 const MAX_RECENT_MEMORY_MESSAGES = 40;
 const MAX_PROMPT_MEMORY_MESSAGES = 20;
@@ -138,21 +139,26 @@ Rules:
 18. After someone confirms they booked, do not send the booking link again and do not keep qualifying them.
 
 Core appointment-setting objective:
-- The goal is not to have a long educational conversation in DMs. The goal is to identify real intent, answer enough to build trust, and move warm prospects to a Zoom/discovery call.
-- If someone plainly says they want to start, learn, get started, schedule, book, or talk about the pallet business, treat them as warm and move toward the call quickly.
-- The best-performing path is: interest -> Zoom call framing -> ask permission for calendar -> send calendar -> tell them to choose a time and you will verify it.
-- Do not add extra qualification questions after a clear "I want to start" unless their message includes a real question or important context that needs a brief answer first.
-- If someone is vague, lightly curious, or asking how the business works without clear start intent, offer the short training video first and ask permission to send it. If they agree, send:
+- Optimize for qualified conversations, qualified appointments, shows, and enrollments. Do not optimize merely for the number of calendar links sent.
+- Use this progression for serious pallet-business interest: interest detected -> ask permission for 3 quick questions -> learn market -> learn starting resources -> learn financial/lifestyle goal -> give a short personalized Zoom invitation -> send calendar immediately after they agree to the Zoom.
+- Next-step routes are: content-only -> YouTube; vague/education-needed -> training video with permission; serious but not yet qualified -> 3 quick questions; qualified -> Zoom invitation; ready-to-book -> calendar immediately.
+- The prospect's message decides the route. Do not force everyone through the same script.
+- If someone plainly says they want to start, learn, get started, or get into the pallet business, ask permission for 3 quick questions before probing.
+- Do not ask the 3 questions like a form. Keep it conversational and ask only the next missing question.
+- The 3 core areas are operating market, starting resources, and financial/lifestyle goal. If any of that information was already shared, do not ask for it again.
+- If someone asks to book, schedule, talk, get the calendar, or send the link, do not force qualification. Send the calendar.
+- Do not ask that discovery question when the prospect already gave motivation, assets, occupation, urgency, or asked to book. Never slow down hot prospects.
+- The historically strong booking path is: interest -> useful Zoom framing -> prospect agrees to Zoom -> calendar immediately -> stay engaged while they book.
+- The Zoom should feel like a working session: research their market, answer questions, and determine fit. It should not feel like a generic sales pitch.
+- Once the prospect agrees to the Zoom invitation, do not ask a second permission question for the calendar link.
+- If someone is vague, lightly curious, or asking how the model works without clear start intent, offer the short training video first and ask permission to send it. If they agree, send:
   https://www.palletprosacademy.com/training
-- Do not probe vague leads with reason, timeline, or obstacle questions. The next step for vague leads is the training-video permission ask.
-- When a prospect gives a lot of context, mirror one concrete detail, answer one useful point, then steer back to a call where you can research their market and see whether the academy fits.
-- The DM should feel like a confident human appointment setter, not a course explainer, FAQ bot, or coach.
-- Primary goal: move people interested in starting a pallet business toward booking a Zoom consultation with Pallet Pros Academy.
-- Keep the path extremely simple: interested in pallet business -> invite them to Zoom -> ask permission to send calendar -> they agree -> send calendar link.
+- Use training strategically for appropriate warm prospects who need education. Do not send training to hot prospects who are ready for a call.
+- Do not overload anyone with YouTube + training + calendar. Choose one primary CTA at a time.
+- When a prospect gives context, mirror one concrete detail, answer one useful point, then choose the next route.
 - Do not over-qualify in DMs. Do not ask a long series of questions. Do not teach the entire pallet business through Instagram messages.
 - Once the prospect gives permission to receive the calendar link, sending the link becomes the highest-priority action. Never qualify more first, never ask if they are still interested, and never ask the booking question again.
-- If the prospect asks a real question before they have agreed to the call, answer briefly first. Do not push the calendar in that same message. End with a soft bridge such as: "Is that something you'd want to learn more about?"
-- If they accept that soft bridge, then use the winning Zoom framing and ask permission to send the calendar link.
+- If the prospect asks a real question before they have agreed to the call, answer briefly first. If the question needs a soft bridge, end with: "Is that something you'd want to learn more about?" Then move to the Zoom/calendar permission step only after they accept.
 
 Disqualify or redirect immediately to https://youtube.com/@palletprosacademy and do not continue qualifying if the person:
 - Is unemployed with no capital or real plan.
@@ -172,14 +178,16 @@ Best-performing DM flow:
 3. If they give useful context, mirror one specific detail so they feel heard.
 4. If they are only lightly curious, vague, or asking follow-up questions without clear start intent, say: "Got you. I have a short training video that explains how the pallet business works. Want me to send it?"
 5. If they say yes to the training video, send: "No problem. Here's the training video: https://www.palletprosacademy.com/training"
-6. If they say yes or clearly show they want to start, learn, get started, pursue it, or build a pallet business, use the Zoom framing directly: "Great. Let's get on a Zoom call this week. That way we can research your market, answer any questions you have and see if you'd be a good fit for the program. Do you mind if I send you a link to my calendar?"
-7. Use the softer "Is that something you'd be interested in learning more about?" bridge only when they asked a real question or gave context that needs a brief answer before the Zoom ask.
-8. If they agree to the calendar, do not ask anything else. Send the calendar in three short messages: first "Great. Give me one sec and I'll grab that link for you.", then after a 10-second pause "Here's the link to my calendar - https://www.tidycal.com/palletprosga/15-minute-meeting", then 4 seconds later "I'll be by my phone for another 5 minutes. Choose a date/time that works for you and I'll verify it on my end."
-9. If they ask for a call, appointment, consultation, details, or scheduling directly, it is okay to send the booking link without asking permission again.
-10. If they mention a day/time instead of booking through the link, politely tell them to use the link to choose their time.
-11. If they ask for a direct phone call or share their phone number, tell them to book through the link instead.
-12. If they say they booked, reply: "Great. I'm looking forward to helping you get things started."
-13. Do not force every interested person through the exact same script. The flow is a guide, not a word-for-word requirement.
+6. If they say they want to start and have not already supplied market/resources/goal, ask permission for 3 quick questions.
+7. After permission, ask only the next missing question: market, resources, then financial/lifestyle goal.
+8. If they already supplied market/resources/goal, skip those questions and move to the Zoom invitation.
+9. Once qualified, use a personalized Zoom invitation for this week or next week based on the current America/New_York weekday.
+10. If they agree to the Zoom, do not ask for calendar permission again. Send the calendar immediately.
+11. If they ask for a call, appointment, consultation, details, or scheduling directly, send the booking link without forcing qualification.
+12. If they mention a day/time instead of booking through the link, politely tell them to use the link to choose their time.
+13. If they ask for a direct phone call or share their phone number, tell them to book through the link instead.
+14. If they say they booked, reply: "Great. I'm looking forward to helping you get things started."
+15. Do not force every interested person through the exact same script. The flow is a guide, not a word-for-word requirement.
 
 Reply length rules:
 - Default to 1 short sentence.
@@ -193,6 +201,7 @@ Reply length rules:
 - If they ask multiple questions, answer the most important one briefly and then guide them to the call.
 - Do not repeat the same calendar ask, greeting, link message, or qualifying question in back-to-back replies.
 - Treat agreement broadly. "Yes", "yeah", "yep", "sure", "sureee", "that's fine", "fine", "ok", "okay", "absolutely", "send it", "send me the link", "go ahead", "let's do it", "I'm down", "that works", "bet", "I'm interested", "sounds good", "when are you available?", "how do I book?", "can we talk?", and "yes that is fine" all mean send the calendar link now.
+- Never use the em dash character in prospect-facing replies.
 - If they ask what the call is about, say: "We'll take a look at your local market, talk about how the pallet business works, answer your questions and see if Pallet Pros Academy makes sense for what you're trying to build." Then ask: "Want me to send you the calendar link?"
 - If they ask about price before booking, say: "We have a few different options depending on the level of help you're looking for. The easiest thing is for us to talk for a few minutes, learn what you're trying to do, and point you in the right direction." Then ask: "Want me to send you the calendar link?"
 
@@ -232,10 +241,12 @@ const CONTEXT_RULES = `Context rules:
 - Before writing, compare against recent assistant messages and avoid reusing the same wording.
 - If the newest message contains a question, answer it directly and briefly before steering to the next step.
 - When a prospect gives context, mirror one specific detail so the reply feels like it was written for them.
+- Use lead_profile silently when present. It may include intent, temperature, occupation, assets, pallet experience, motivation, urgency, and stage. Do not reveal these labels to the prospect.
 - Bare replies like "yes", "ok", "sounds good", "how?", or "interested" depend on the previous assistant question. Use the last assistant message to decide what they are agreeing to.
 - If a bare reply cannot be confidently tied to the previous assistant question, set needs_review true instead of guessing.
 - If they already said they want to start, learn the business, get started, schedule, book, or talk through details, do not ask multiple warm-up questions. Move to the Zoom/calendar permission step.
-- Do not use reason, timeline, or obstacle questions as the default. For vague, lukewarm, or merely curious replies, offer the training video and ask permission to send it.
+- A single motivation question can be useful for a simple "I want to start" reply with no context, but do not ask it if they already shared their motivation or a hot signal.
+- Do not use timeline, obstacle, or asset questions as the default. For vague, lukewarm, or merely curious replies, offer the training video and ask permission to send it.
 - If the history is missing, contradictory, or too thin to answer confidently, set needs_review true.`;
 
 const SCENARIO_PLAYBOOK_RULES = `Scenario playbook:
@@ -653,6 +664,18 @@ function normalizeFeatureSettings(settings) {
       ? Number(raw.manual_takeover_minutes)
       : numberEnv("MANUAL_TAKEOVER_MINUTES", DEFAULT_MANUAL_TAKEOVER_MINUTES)
   );
+  const warmTrainingRoutePercent = Math.min(
+    100,
+    Math.max(
+      0,
+      Number.isFinite(Number(raw.warm_training_route_percent))
+        ? Number(raw.warm_training_route_percent)
+        : numberEnv(
+            "WARM_TRAINING_ROUTE_PERCENT",
+            DEFAULT_WARM_TRAINING_ROUTE_PERCENT
+          )
+    )
+  );
 
   return {
     auto_send: featureEnabled(raw, "auto_send", "AUTO_SEND", false),
@@ -684,7 +707,8 @@ function normalizeFeatureSettings(settings) {
     ),
     human_send_delay_min_ms: delayMinMs,
     human_send_delay_max_ms: delayMaxMs,
-    manual_takeover_minutes: manualMinutes
+    manual_takeover_minutes: manualMinutes,
+    warm_training_route_percent: warmTrainingRoutePercent
   };
 }
 
@@ -1337,6 +1361,8 @@ function getConversationMemory(store, messageLike) {
       booking_link_clicked: false,
       booking_link_clicked_at: null,
       booking_confirmed: false,
+      lead_profile: {},
+      conversation_state: "INITIAL",
       lead_status: "cold",
       ai_paused: false,
       manual_takeover_until: null,
@@ -1404,6 +1430,11 @@ function getConversationMemory(store, messageLike) {
   memory.booking_link_clicked_at = memory.booking_link_clicked_at || null;
   memory.booking_confirmed = Boolean(memory.booking_confirmed);
   memory.booking_confirmed_at = memory.booking_confirmed_at || null;
+  memory.lead_profile =
+    memory.lead_profile && typeof memory.lead_profile === "object"
+      ? memory.lead_profile
+      : {};
+  memory.conversation_state = memory.conversation_state || "INITIAL";
   memory.lead_status = classifyLeadStatus(memory);
   memory.manual_takeover_until = memory.manual_takeover_until || null;
   memory.manual_takeover_since = memory.manual_takeover_since || null;
@@ -1554,6 +1585,7 @@ function classifyLeadStatus(memory) {
   if (
     memory?.booking_link_clicked ||
     memory?.booking_link_sent ||
+    hasHotQualificationSignal(recentText) ||
     /\b(ready to invest|ready to start|ready to go|book a call|hop on a call|discovery call|own a truck|have a truck|own a trailer|have a trailer|own a business)\b/.test(
       recentText
     )
@@ -1563,6 +1595,7 @@ function classifyLeadStatus(memory) {
 
   if (
     (Array.isArray(memory?.questions_asked) && memory.questions_asked.length >= 2) ||
+    mentionsPersonalMotivation(recentText) ||
     /\b(timeline|holding me back|start soon|need help|want to start|trying to start)\b/.test(recentText)
   ) {
     return "qualified";
@@ -1607,7 +1640,7 @@ function detectQuestionKeys(text) {
   const lower = String(text || "").toLowerCase();
   const keys = [];
 
-  if (/why.*start|what.*made.*start|what.*makes.*you.*want/.test(lower)) {
+  if (/why.*start|what.*made.*start|what.*makes.*you.*want|what.*got.*want.*start|got.*you.*want.*start/.test(lower)) {
     keys.push("why_start");
   }
 
@@ -1623,7 +1656,23 @@ function detectQuestionKeys(text) {
     keys.push("holding_back");
   }
 
-  if (/get on a call|hop on a call|book.*call|discovery/.test(lower)) {
+  if (/mind if i ask.*3 quick questions|3 quick questions|three quick questions/.test(lower)) {
+    keys.push("qualification_permission");
+  }
+
+  if (/city and state|operate(?: your)? pallet business|operating market|planning to operate/.test(lower)) {
+    keys.push("qualification_market");
+  }
+
+  if (/starting mostly from scratch|already have a truck|truck, trailer|business setup|starting from scratch/.test(lower)) {
+    keys.push("qualification_resources");
+  }
+
+  if (/financially|extra income|something bigger|ideally like the pallet business to do|financial or lifestyle/.test(lower)) {
+    keys.push("qualification_goal");
+  }
+
+  if (/open to hopping on.*zoom|quick zoom|take a look at.*market together|look at your market together|get on a zoom|hop on a zoom|get on a call|hop on a call|book.*call|discovery/.test(lower)) {
     keys.push("would_call");
   }
 
@@ -1733,7 +1782,348 @@ function noteReplyReason(memory, reason, at = new Date().toISOString()) {
   memory.reply_reason_history = memory.reply_reason_history.slice(-50);
 }
 
+const STATE_ABBREVIATIONS = {
+  al: "Alabama",
+  ak: "Alaska",
+  az: "Arizona",
+  ar: "Arkansas",
+  ca: "California",
+  co: "Colorado",
+  ct: "Connecticut",
+  de: "Delaware",
+  fl: "Florida",
+  ga: "Georgia",
+  hi: "Hawaii",
+  ia: "Iowa",
+  id: "Idaho",
+  il: "Illinois",
+  in: "Indiana",
+  ks: "Kansas",
+  ky: "Kentucky",
+  la: "Louisiana",
+  ma: "Massachusetts",
+  md: "Maryland",
+  me: "Maine",
+  mi: "Michigan",
+  mn: "Minnesota",
+  mo: "Missouri",
+  ms: "Mississippi",
+  mt: "Montana",
+  nc: "North Carolina",
+  nd: "North Dakota",
+  ne: "Nebraska",
+  nh: "New Hampshire",
+  nj: "New Jersey",
+  nm: "New Mexico",
+  nv: "Nevada",
+  ny: "New York",
+  oh: "Ohio",
+  ok: "Oklahoma",
+  or: "Oregon",
+  pa: "Pennsylvania",
+  ri: "Rhode Island",
+  sc: "South Carolina",
+  sd: "South Dakota",
+  tn: "Tennessee",
+  tx: "Texas",
+  ut: "Utah",
+  va: "Virginia",
+  vt: "Vermont",
+  wa: "Washington",
+  wi: "Wisconsin",
+  wv: "West Virginia",
+  wy: "Wyoming",
+  dc: "District of Columbia"
+};
+
+const MARKET_ALIASES = {
+  atl: { city: "Atlanta", state: "Georgia", market: "Atlanta, Georgia" },
+  atlanta: { city: "Atlanta", state: "Georgia", market: "Atlanta, Georgia" },
+  dfw: { city: "Dallas-Fort Worth", state: "Texas", market: "Dallas-Fort Worth, Texas" },
+  nyc: { city: "New York City", state: "New York", market: "New York City, New York" },
+  la: { city: "Los Angeles", state: "California", market: "Los Angeles, California" }
+};
+
+function normalizeStateName(value) {
+  const clean = String(value || "").trim().replace(/[.,]/g, "");
+  if (!clean) return "";
+  const lower = clean.toLowerCase();
+  return STATE_ABBREVIATIONS[lower] || clean.replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function titleCaseWords(value) {
+  return String(value || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function extractLocationPhrase(value, pattern) {
+  const match = String(value || "").match(pattern);
+  if (!match) return null;
+  const city = titleCaseWords(match[1] || "");
+  const state = normalizeStateName(match[2] || "");
+  if (!city && !state) return null;
+  return {
+    city,
+    state,
+    market: [city, state].filter(Boolean).join(", ")
+  };
+}
+
+function extractMarketInfo(text) {
+  const lower = String(text || "").toLowerCase();
+  const result = {};
+
+  for (const [alias, info] of Object.entries(MARKET_ALIASES)) {
+    const aliasPattern = new RegExp(`\\b${alias}\\b`, "i");
+    if (aliasPattern.test(lower)) {
+      result.operating_city = info.city;
+      result.operating_state = info.state;
+      result.operating_market = info.market;
+      break;
+    }
+  }
+
+  const operating =
+    extractLocationPhrase(text, /\b(?:operating|operate|working|work|doing business|run(?:ning)?(?: it)?|launch(?:ing)?|starting)(?:\s+(?:the business|it|in|around|out of))*\s+(?:in|around|out of)?\s*([A-Za-z][A-Za-z\s.'-]{1,40})\s*,?\s+(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|IA|ID|IL|IN|KS|KY|LA|MA|MD|ME|MI|MN|MO|MS|MT|NC|ND|NE|NH|NJ|NM|NV|NY|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VA|VT|WA|WI|WV|WY|DC|Georgia|Texas|Florida|Mississippi|California|New York|Tennessee|Alabama|South Carolina|North Carolina)\b/i) ||
+    extractLocationPhrase(text, /\b(?:in|from|near|around)\s+([A-Za-z][A-Za-z\s.'-]{1,40})\s*,?\s+(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|IA|ID|IL|IN|KS|KY|LA|MA|MD|ME|MI|MN|MO|MS|MT|NC|ND|NE|NH|NJ|NM|NV|NY|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VA|VT|WA|WI|WV|WY|DC|Georgia|Texas|Florida|Mississippi|California|New York|Tennessee|Alabama|South Carolina|North Carolina)\b/i);
+
+  if (operating && !result.operating_market) {
+    result.operating_city = operating.city;
+    result.operating_state = operating.state;
+    result.operating_market = operating.market;
+  }
+
+  const current =
+    extractLocationPhrase(text, /\b(?:i'?m|im|i am|based|live|located)\s+(?:in|out of|near|around)\s+([A-Za-z][A-Za-z\s.'-]{1,40})\s*,?\s+(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|IA|ID|IL|IN|KS|KY|LA|MA|MD|ME|MI|MN|MO|MS|MT|NC|ND|NE|NH|NJ|NM|NV|NY|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VA|VT|WA|WI|WV|WY|DC|Georgia|Texas|Florida|Mississippi|California|New York|Tennessee|Alabama|South Carolina|North Carolina)\b/i);
+
+  if (current) {
+    result.current_location = current.market;
+    if (!result.operating_market && !/\b(?:operat|work|business|market)\b/i.test(text)) {
+      result.operating_city = current.city;
+      result.operating_state = current.state;
+      result.operating_market = current.market;
+    }
+  }
+
+  return result;
+}
+
+function extractResourceInfo(text) {
+  const value = String(text || "").toLowerCase();
+  const result = {};
+  const vehicleMatches = [];
+
+  for (const [pattern, label] of [
+    [/\bbox truck\b/i, "box truck"],
+    [/\bflatbed\b/i, "flatbed"],
+    [/\bpickup(?: truck)?\b/i, "pickup truck"],
+    [/\btrailer\b/i, "trailer"],
+    [/\bcargo van\b/i, "cargo van"],
+    [/\bsemi\b/i, "semi"],
+    [/\btruck\b/i, "truck"]
+  ]) {
+    if (pattern.test(value)) vehicleMatches.push(label);
+  }
+
+  if (vehicleMatches.length) {
+    result.has_vehicle = true;
+    result.vehicle_type = [...new Set(vehicleMatches)].join(", ");
+  }
+
+  if (/\b(no truck|no trailer|don'?t have.*(?:truck|trailer)|dont have.*(?:truck|trailer)|starting from scratch|from scratch|scratch)\b/i.test(value)) {
+    result.starting_from_scratch = true;
+    if (!vehicleMatches.length) result.has_vehicle = false;
+  }
+
+  if (/\b(rent|rental|lease|borrow)\b.{0,40}\b(truck|trailer|van|equipment|something)\b|\b(rent|rental|lease)\b/i.test(value)) {
+    result.plans_to_rent = true;
+  }
+
+  const businessType = String(
+    value.match(/\b(trucking|courier|logistics|junk removal|moving|transportation|delivery|route|pallet)\s+(?:business|company)\b/i)?.[0] ||
+      value.match(/\b(?:own|run|have|got|started)\s+(?:a|an|my)?\s*([a-z\s]{3,30}(?:business|company))\b/i)?.[1] ||
+      ""
+  ).trim();
+
+  if (businessType || /\b(own|run|have|got|started).{0,30}\b(?:business|company|llc)\b/i.test(value)) {
+    result.existing_business = true;
+    result.existing_business_type = businessType || "existing business";
+  }
+
+  return result;
+}
+
+function extractGoalInfo(text) {
+  const value = String(text || "");
+  const lower = value.toLowerCase();
+  const result = {};
+  const moneyGoal = value.match(/\$[\d,]+(?:\s*(?:a|per)?\s*(?:month|mo|week|wk|day|yr|year))?/i)?.[0];
+
+  if (moneyGoal) {
+    result.financial_goal = moneyGoal.trim();
+  } else if (/\b(extra income|side income|second income|additional income)\b/i.test(lower)) {
+    result.financial_goal = "extra income";
+  } else if (/\b(replace (?:my )?job|quit (?:my )?job|leave (?:my )?job)\b/i.test(lower)) {
+    result.financial_goal = "replace job income";
+  } else if (/\b(full[-\s]?time|something bigger|build it big|scale)\b/i.test(lower)) {
+    result.financial_goal = "build into something bigger";
+  } else if (/\b(pay bills|pay off debt|support (?:my )?family|provide for|financial freedom|make money)\b/i.test(lower)) {
+    result.financial_goal = lower.match(/\b(pay bills|pay off debt|support (?:my )?family|provide for|financial freedom|make money)\b/i)?.[0] || "";
+  }
+
+  if (/\b(buy (?:a )?(?:car|truck|vehicle|house)|move to|move out|home more|leave trucking|support (?:my )?family|family|kids|freedom)\b/i.test(lower)) {
+    result.lifestyle_goal =
+      value.match(/\b(?:buy (?:a )?(?:car|truck|vehicle|house)|move to [A-Za-z\s]+|move out|home more|leave trucking|support (?:my )?family|financial freedom|freedom)\b/i)?.[0] ||
+      "lifestyle improvement";
+  }
+
+  if (result.financial_goal || result.lifestyle_goal || mentionsPersonalMotivation(value)) {
+    result.primary_motivation =
+      result.financial_goal || result.lifestyle_goal || value.replace(/\s+/g, " ").trim().slice(0, 160);
+  }
+
+  return result;
+}
+
+function extractQualificationFields(text) {
+  return {
+    ...extractMarketInfo(text),
+    ...extractResourceInfo(text),
+    ...extractGoalInfo(text)
+  };
+}
+
+function leadProfileFromText(text) {
+  const value = String(text || "").toLowerCase();
+  const profile = {
+    intent: "",
+    temperature: "",
+    occupation: "",
+    assets: [],
+    business_experience: "",
+    pallet_experience: "",
+    motivation: "",
+    urgency: "",
+    stage: "",
+    ...extractQualificationFields(text)
+  };
+
+  if (wantsContentOnly(value)) profile.intent = "content_only";
+  else if (hasClearStartIntent(value) || wantsPalletBusiness(value)) profile.intent = "interested";
+  if (wantsCalendarLinkNow(value) || wantsAppointmentOrScheduling(value)) profile.intent = "ready";
+
+  if (/\b(cdl|truck(?:ing|er)?|hotshot|transportation)\b/i.test(value)) {
+    profile.occupation = "trucking/logistics";
+  } else if (/\b(logistics|courier|delivery|route|routes)\b/i.test(value)) {
+    profile.occupation = "logistics/delivery";
+  } else if (/\b(warehouse|forklift)\b/i.test(value)) {
+    profile.occupation = "warehouse";
+  } else if (/\b(business owner|own a business|llc|company)\b/i.test(value)) {
+    profile.occupation = "business_owner";
+  }
+
+  for (const [pattern, label] of [
+    [/\bbox truck\b/i, "box_truck"],
+    [/\bflatbed\b/i, "flatbed"],
+    [/\btrailer\b/i, "trailer"],
+    [/\bpickup\b/i, "pickup_truck"],
+    [/\bcdl\b/i, "cdl"],
+    [/\bwarehouse|warehouses\b/i, "warehouse_relationships"],
+    [/\bbuyer|buyers|supplier|suppliers|yard|yards\b/i, "pallet_relationships"]
+  ]) {
+    if (pattern.test(value)) profile.assets.push(label);
+  }
+
+  if (/\b(own a business|business owner|llc|company|entrepreneur)\b/i.test(value)) {
+    profile.business_experience = "some_or_experienced";
+  }
+
+  if (mentionsExistingPalletExperience(value)) {
+    profile.pallet_experience = "active_or_some";
+  }
+
+  if (/\b(extra income|side income|second income|another source of income)\b/i.test(value)) {
+    profile.motivation = "extra_income";
+  } else if (/\b(replace (?:my )?job|quit (?:my )?job|leave (?:my )?job)\b/i.test(value)) {
+    profile.motivation = "replace_job";
+  } else if (/\b(work for myself|own (?:my )?business|start (?:my )?business)\b/i.test(value)) {
+    profile.motivation = "start_business";
+  } else if (/\b(family|kids|home more|local)\b/i.test(value)) {
+    profile.motivation = "family_lifestyle";
+  } else if (/\b(financial freedom|make money|income)\b/i.test(value)) {
+    profile.motivation = "financial_freedom";
+  }
+
+  if (/\b(asap|right away|start now|ready|need to start|urgent|immediately)\b/i.test(value)) {
+    profile.urgency = "high";
+  } else if (/\b(soon|this week|this month|next week)\b/i.test(value)) {
+    profile.urgency = "medium";
+  }
+
+  if (profile.intent === "content_only") profile.stage = "content_nurture";
+  else if (profile.intent === "ready") profile.stage = "ready_to_book";
+  else if (hasHotQualificationSignal(value)) profile.stage = "qualified_hot";
+  else if (profile.intent === "interested") profile.stage = "intent_identified";
+
+  profile.temperature = profile.stage === "qualified_hot" || profile.stage === "ready_to_book"
+    ? "hot"
+    : profile.intent === "interested"
+      ? "warm"
+      : profile.intent === "content_only"
+        ? "cold"
+        : "";
+
+  return profile;
+}
+
+function mergeLeadProfile(existing = {}, incoming = {}) {
+  const merged = existing && typeof existing === "object" ? { ...existing } : {};
+
+  for (const [key, value] of Object.entries(incoming || {})) {
+    if (Array.isArray(value)) {
+      const current = Array.isArray(merged[key]) ? merged[key] : [];
+      merged[key] = [...new Set([...current, ...value].filter(Boolean))];
+    } else if (typeof value === "boolean" && typeof merged[key] !== "boolean") {
+      merged[key] = value;
+    } else if (value && !merged[key]) {
+      merged[key] = value;
+    } else if (
+      value &&
+      key === "temperature" &&
+      ["", "cold", "warm", "hot"].indexOf(value) >
+        ["", "cold", "warm", "hot"].indexOf(merged[key] || "")
+    ) {
+      merged[key] = value;
+    } else if (
+      value &&
+      key === "stage" &&
+      ["", "new", "intent_identified", "motivation_identified", "qualified_hot", "ready_to_book"].indexOf(value) >
+        ["", "new", "intent_identified", "motivation_identified", "qualified_hot", "ready_to_book"].indexOf(merged[key] || "")
+    ) {
+      merged[key] = value;
+    }
+  }
+
+  return merged;
+}
+
 function noteIncomingSignals(memory, incomingText, incomingAt) {
+  memory.lead_profile = mergeLeadProfile(
+    memory.lead_profile,
+    leadProfileFromText(incomingText)
+  );
+
+  if (hasClearStartIntent(incomingText) || wantsPalletBusiness(incomingText)) {
+    markConversationState(memory, "PALLET_INTEREST_DETECTED");
+  }
+
+  const missing = missingQualificationKeys(memory);
+  console.log(
+    `Incoming qualification signals for ${memory.key || "conversation"}: state=${memory.conversation_state || "INITIAL"} missing=${missing.join(",") || "none"} market=${memory.lead_profile?.operating_market || ""} resources=${memory.lead_profile?.vehicle_type || memory.lead_profile?.existing_business_type || ""} goal=${memory.lead_profile?.primary_motivation || memory.lead_profile?.financial_goal || ""}`
+  );
+
   const escalation = humanEscalationReason(incomingText);
   if (escalation) {
     memory.needs_human_review = true;
@@ -1775,17 +2165,34 @@ function updateLinkMemory(memory, text) {
 }
 
 function updateQuestionMemory(memory, text) {
-  for (const key of detectQuestionKeys(text)) {
+  const keys = detectQuestionKeys(text);
+  for (const key of keys) {
     if (!memory.questions_asked.includes(key)) {
       memory.questions_asked.push(key);
     }
+  }
+
+  if (keys.includes("qualification_permission")) {
+    markQualificationPermissionRequested(memory);
+  }
+
+  if (
+    keys.includes("qualification_market") ||
+    keys.includes("qualification_resources") ||
+    keys.includes("qualification_goal")
+  ) {
+    markConversationState(memory, "QUALIFYING");
+  }
+
+  if (keys.includes("would_call")) {
+    markCallInvited(memory);
   }
 }
 
 function appointmentSetterCalendarAskReply() {
   return {
     reply:
-      "Great. Let's get on a Zoom call this week. That way we can research your market, answer any questions you have and see if you'd be a good fit for the program.\n\nDo you mind if I send you a link to my calendar?",
+      "That makes sense. Let's get on a Zoom call this week. That way we can research your market, answer any questions you have and see if you'd be a good fit for the program.\n\nDo you mind if I send you a link to my calendar?",
     needs_review: false,
     handled: true
   };
@@ -1798,6 +2205,395 @@ function appointmentSetterStartSegueReply() {
     needs_review: false,
     handled: true
   };
+}
+
+function appointmentSetterMotivationReply() {
+  return {
+    reply: "Nice. What's got you wanting to start a pallet business?",
+    needs_review: false,
+    handled: true
+  };
+}
+
+function easternWeekdayName(date = new Date()) {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    weekday: "long"
+  }).format(date);
+}
+
+function zoomWeekPhrase(date = new Date()) {
+  const weekday = easternWeekdayName(date);
+  return ["Friday", "Saturday"].includes(weekday) ? "next week" : "this week";
+}
+
+function cleanProspectReply(text) {
+  return String(text || "").replace(/\u2014/g, ",").replace(/\u2013/g, "-");
+}
+
+function hasQualificationPermission(memory) {
+  const profile = memory?.lead_profile || {};
+  return Boolean(profile.qualification_permission_granted);
+}
+
+function qualificationPermissionRequested(memory) {
+  const profile = memory?.lead_profile || {};
+  return Boolean(profile.qualification_permission_requested) ||
+    (Array.isArray(memory?.questions_asked) && memory.questions_asked.includes("qualification_permission"));
+}
+
+function hasOperatingMarket(memory) {
+  const profile = memory?.lead_profile || {};
+  return Boolean(profile.operating_market || profile.operating_city || profile.operating_state);
+}
+
+function hasResourcePosition(memory) {
+  const profile = memory?.lead_profile || {};
+  return (
+    typeof profile.starting_from_scratch === "boolean" ||
+    typeof profile.has_vehicle === "boolean" ||
+    Boolean(profile.vehicle_type || profile.plans_to_rent || profile.existing_business || profile.existing_business_type)
+  );
+}
+
+function hasGoalMotivation(memory) {
+  const profile = memory?.lead_profile || {};
+  return Boolean(
+    profile.financial_goal ||
+      profile.lifestyle_goal ||
+      profile.primary_motivation ||
+      profile.motivation
+  );
+}
+
+function missingQualificationKeys(memory) {
+  const missing = [];
+  if (!hasOperatingMarket(memory)) missing.push("market");
+  if (!hasResourcePosition(memory)) missing.push("resources");
+  if (!hasGoalMotivation(memory)) missing.push("goal");
+  return missing;
+}
+
+function qualificationComplete(memory) {
+  return missingQualificationKeys(memory).length === 0;
+}
+
+function markConversationState(memory, state) {
+  if (memory && state) {
+    memory.conversation_state = state;
+    memory.lead_profile = memory.lead_profile && typeof memory.lead_profile === "object"
+      ? memory.lead_profile
+      : {};
+    memory.lead_profile.conversation_state = state;
+  }
+}
+
+function markQualificationPermissionRequested(memory) {
+  if (!memory) return;
+  memory.lead_profile = memory.lead_profile && typeof memory.lead_profile === "object"
+    ? memory.lead_profile
+    : {};
+  memory.lead_profile.qualification_permission_requested = true;
+  markConversationState(memory, "PERMISSION_REQUESTED");
+}
+
+function markQualificationPermissionGranted(memory) {
+  if (!memory) return;
+  memory.lead_profile = memory.lead_profile && typeof memory.lead_profile === "object"
+    ? memory.lead_profile
+    : {};
+  memory.lead_profile.qualification_permission_granted = true;
+  markConversationState(memory, "QUALIFYING");
+}
+
+function markCallInvited(memory) {
+  if (!memory) return;
+  memory.lead_profile = memory.lead_profile && typeof memory.lead_profile === "object"
+    ? memory.lead_profile
+    : {};
+  memory.lead_profile.call_invited = true;
+  markConversationState(memory, "CALL_INVITED");
+}
+
+function lastAssistantAskedQualificationPermission(memory) {
+  return (Array.isArray(memory?.last_messages) ? memory.last_messages : [])
+    .slice(-5)
+    .some(
+      (message) =>
+        message.role === "assistant" &&
+        /3 quick questions|three quick questions|where you're at and what you're looking to do/i.test(message.text || "")
+    );
+}
+
+function qualificationQuestionWasAsked(memory) {
+  return (
+    (Array.isArray(memory?.questions_asked) ? memory.questions_asked : []).some((key) =>
+      ["qualification_market", "qualification_resources", "qualification_goal"].includes(key)
+    ) ||
+    (Array.isArray(memory?.last_messages) ? memory.last_messages : [])
+      .slice(-5)
+      .some(
+        (message) =>
+          message.role === "assistant" &&
+          /city and state|starting mostly from scratch|already have a truck|truck, trailer|business setup|financially|extra income|something bigger/i.test(
+            message.text || ""
+          )
+      )
+  );
+}
+
+function lastAssistantInvitedToZoom(memory) {
+  return Boolean(memory?.lead_profile?.call_invited) ||
+    (Array.isArray(memory?.last_messages) ? memory.last_messages : [])
+      .slice(-5)
+      .some(
+        (message) =>
+          message.role === "assistant" &&
+          /open to hopping on.*zoom|quick zoom|take a look at.*market together|look at your market together/i.test(message.text || "")
+      );
+}
+
+function zoomAcceptance(text) {
+  return yesToCalendarLink(text) || /\b(open to it|i'?m all for it|all for it|that makes sense|works for me|let'?s talk|lets talk|we can|i can do that|sounds like a plan)\b/i.test(
+    String(text || "")
+  );
+}
+
+function directBookingIntent(text) {
+  return wantsCalendarLinkNow(text) ||
+    /\b(can you|could you|please|just)?\s*(send|drop|share|give).{0,30}\b(calendar|booking|schedule|link)\b/i.test(String(text || "")) ||
+    /\b(where do i schedule|how do i book|can i book|ready to talk|let'?s set up a call|lets set up a call)\b/i.test(String(text || ""));
+}
+
+function formatKnownMarket(memory) {
+  const profile = memory?.lead_profile || {};
+  return profile.operating_market ||
+    [profile.operating_city, profile.operating_state].filter(Boolean).join(", ") ||
+    "your market";
+}
+
+function resourceAcknowledgement(memory) {
+  const profile = memory?.lead_profile || {};
+  if (profile.vehicle_type) return `Since you already mentioned ${profile.vehicle_type}, that gives us a real starting point.`;
+  if (profile.existing_business_type) return `Since you already have ${profile.existing_business_type}, that may give you a head start.`;
+  if (profile.existing_business) return "Since you already have a business setup, that may give you a head start.";
+  if (profile.plans_to_rent) return "Starting lean with rentals can be an option while you're getting things moving.";
+  if (profile.starting_from_scratch || profile.has_vehicle === false) return "Starting from scratch is fine, we just need to look at the market and the cleanest first move.";
+  return "";
+}
+
+function goalAcknowledgement(memory) {
+  const profile = memory?.lead_profile || {};
+  const goal = profile.primary_motivation || profile.financial_goal || profile.lifestyle_goal || profile.motivation || "";
+  if (!goal) return "";
+  if (/replace job/i.test(goal)) return "Since you're trying to replace your job, it makes sense to look at this seriously.";
+  if (/car|vehicle|move|family|freedom/i.test(goal)) return "It sounds like you're looking for something that could make a meaningful difference.";
+  return "That gives me a better idea of what you're trying to do.";
+}
+
+function appointmentSetterQualificationPermissionReply(memory) {
+  markQualificationPermissionRequested(memory);
+  return {
+    reply:
+      "Absolutely bro. Mind if I ask you 3 quick questions so I can get a better idea of where you're at and what you're looking to do?",
+    needs_review: false,
+    handled: true
+  };
+}
+
+function appointmentSetterQualificationQuestionReply(memory) {
+  markConversationState(memory, "QUALIFYING");
+  const profile = memory?.lead_profile || {};
+  const missing = missingQualificationKeys(memory);
+  const next = missing[0];
+
+  if (next === "market") {
+    return {
+      reply: "Perfect. First one, what city and state are you planning to operate your pallet business in?",
+      needs_review: false,
+      handled: true
+    };
+  }
+
+  if (next === "resources") {
+    const market = formatKnownMarket(memory);
+    const basedLine = profile.current_location && profile.operating_market && profile.current_location !== profile.operating_market
+      ? `Got you. So you're based in ${profile.current_location}, but you'll be operating in the ${market} area. `
+      : profile.operating_market
+        ? `Got you. ${market} makes sense. `
+        : "";
+
+    return {
+      reply:
+        `${basedLine}Are you starting mostly from scratch, or do you already have a truck, trailer, or business setup you can use?`,
+      needs_review: false,
+      handled: true
+    };
+  }
+
+  if (next === "goal") {
+    const ack = resourceAcknowledgement(memory);
+    return {
+      reply:
+        `${ack ? `${ack} ` : ""}Last question. What would you ideally like the pallet business to do for you financially?`,
+      needs_review: false,
+      handled: true
+    };
+  }
+
+  return appointmentSetterZoomInviteReply(memory);
+}
+
+function appointmentSetterZoomInviteReply(memory, date = new Date()) {
+  markCallInvited(memory);
+  const market = formatKnownMarket(memory);
+  const weekPhrase = zoomWeekPhrase(date);
+  const ack = goalAcknowledgement(memory) || resourceAcknowledgement(memory) || "Based on what you told me, I think it'd be worth looking at this properly.";
+  console.log(
+    `Qualification complete for ${memory?.key || "conversation"}; weekday=${easternWeekdayName(date)}; zoom_phrase=${weekPhrase}; market=${market}`
+  );
+
+  return {
+    reply:
+      `${ack} Would you be open to hopping on a quick Zoom ${weekPhrase} so we can take a look at ${market} together and see if this could realistically make sense for you?`,
+    needs_review: false,
+    handled: true
+  };
+}
+
+function appointmentSetterQualificationQuestionAfterAnswerReply(memory, answer, questionReply) {
+  const intro = cleanProspectReply(answer || "");
+  const next = cleanProspectReply(questionReply.reply || "");
+  return {
+    ...questionReply,
+    reply: intro ? `${intro} ${next}` : next
+  };
+}
+
+function qualificationInterruptionReply(memory, text) {
+  if (
+    !qualificationPermissionRequested(memory) &&
+    !hasQualificationPermission(memory) &&
+    !qualificationQuestionWasAsked(memory)
+  ) {
+    return null;
+  }
+
+  let answer = "";
+
+  if (asksPriceOrCost(text)) {
+    answer =
+      "We have a few different options depending on where you're starting and the level of help you need. The call is where we can point you in the right direction.";
+  } else if (asksHowItWorks(text)) {
+    answer =
+      "Short version, we help you understand how to source, move, and sell pallets in your area. I don't want to turn the DM into a whole class though.";
+  } else if (saysNoTruckYet(text)) {
+    answer =
+      "Not necessarily. Some people start by renting or arranging transportation while they're getting established.";
+  } else if (asksIfLegit(text)) {
+    answer =
+      "I get why you'd ask. I run this business myself, and the call is really about seeing if the model makes sense in your area.";
+  } else if (asksWhatCallIsAbout(text)) {
+    answer =
+      "We'll look at your local market, talk through where you're starting from, answer your questions, and see if the business makes sense for your goals.";
+  }
+
+  if (!answer) {
+    return null;
+  }
+
+  if (qualificationComplete(memory)) {
+    return appointmentSetterQualificationQuestionAfterAnswerReply(
+      memory,
+      answer,
+      appointmentSetterZoomInviteReply(memory)
+    );
+  }
+
+  return appointmentSetterQualificationQuestionAfterAnswerReply(
+    memory,
+    answer,
+    appointmentSetterQualificationQuestionReply(memory)
+  );
+}
+
+function appointmentSetterQualificationFlowReply(memory, incoming, text) {
+  if (!memory || memory.booking_confirmed) {
+    return null;
+  }
+
+  const directQualificationFields = extractQualificationFields(text);
+  memory.lead_profile = mergeLeadProfile(
+    mergeLeadProfile(memory.lead_profile, directQualificationFields),
+    leadProfileFromText(text)
+  );
+
+  const missingBefore = missingQualificationKeys(memory);
+  console.log(
+    `Qualification state=${memory.conversation_state || "INITIAL"} intent=${memory.lead_profile?.intent || ""} missing=${missingBefore.join(",") || "none"}`
+  );
+
+  if (lastAssistantInvitedToZoom(memory) && zoomAcceptance(text)) {
+    console.log(`Call acceptance detected for ${memory.key || "conversation"}. Sending calendar.`);
+    return appointmentSetterCalendarLinkReply(incoming, memory);
+  }
+
+  if (directBookingIntent(text)) {
+    console.log(`Direct booking intent detected for ${memory.key || "conversation"}. Bypassing qualification.`);
+    return appointmentSetterCalendarLinkReply(incoming, memory);
+  }
+
+  if (
+    lastAssistantAskedQualificationPermission(memory) &&
+    (yesToCalendarLink(text) || yesToBusinessInterest(text))
+  ) {
+    markQualificationPermissionGranted(memory);
+    console.log(`Qualification permission granted for ${memory.key || "conversation"}.`);
+    return qualificationComplete(memory)
+      ? appointmentSetterZoomInviteReply(memory)
+      : appointmentSetterQualificationQuestionReply(memory);
+  }
+
+  const interruption = qualificationInterruptionReply(memory, text);
+  if (interruption) {
+    console.log(`Qualification interruption handled for ${memory.key || "conversation"}.`);
+    return interruption;
+  }
+
+  const interested =
+    hasClearStartIntent(text) ||
+    (lastAssistantAskedContentOrBusiness(memory) && yesToBusinessInterest(text)) ||
+    (lastAssistantAskedContentOrBusiness(memory) && missingBefore.length < 3) ||
+    qualificationQuestionWasAsked(memory) ||
+    (wantsPalletBusiness(text) && !wantsContentOnly(text) && !prospectAskedQuestion(text));
+
+  if (!interested) {
+    return null;
+  }
+
+  markConversationState(memory, "PALLET_INTEREST_DETECTED");
+
+  if (qualificationComplete(memory)) {
+    console.log(`Pallet interest plus complete qualification detected for ${memory.key || "conversation"}.`);
+    return appointmentSetterZoomInviteReply(memory);
+  }
+
+  const hasPartialQualification =
+    hasOperatingMarket(memory) || hasResourcePosition(memory) || hasGoalMotivation(memory);
+
+  if (hasPartialQualification || hasQualificationPermission(memory)) {
+    markQualificationPermissionGranted(memory);
+    console.log(
+      `Partial qualification detected for ${memory.key || "conversation"}; missing=${missingQualificationKeys(memory).join(",")}.`
+    );
+    return appointmentSetterQualificationQuestionReply(memory);
+  }
+
+  if (!qualificationPermissionRequested(memory)) {
+    return appointmentSetterQualificationPermissionReply(memory);
+  }
+
+  return null;
 }
 
 function leadTrackingId(messageLike = {}) {
@@ -1884,18 +2680,19 @@ function withTrackedBookingUrl(replyText, messageLike = {}) {
   return String(replyText || "").replaceAll(BOOKING_URL, trackedBookingUrl(messageLike));
 }
 
-function appointmentSetterCalendarLinkReply(messageLike) {
+function appointmentSetterCalendarLinkReply(messageLike, memory = null) {
   const calendarUrl = trackedBookingUrl(messageLike);
+  if (memory) {
+    markConversationState(memory, "CALENDAR_SENT");
+  }
   const messages = [
-    "Great. Give me one sec and I'll grab that link for you. 💯",
-    `Here's the link to my calendar 🗓️ - ${calendarUrl}`,
-    "I'll be by my phone for another 5 minutes. Choose a date/time that works for you and I'll verify it on my end."
+    `Perfect. Here's my calendar. Grab whatever time works best for you:\n\n${calendarUrl}`
   ];
 
   return {
     reply: messages.join("\n\n"),
     messages,
-    message_delays_ms: CALENDAR_LINK_SEQUENCE_DELAYS_MS,
+    message_delays_ms: [],
     needs_review: false,
     handled: true
   };
@@ -1930,7 +2727,7 @@ function appointmentSetterContentReply() {
 function appointmentSetterCostReply() {
   return {
     reply:
-      "We have a few different options depending on the level of help you're looking for, so I wouldn't want to throw out the wrong thing in the DM.\n\nIs that something you'd want to learn more about?",
+      "We have a few different options depending on where you're starting and the level of help you need. Some options start as low as $37/month, and more hands-on help for existing business owners can go up to $5,500.\n\nWant me to send you the calendar link so we can point you in the right direction?",
     needs_review: false,
     handled: true
   };
@@ -2051,7 +2848,7 @@ function saysTheyWillBook(text) {
 }
 
 function wantsContentOnly(text) {
-  return /\b(just content|only content|free content|here for content|just here for content|just looking|just curious|researching|youtube)\b/i.test(
+  return /\b(just content|only content|free content|here for (?:the )?content|just here for (?:the )?content|just looking|just curious|researching|youtube)\b/i.test(
     String(text || "")
   );
 }
@@ -2212,12 +3009,92 @@ function hasRichProspectContext(text) {
   );
 }
 
+function mentionsRelevantOccupationOrAsset(text) {
+  return /\b(cdl|truck(?:ing|er)?|box truck|flatbed|trailer|hotshot|logistics|warehouse|forklift|courier|delivery|deliveries|moving|junk removal|transportation|route|routes|business owner|own a business|llc|pickup|cargo van)\b/i.test(
+    String(text || "")
+  );
+}
+
+function mentionsPersonalMotivation(text) {
+  return /\b(extra income|side income|second income|replace (?:my )?job|quit (?:my )?job|leave (?:my )?job|financial freedom|own (?:my )?business|work for myself|family|kids|home more|tired of|on the road|local|make money|income source|build something)\b/i.test(
+    String(text || "")
+  );
+}
+
+function mentionsExistingPalletExperience(text) {
+  return /\b(already|currently|been|have|got|started|run|running|sell|selling|sold|flip|flipping|pick up|pickup|remove|removing|broker|brokered|buyer|buyers|supplier|suppliers|warehouse|warehouses|yard|yards)\b.{0,80}\b(pallet|pallets)\b|\b(pallet|pallets)\b.{0,80}\b(already|currently|buyer|buyers|supplier|suppliers|warehouse|warehouses|yard|yards|sell|selling|sold|flip|flipping|pick up|remove|broker)\b/i.test(
+    String(text || "")
+  );
+}
+
+function hasHotQualificationSignal(text) {
+  const value = String(text || "");
+  return (
+    wantsCalendarLinkNow(value) ||
+    wantsAppointmentOrScheduling(value) ||
+    mentionsRelevantOccupationOrAsset(value) ||
+    mentionsExistingPalletExperience(value) ||
+    mentionsPersonalMotivation(value) ||
+    /\b(ready|start now|get started|sign me up|join|how do i join|need to start|want to do this|definitely looking to start|serious|asap|right away)\b/i.test(
+      value
+    )
+  );
+}
+
+function alreadyAskedMotivation(memory) {
+  return (Array.isArray(memory?.questions_asked) ? memory.questions_asked : []).includes(
+    "why_start"
+  );
+}
+
+function shouldAskMotivationBeforeZoom(memory, text) {
+  return (
+    !alreadyAskedMotivation(memory) &&
+    !hasHotQualificationSignal(text) &&
+    !hasRichProspectContext(text) &&
+    !prospectAskedQuestion(text)
+  );
+}
+
+function warmTrainingRoutePercent(settings = {}) {
+  const value = Number(settings.warm_training_route_percent);
+  return Number.isFinite(value)
+    ? Math.min(100, Math.max(0, value))
+    : DEFAULT_WARM_TRAINING_ROUTE_PERCENT;
+}
+
+function stablePercentKey(value) {
+  const digest = crypto.createHash("sha1").update(String(value || "")).digest("hex").slice(0, 8);
+  return parseInt(digest, 16) % 100;
+}
+
+function shouldRouteWarmLeadToTraining(memory, text, settings) {
+  if (memory?.training_link_sent || memory?.youtube_link_sent || memory?.booking_link_sent) {
+    return false;
+  }
+
+  if (hasHotQualificationSignal(text) || wantsAppointmentOrScheduling(text)) {
+    return false;
+  }
+
+  const percent = warmTrainingRoutePercent(settings);
+  if (percent <= 0) {
+    return false;
+  }
+
+  const key = memory?.key || memory?.contact_id || memory?.chat_id || text;
+  return stablePercentKey(key) < percent;
+}
+
 function prospectAskedQuestion(text) {
   const cleanText = String(text || "").replace(/\s+/g, " ").trim();
 
   return (
     cleanText.includes("?") ||
-    /\b(how|what|where|when|why|who|can i|can you|do you|does it|is it|are there|would|could|should|price|cost|pay|make|need|start)\b/i.test(
+    /^(how|what|where|when|why|who|can i|can you|do you|does it|is it|are there|would|could|should)\b/i.test(
+      cleanText
+    ) ||
+    /\b(price|cost|pay|make|need)\b/i.test(
       cleanText
     )
   );
@@ -2305,7 +3182,7 @@ function latestProspectTurnText(memory, incoming) {
   return combined || String(incoming?.text || "");
 }
 
-function appointmentSetterRuleReply(memory, incoming) {
+function appointmentSetterRuleReply(memory, incoming, featureSettings = {}) {
   const text = latestProspectTurnText(memory, incoming);
 
   if (!text.trim()) {
@@ -2313,11 +3190,28 @@ function appointmentSetterRuleReply(memory, incoming) {
   }
 
   if (
+    wantsContentOnly(text) &&
+    !hasClearStartIntent(text) &&
+    !wantsAppointmentOrScheduling(text)
+  ) {
+    return appointmentSetterContentReply();
+  }
+
+  const qualificationReply = appointmentSetterQualificationFlowReply(
+    memory,
+    incoming,
+    text
+  );
+  if (qualificationReply) {
+    return qualificationReply;
+  }
+
+  if (
     !memory?.booking_confirmed &&
     lastAssistantAskedForCalendarPermission(memory) &&
     yesToCalendarLink(text)
   ) {
-    return appointmentSetterCalendarLinkReply(incoming);
+    return appointmentSetterCalendarLinkReply(incoming, memory);
   }
 
   if (
@@ -2353,6 +3247,10 @@ function appointmentSetterRuleReply(memory, incoming) {
     !memory?.booking_link_sent &&
     !lastAssistantAskedForCalendarPermission(memory)
   ) {
+    if (shouldAskMotivationBeforeZoom(memory, text)) {
+      return appointmentSetterMotivationReply();
+    }
+
     return appointmentSetterCalendarAskReply();
   }
 
@@ -2394,7 +3292,7 @@ function appointmentSetterRuleReply(memory, incoming) {
   }
 
   if (wantsCalendarLinkNow(text) && !memory?.booking_confirmed) {
-    return appointmentSetterCalendarLinkReply(incoming);
+    return appointmentSetterCalendarLinkReply(incoming, memory);
   }
 
   if (
@@ -2404,7 +3302,7 @@ function appointmentSetterRuleReply(memory, incoming) {
   ) {
     return prospectAskedQuestion(text)
       ? appointmentSetterCalendarAskReply()
-      : appointmentSetterCalendarLinkReply(incoming);
+      : appointmentSetterCalendarLinkReply(incoming, memory);
   }
 
   if (
@@ -2413,6 +3311,10 @@ function appointmentSetterRuleReply(memory, incoming) {
     !memory?.booking_link_sent &&
     !memory?.booking_confirmed
   ) {
+    if (shouldAskMotivationBeforeZoom(memory, text)) {
+      return appointmentSetterMotivationReply();
+    }
+
     return appointmentSetterCalendarAskReply();
   }
 
@@ -2438,6 +3340,18 @@ function appointmentSetterRuleReply(memory, incoming) {
     !memory?.booking_link_sent &&
     !lastAssistantAskedForCalendarPermission(memory)
   ) {
+    if (hasHotQualificationSignal(text)) {
+      return appointmentSetterCalendarAskReply();
+    }
+
+    if (shouldAskMotivationBeforeZoom(memory, text)) {
+      return appointmentSetterMotivationReply();
+    }
+
+    if (shouldRouteWarmLeadToTraining(memory, text, featureSettings)) {
+      return appointmentSetterTrainingAskReply();
+    }
+
     return appointmentSetterTrainingAskReply();
   }
 
@@ -3383,11 +4297,12 @@ function linkStatsForText(text) {
     replyText.includes(YOUTUBE_URL) ||
     replyText.includes(TRAINING_PLAYLIST_URL) ||
     replyText.includes("youtube.com/");
+  const hasTraining = replyText.includes(TRAINING_URL);
   const hasBooking =
     replyText.includes(BOOKING_URL) || replyText.includes(TRACKED_BOOKING_BASE_URL);
 
   return {
-    training_links_sent: hasYoutube ? 1 : 0,
+    training_links_sent: hasYoutube || hasTraining ? 1 : 0,
     youtube_links_sent: hasYoutube ? 1 : 0,
     booking_links_sent: hasBooking ? 1 : 0
   };
@@ -3402,6 +4317,10 @@ function memoryForPrompt(memory, settings) {
     key: memory.key,
     summary: memory.summary,
     lead_status: memory.lead_status || classifyLeadStatus(memory),
+    lead_profile:
+      memory.lead_profile && typeof memory.lead_profile === "object"
+        ? memory.lead_profile
+        : {},
     stored_message_count: memory.last_messages.length,
     recent_messages: memory.last_messages.slice(-MAX_PROMPT_MEMORY_MESSAGES),
     questions_asked: memory.questions_asked,
@@ -4882,7 +5801,7 @@ function replyMessages(replyLike) {
     : [replyLike?.reply || replyLike];
 
   return messages
-    .map((message) => String(message || "").trim())
+    .map((message) => cleanProspectReply(String(message || "").trim()))
     .filter(Boolean);
 }
 
@@ -4993,6 +5912,7 @@ async function recordIncomingForMemory(incoming, featureSettings) {
       memory.booking_confirmed = true;
       memory.booking_link_sent = true;
       memory.booking_confirmed_at = incomingAt;
+      markConversationState(memory, "BOOKED");
       if (!wasConfirmed) {
         recordDailyStat(store, memory.key, { appointments_scheduled: 1 });
         recordKpiEvent(store, {
@@ -5051,6 +5971,9 @@ async function recordOutgoingForMemory(messageLike, replyText, options = {}) {
   noteReplyReason(memory, replyReason, sentAt);
   updateLinkMemory(memory, replyText);
   const linkStats = linkStatsForText(replyText);
+  if (linkStats.booking_links_sent) {
+    markConversationState(memory, "CALENDAR_SENT");
+  }
   if (replyPitchesCall(replyText) || linkStats.booking_links_sent) {
     memory.call_pitched = true;
     memory.call_pitched_at = memory.call_pitched_at || sentAt;
@@ -5733,7 +6656,7 @@ async function processIncomingReply(incoming, parsedPayload, conversationKey) {
 
   const ruleBasedReply = isBookingConfirmation(incoming.text)
     ? bookingConfirmationReply()
-    : appointmentSetterRuleReply(memory, incoming);
+    : appointmentSetterRuleReply(memory, incoming, featureSettings);
 
   if (ruleBasedReply) {
     const replyText = joinedReplyText(ruleBasedReply);
@@ -5832,7 +6755,7 @@ async function processIncomingReply(incoming, parsedPayload, conversationKey) {
       memory,
       featureSettings
     });
-    aiReply.reply = withTrackedBookingUrl(aiReply.reply, incoming);
+    aiReply.reply = cleanProspectReply(withTrackedBookingUrl(aiReply.reply, incoming));
   } catch (error) {
     await saveDraft({
       provider: normalizeProvider(incoming.provider),
@@ -6842,7 +7765,7 @@ app.post("/api/test-reply", async (req, res, next) => {
     const memory = testMemoryFromThread(thread);
     const ruleBasedReply = isBookingConfirmation(newMessage.text)
       ? bookingConfirmationReply()
-      : appointmentSetterRuleReply(memory, newMessage);
+      : appointmentSetterRuleReply(memory, newMessage, featureSettings);
 
     if (ruleBasedReply) {
       res.json({
