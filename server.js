@@ -139,12 +139,12 @@ Rules:
 
 Core appointment-setting objective:
 - Optimize for qualified conversations, qualified appointments, shows, and enrollments. Do not optimize merely for the number of calendar links sent.
-- Use this progression for serious pallet-business interest: interest detected -> ask permission for 3 quick questions -> learn market -> learn starting resources -> learn financial/lifestyle goal -> give a short personalized Zoom invitation -> send calendar immediately after they agree to the Zoom.
+- Use this progression for serious pallet-business interest: interest detected -> ask permission for 3 quick questions -> learn market -> learn why they want to start now -> learn financial/lifestyle goal -> give a short personalized Zoom invitation -> send calendar immediately after they agree to the Zoom.
 - Next-step routes are: content-only -> YouTube; vague/education-needed -> training video with permission; serious but not yet qualified -> 3 quick questions; qualified -> Zoom invitation; ready-to-book -> calendar immediately.
 - The prospect's message decides the route. Do not force everyone through the same script.
 - If someone plainly says they want to start, learn, get started, or get into the pallet business, ask permission for 3 quick questions before probing.
 - Do not ask the 3 questions like a form. Keep it conversational and ask only the next missing question.
-- The 3 core areas are operating market, starting resources, and financial/lifestyle goal. If any of that information was already shared, do not ask for it again.
+- The 3 core areas are operating market, why now/why they want to start, and financial/lifestyle goal. If any of that information was already shared, do not ask for it again.
 - If someone asks to book, schedule, talk, get the calendar, or send the link, do not force qualification. Send the calendar.
 - Do not ask that discovery question when the prospect already gave motivation, assets, occupation, urgency, or asked to book. Never slow down hot prospects.
 - The historically strong booking path is: interest -> useful Zoom framing -> prospect agrees to Zoom -> calendar immediately -> stay engaged while they book.
@@ -177,9 +177,9 @@ Best-performing DM flow:
 3. If they give useful context, mirror one specific detail so they feel heard.
 4. If they are only lightly curious, vague, or asking follow-up questions without clear start intent, say: "Got you. I have a short training video that explains how the pallet business works. Want me to send it?"
 5. If they say yes to the training video, send: "No problem. Here's the training video: https://www.palletprosacademy.com/training"
-6. If they say they want to start and have not already supplied market/resources/goal, ask permission for 3 quick questions.
-7. After permission, ask only the next missing question: market, resources, then financial/lifestyle goal.
-8. If they already supplied market/resources/goal, skip those questions and move to the Zoom invitation.
+6. If they say they want to start and have not already supplied market/why-now/goal, ask permission for 3 quick questions.
+7. After permission, ask only the next missing question: market, why they want to start now, then financial/lifestyle goal.
+8. If they already supplied market/why-now/goal, skip those questions and move to the Zoom invitation.
 9. Once qualified, use a personalized Zoom invitation for this week or next week based on the current America/New_York weekday.
 10. If they agree to the Zoom, do not ask for calendar permission again. Send the calendar immediately.
 11. If they ask for a call, appointment, consultation, details, or scheduling directly, send the booking link without forcing qualification.
@@ -1489,6 +1489,9 @@ function questionLabel(key) {
   return (
     {
       why_start: "why they want to start",
+      qualification_why: "why now is a good time",
+      qualification_market: "operating market",
+      qualification_goal: "financial goal",
       when_start: "when they want to start",
       holding_back: "what is holding them back",
       would_call: "whether they would get on a call"
@@ -1663,8 +1666,8 @@ function detectQuestionKeys(text) {
     keys.push("qualification_market");
   }
 
-  if (/starting mostly from scratch|already have a truck|truck, trailer|business setup|starting from scratch/.test(lower)) {
-    keys.push("qualification_resources");
+  if (/what'?s got you interested|why.*good time|why.*start.*now|interested in starting.*now|start(?:ing)?(?: the)? business.*now/.test(lower)) {
+    keys.push("qualification_why");
   }
 
   if (/financially|extra income|something bigger|ideally like the pallet business to do|financial or lifestyle/.test(lower)) {
@@ -2120,7 +2123,7 @@ function noteIncomingSignals(memory, incomingText, incomingAt) {
 
   const missing = missingQualificationKeys(memory);
   console.log(
-    `Incoming qualification signals for ${memory.key || "conversation"}: state=${memory.conversation_state || "INITIAL"} missing=${missing.join(",") || "none"} market=${memory.lead_profile?.operating_market || ""} resources=${memory.lead_profile?.vehicle_type || memory.lead_profile?.existing_business_type || ""} goal=${memory.lead_profile?.primary_motivation || memory.lead_profile?.financial_goal || ""}`
+    `Incoming qualification signals for ${memory.key || "conversation"}: state=${memory.conversation_state || "INITIAL"} missing=${missing.join(",") || "none"} market=${memory.lead_profile?.operating_market || ""} why=${memory.lead_profile?.start_reason || ""} goal=${memory.lead_profile?.primary_motivation || memory.lead_profile?.financial_goal || ""}`
   );
 
   const escalation = humanEscalationReason(incomingText);
@@ -2177,7 +2180,7 @@ function updateQuestionMemory(memory, text) {
 
   if (
     keys.includes("qualification_market") ||
-    keys.includes("qualification_resources") ||
+    keys.includes("qualification_why") ||
     keys.includes("qualification_goal")
   ) {
     markConversationState(memory, "QUALIFYING");
@@ -2255,6 +2258,11 @@ function hasResourcePosition(memory) {
   );
 }
 
+function hasWhyStart(memory) {
+  const profile = memory?.lead_profile || {};
+  return Boolean(profile.start_reason || profile.why_now || profile.start_motivation);
+}
+
 function hasGoalMotivation(memory) {
   const profile = memory?.lead_profile || {};
   return Boolean(
@@ -2268,7 +2276,7 @@ function hasGoalMotivation(memory) {
 function missingQualificationKeys(memory) {
   const missing = [];
   if (!hasOperatingMarket(memory)) missing.push("market");
-  if (!hasResourcePosition(memory)) missing.push("resources");
+  if (!hasWhyStart(memory)) missing.push("why");
   if (!hasGoalMotivation(memory)) missing.push("goal");
   return missing;
 }
@@ -2327,18 +2335,30 @@ function lastAssistantAskedQualificationPermission(memory) {
 function qualificationQuestionWasAsked(memory) {
   return (
     (Array.isArray(memory?.questions_asked) ? memory.questions_asked : []).some((key) =>
-      ["qualification_market", "qualification_resources", "qualification_goal"].includes(key)
+      ["qualification_market", "qualification_why", "qualification_goal"].includes(key)
     ) ||
     (Array.isArray(memory?.last_messages) ? memory.last_messages : [])
       .slice(-5)
       .some(
         (message) =>
           message.role === "assistant" &&
-          /city and state|starting mostly from scratch|already have a truck|truck, trailer|business setup|financially|extra income|something bigger/i.test(
+          /city and state|what's got you interested|why is now a good time|financially|extra income|something bigger/i.test(
             message.text || ""
           )
       )
   );
+}
+
+function lastAssistantAskedWhyNow(memory) {
+  return (Array.isArray(memory?.last_messages) ? memory.last_messages : [])
+    .slice(-6)
+    .some(
+      (message) =>
+        message.role === "assistant" &&
+        /what'?s got you interested|why is now a good time|why.*start.*now/i.test(
+          message.text || ""
+        )
+    );
 }
 
 function lastAssistantInvitedToZoom(memory) {
@@ -2420,7 +2440,7 @@ function appointmentSetterQualificationQuestionReply(memory) {
     };
   }
 
-  if (next === "resources") {
+  if (next === "why") {
     const market = formatKnownMarket(memory);
     const basedLine = profile.current_location && profile.operating_market && profile.current_location !== profile.operating_market
       ? `Got you. So you're based in ${profile.current_location}, but you'll be operating in the ${market} area. `
@@ -2430,14 +2450,14 @@ function appointmentSetterQualificationQuestionReply(memory) {
 
     return {
       reply:
-        `${basedLine}Are you starting mostly from scratch, or do you already have a truck, trailer, or business setup you can use?`,
+        `${basedLine}What's got you interested in starting a pallet business now?`,
       needs_review: false,
       handled: true
     };
   }
 
   if (next === "goal") {
-    const ack = resourceAcknowledgement(memory);
+    const ack = memory?.lead_profile?.start_reason ? "That makes sense." : resourceAcknowledgement(memory);
     return {
       reply:
         `${ack ? `${ack} ` : ""}Last question. What would you ideally like the pallet business to do for you financially?`,
@@ -2528,10 +2548,21 @@ function appointmentSetterQualificationFlowReply(memory, incoming, text) {
   }
 
   const directQualificationFields = extractQualificationFields(text);
+  if (lastAssistantAskedWhyNow(memory)) {
+    delete directQualificationFields.financial_goal;
+    delete directQualificationFields.lifestyle_goal;
+    delete directQualificationFields.primary_motivation;
+    delete directQualificationFields.motivation;
+    directQualificationFields.start_reason = cleanProspectReply(text).slice(0, 180);
+  }
+  const answeringWhyNow = lastAssistantAskedWhyNow(memory);
   memory.lead_profile = mergeLeadProfile(
     mergeLeadProfile(memory.lead_profile, directQualificationFields),
-    leadProfileFromText(text)
+    answeringWhyNow ? {} : leadProfileFromText(text)
   );
+  if (answeringWhyNow && text.trim()) {
+    memory.lead_profile.start_reason = cleanProspectReply(text).slice(0, 180);
+  }
 
   const missingBefore = missingQualificationKeys(memory);
   console.log(
@@ -2590,6 +2621,14 @@ function appointmentSetterQualificationFlowReply(memory, incoming, text) {
   }
 
   markConversationState(memory, "PALLET_INTEREST_DETECTED");
+
+  if (
+    !hasQualificationPermission(memory) &&
+    !qualificationPermissionRequested(memory) &&
+    !qualificationQuestionWasAsked(memory)
+  ) {
+    return appointmentSetterQualificationPermissionReply(memory);
+  }
 
   if (qualificationComplete(memory)) {
     console.log(`Pallet interest plus complete qualification detected for ${memory.key || "conversation"}.`);
