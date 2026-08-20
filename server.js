@@ -2581,7 +2581,6 @@ function appointmentSetterQualificationFlowReply(memory, incoming, text) {
   const interested =
     hasClearStartIntent(text) ||
     (lastAssistantAskedContentOrBusiness(memory) && yesToBusinessInterest(text)) ||
-    (lastAssistantAskedSoftLearningBridge(memory) && yesToBusinessInterest(text)) ||
     (lastAssistantAskedContentOrBusiness(memory) && missingBefore.length < 3) ||
     qualificationQuestionWasAsked(memory) ||
     (wantsPalletBusiness(text) && !wantsContentOnly(text) && !prospectAskedQuestion(text));
@@ -2592,24 +2591,6 @@ function appointmentSetterQualificationFlowReply(memory, incoming, text) {
 
   markConversationState(memory, "PALLET_INTEREST_DETECTED");
 
-  if (
-    lastAssistantAskedSoftLearningBridge(memory) &&
-    yesToBusinessInterest(text) &&
-    !memory.booking_link_sent
-  ) {
-    return appointmentSetterCalendarAskReply();
-  }
-
-  if (
-    (hasClearStartIntent(text) ||
-      isSimplePalletBusinessIntent(text) ||
-      (lastAssistantAskedContentOrBusiness(memory) && yesToBusinessInterest(text))) &&
-    !memory.booking_link_sent &&
-    !lastAssistantAskedForCalendarPermission(memory)
-  ) {
-    return appointmentSetterStartSegueReply();
-  }
-
   if (qualificationComplete(memory)) {
     console.log(`Pallet interest plus complete qualification detected for ${memory.key || "conversation"}.`);
     return appointmentSetterZoomInviteReply(memory);
@@ -2619,14 +2600,15 @@ function appointmentSetterQualificationFlowReply(memory, incoming, text) {
     hasOperatingMarket(memory) || hasResourcePosition(memory) || hasGoalMotivation(memory);
 
   if (hasPartialQualification || hasQualificationPermission(memory)) {
+    markQualificationPermissionGranted(memory);
     console.log(
-      `Partial qualification detected for ${memory.key || "conversation"}; moving to booking bridge instead of extra probing.`
+      `Partial qualification detected for ${memory.key || "conversation"}; missing=${missingQualificationKeys(memory).join(",")}.`
     );
-    return appointmentSetterStartSegueReply();
+    return appointmentSetterQualificationQuestionReply(memory);
   }
 
   if (!qualificationPermissionRequested(memory)) {
-    return appointmentSetterStartSegueReply();
+    return appointmentSetterQualificationPermissionReply(memory);
   }
 
   return null;
