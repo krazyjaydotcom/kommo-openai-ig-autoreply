@@ -2395,7 +2395,7 @@ function appointmentSetterQualificationPermissionReply(memory) {
   markQualificationPermissionRequested(memory);
   return {
     reply:
-      "Absolutely bro. Mind if I ask you 3 quick questions so I can get a better idea of where you're at and what you're looking to do?",
+      "For sure. Mind if I ask you 3 quick questions so I can get a better idea of where you're at and what you're looking to do?",
     needs_review: false,
     handled: true
   };
