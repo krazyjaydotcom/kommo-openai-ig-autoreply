@@ -2569,6 +2569,17 @@ function appointmentSetterQualificationFlowReply(memory, incoming, text) {
     `Qualification state=${memory.conversation_state || "INITIAL"} intent=${memory.lead_profile?.intent || ""} missing=${missingBefore.join(",") || "none"}`
   );
 
+  if (
+    lastAssistantAskedQualificationPermission(memory) &&
+    (yesToCalendarLink(text) || yesToBusinessInterest(text))
+  ) {
+    markQualificationPermissionGranted(memory);
+    console.log(`Qualification permission granted for ${memory.key || "conversation"}.`);
+    return qualificationComplete(memory)
+      ? appointmentSetterZoomInviteReply(memory)
+      : appointmentSetterQualificationQuestionReply(memory);
+  }
+
   if (memory.booking_link_sent && asksToResendCalendarLink(text)) {
     console.log(`Calendar resend requested for ${memory.key || "conversation"}.`);
     return appointmentSetterCalendarLinkReply(incoming, memory);
@@ -2590,17 +2601,6 @@ function appointmentSetterQualificationFlowReply(memory, incoming, text) {
   if (!memory.booking_link_sent && directBookingIntent(text)) {
     console.log(`Direct booking intent detected for ${memory.key || "conversation"}. Bypassing qualification.`);
     return appointmentSetterCalendarLinkReply(incoming, memory);
-  }
-
-  if (
-    lastAssistantAskedQualificationPermission(memory) &&
-    (yesToCalendarLink(text) || yesToBusinessInterest(text))
-  ) {
-    markQualificationPermissionGranted(memory);
-    console.log(`Qualification permission granted for ${memory.key || "conversation"}.`);
-    return qualificationComplete(memory)
-      ? appointmentSetterZoomInviteReply(memory)
-      : appointmentSetterQualificationQuestionReply(memory);
   }
 
   const interruption = qualificationInterruptionReply(memory, text);
@@ -2883,7 +2883,7 @@ function yesToCalendarLink(text) {
     .replace(/\s+/g, " ")
     .trim();
 
-  return /^(yes|yea|yeah|yep|yup|sure|suree+|of course|that's fine|that is fine|fine|ok|okay|absolutely|please|send it|send me the link|go ahead|sounds good|that works|bet|i'm interested|im interested|interested|i'm down|im down|lets do it|let's do it|when are you available|how do i book|can we talk|yes that is fine)\b/i.test(
+  return /^(yes|yea|yeah|yep|yup|sure|suree+|of course|that's fine|thats fine|that is fine|that's cool|thats cool|cool|fine|ok|okay|absolutely|please|send it|send me the link|go ahead|sounds good|that works|bet|i'm interested|im interested|interested|i'm down|im down|lets do it|let's do it|when are you available|how do i book|can we talk|yes that is fine)\b/i.test(
     cleanText
   );
 }
@@ -3049,7 +3049,7 @@ function yesToBusinessInterest(text) {
     .replace(/\s+/g, " ")
     .trim();
 
-  return /^(yes|yea|yeah|yep|yup|both|bet|cool|sounds good|that works|most definitely|definitely|for sure|sure|yea definitely|yeah definitely|i am|i'm|im|interested|i'm interested|im interested|trying|tryna|i'm tryna|im tryna|i want|wanting|wanna|ready|down|let's do it|lets do it)\b/.test(
+  return /^(yes|yea|yeah|yep|yup|both|bet|cool|that's cool|thats cool|that's fine|thats fine|sounds good|that works|most definitely|definitely|for sure|sure|yea definitely|yeah definitely|i am|i'm|im|interested|i'm interested|im interested|trying|tryna|i'm tryna|im tryna|i want|wanting|wanna|ready|down|let's do it|lets do it)\b/.test(
     cleanText
   );
 }
