@@ -2420,7 +2420,7 @@ function appointmentSetterQualificationPermissionReply(memory) {
   markQualificationPermissionRequested(memory);
   return {
     reply:
-      "For sure. Mind if I ask you 3 quick questions so I can get a better idea of where you're at and what you're looking to do?",
+      "Sure. Mind if I ask you 3 quick questions so I can get a better idea of where you're at and what you're looking to do?",
     needs_review: false,
     handled: true
   };
@@ -2457,7 +2457,7 @@ function appointmentSetterQualificationQuestionReply(memory) {
   }
 
   if (next === "goal") {
-    const ack = memory?.lead_profile?.start_reason ? "That makes sense." : resourceAcknowledgement(memory);
+    const ack = memory?.lead_profile?.start_reason ? "I respect that." : resourceAcknowledgement(memory);
     return {
       reply:
         `${ack ? `${ack} ` : ""}Last question. What would you ideally like the pallet business to do for you financially?`,
