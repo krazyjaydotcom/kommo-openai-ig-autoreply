@@ -2581,6 +2581,7 @@ function appointmentSetterQualificationFlowReply(memory, incoming, text) {
   const interested =
     hasClearStartIntent(text) ||
     (lastAssistantAskedContentOrBusiness(memory) && yesToBusinessInterest(text)) ||
+    (lastAssistantAskedSoftLearningBridge(memory) && yesToBusinessInterest(text)) ||
     (lastAssistantAskedContentOrBusiness(memory) && missingBefore.length < 3) ||
     qualificationQuestionWasAsked(memory) ||
     (wantsPalletBusiness(text) && !wantsContentOnly(text) && !prospectAskedQuestion(text));
@@ -2591,6 +2592,24 @@ function appointmentSetterQualificationFlowReply(memory, incoming, text) {
 
   markConversationState(memory, "PALLET_INTEREST_DETECTED");
 
+  if (
+    lastAssistantAskedSoftLearningBridge(memory) &&
+    yesToBusinessInterest(text) &&
+    !memory.booking_link_sent
+  ) {
+    return appointmentSetterCalendarAskReply();
+  }
+
+  if (
+    (hasClearStartIntent(text) ||
+      isSimplePalletBusinessIntent(text) ||
+      (lastAssistantAskedContentOrBusiness(memory) && yesToBusinessInterest(text))) &&
+    !memory.booking_link_sent &&
+    !lastAssistantAskedForCalendarPermission(memory)
+  ) {
+    return appointmentSetterStartSegueReply();
+  }
+
   if (qualificationComplete(memory)) {
     console.log(`Pallet interest plus complete qualification detected for ${memory.key || "conversation"}.`);
     return appointmentSetterZoomInviteReply(memory);
@@ -2600,15 +2619,14 @@ function appointmentSetterQualificationFlowReply(memory, incoming, text) {
     hasOperatingMarket(memory) || hasResourcePosition(memory) || hasGoalMotivation(memory);
 
   if (hasPartialQualification || hasQualificationPermission(memory)) {
-    markQualificationPermissionGranted(memory);
     console.log(
-      `Partial qualification detected for ${memory.key || "conversation"}; missing=${missingQualificationKeys(memory).join(",")}.`
+      `Partial qualification detected for ${memory.key || "conversation"}; moving to booking bridge instead of extra probing.`
     );
-    return appointmentSetterQualificationQuestionReply(memory);
+    return appointmentSetterStartSegueReply();
   }
 
   if (!qualificationPermissionRequested(memory)) {
-    return appointmentSetterQualificationPermissionReply(memory);
+    return appointmentSetterStartSegueReply();
   }
 
   return null;
@@ -3010,7 +3028,7 @@ function yesToBusinessInterest(text) {
     .replace(/\s+/g, " ")
     .trim();
 
-  return /^(yes|yea|yeah|yep|yup|both|most definitely|definitely|for sure|sure|yea definitely|yeah definitely|i am|i'm|im|interested|i'm interested|im interested|trying|tryna|i'm tryna|im tryna|i want|wanting|wanna|ready|down|let's do it|lets do it)\b/.test(
+  return /^(yes|yea|yeah|yep|yup|both|bet|cool|sounds good|that works|most definitely|definitely|for sure|sure|yea definitely|yeah definitely|i am|i'm|im|interested|i'm interested|im interested|trying|tryna|i'm tryna|im tryna|i want|wanting|wanna|ready|down|let's do it|lets do it)\b/.test(
     cleanText
   );
 }
