@@ -41,7 +41,6 @@ const DEFAULT_HUMAN_SEND_DELAY_MIN_MS = 2500;
 const DEFAULT_HUMAN_SEND_DELAY_MAX_MS = 7000;
 const APP_OUTGOING_ECHO_WINDOW_MS = 15 * 60 * 1000;
 const CALENDAR_SEQUENCE_GAP_MS = 8 * 1000;
-const CALENDAR_LINK_SEQUENCE_DELAYS_MS = [0, 10 * 1000, 4 * 1000];
 const FOLLOW_UP_OFFSETS_MS = [
   45 * 60 * 1000,
   4 * 60 * 60 * 1000,
@@ -2365,6 +2364,12 @@ function directBookingIntent(text) {
     /\b(where do i schedule|how do i book|can i book|ready to talk|let'?s set up a call|lets set up a call)\b/i.test(String(text || ""));
 }
 
+function asksToResendCalendarLink(text) {
+  return /\b(resend|send again|send it again|drop it again|share it again|lost the link|need the link again|send me the link again|can you send it again|could you send it again)\b/i.test(
+    String(text || "")
+  );
+}
+
 function formatKnownMarket(memory) {
   const profile = memory?.lead_profile || {};
   return profile.operating_market ||
@@ -2533,12 +2538,25 @@ function appointmentSetterQualificationFlowReply(memory, incoming, text) {
     `Qualification state=${memory.conversation_state || "INITIAL"} intent=${memory.lead_profile?.intent || ""} missing=${missingBefore.join(",") || "none"}`
   );
 
-  if (lastAssistantInvitedToZoom(memory) && zoomAcceptance(text)) {
+  if (memory.booking_link_sent && asksToResendCalendarLink(text)) {
+    console.log(`Calendar resend requested for ${memory.key || "conversation"}.`);
+    return appointmentSetterCalendarLinkReply(incoming, memory);
+  }
+
+  if (
+    memory.booking_link_sent &&
+    (zoomAcceptance(text) || directBookingIntent(text) || yesToCalendarLink(text))
+  ) {
+    console.log(`Calendar already sent for ${memory.key || "conversation"}. Nudging existing link.`);
+    return appointmentSetterUseLinkReply();
+  }
+
+  if (!memory.booking_link_sent && lastAssistantInvitedToZoom(memory) && zoomAcceptance(text)) {
     console.log(`Call acceptance detected for ${memory.key || "conversation"}. Sending calendar.`);
     return appointmentSetterCalendarLinkReply(incoming, memory);
   }
 
-  if (directBookingIntent(text)) {
+  if (!memory.booking_link_sent && directBookingIntent(text)) {
     console.log(`Direct booking intent detected for ${memory.key || "conversation"}. Bypassing qualification.`);
     return appointmentSetterCalendarLinkReply(incoming, memory);
   }
@@ -3211,7 +3229,9 @@ function appointmentSetterRuleReply(memory, incoming, featureSettings = {}) {
     lastAssistantAskedForCalendarPermission(memory) &&
     yesToCalendarLink(text)
   ) {
-    return appointmentSetterCalendarLinkReply(incoming, memory);
+    return memory?.booking_link_sent
+      ? appointmentSetterUseLinkReply()
+      : appointmentSetterCalendarLinkReply(incoming, memory);
   }
 
   if (
@@ -3292,7 +3312,9 @@ function appointmentSetterRuleReply(memory, incoming, featureSettings = {}) {
   }
 
   if (wantsCalendarLinkNow(text) && !memory?.booking_confirmed) {
-    return appointmentSetterCalendarLinkReply(incoming, memory);
+    return memory?.booking_link_sent && !asksToResendCalendarLink(text)
+      ? appointmentSetterUseLinkReply()
+      : appointmentSetterCalendarLinkReply(incoming, memory);
   }
 
   if (
