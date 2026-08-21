@@ -2520,7 +2520,11 @@ function qualificationInterruptionReply(memory, text) {
 
   let answer = "";
 
-  if (asksPriceOrCost(text)) {
+  if (seemsToWantJobOrDrivingWork(text)) {
+    return appointmentSetterJobSeekerReply();
+  } else if (saysNoMoneyOrCapital(text)) {
+    return appointmentSetterNoMoneyReply();
+  } else if (asksPriceOrCost(text)) {
     answer =
       "We have a few different options depending on where you're starting and the level of help you need. The call is where we can point you in the right direction.";
   } else if (asksHowItWorks(text)) {
@@ -2599,6 +2603,8 @@ function appointmentSetterQualificationFlowReply(memory, incoming, text) {
       lastAssistantAskedQualificationPermission(memory)) &&
     !hasQualificationPermission(memory) &&
     !memory.booking_link_sent &&
+    !saysNoMoneyOrCapital(text) &&
+    !seemsToWantJobOrDrivingWork(text) &&
     hasQualificationContinuationSignal(text)
   ) {
     markQualificationPermissionGranted(memory);
@@ -2883,6 +2889,15 @@ function appointmentSetterNoMoneyReply() {
   };
 }
 
+function appointmentSetterJobSeekerReply() {
+  return {
+    reply:
+      `I respect that. This page is really for people wanting to learn or start the pallet business, not for hiring drivers.\n\nIf you want to learn the business for free, the YouTube channel is the best place to start: ${YOUTUBE_URL}`,
+    needs_review: false,
+    handled: true
+  };
+}
+
 function appointmentSetterSkepticReply() {
   return {
     reply:
@@ -2974,8 +2989,22 @@ function saysNoTruckYet(text) {
 }
 
 function saysNoMoneyOrCapital(text) {
-  return /\b(no money|no capital|don't have (?:any )?(?:money|capital)|dont have (?:any )?(?:money|capital)|can't afford|cant afford|broke|unemployed)\b/i.test(
+  return /\b(no money|no capital|don't have (?:any )?(?:money|capital)|dont have (?:any )?(?:money|capital)|do not have (?:any )?(?:money|capital)|can't afford|cant afford|broke|unemployed)\b/i.test(
     String(text || "")
+  );
+}
+
+function seemsToWantJobOrDrivingWork(text) {
+  const value = String(text || "");
+  return /\b(driver|drivers|drive|driving|job|hire|hiring|work for|work with|join something already|needed help|need help|someone needed.*help|someone needed.*driver|assuming something else|thought.*driver|thought.*help)\b/i.test(
+    value
+  );
+}
+
+function wantsTrainingIntro(text) {
+  const value = String(text || "");
+  return /\b(here to learn|just learning|trying to learn|tryna learn|want to learn|learn more|more info|information|info|what'?s steps|what are the steps|steps|how it works|how does it work|explain|teach me|show me)\b/i.test(
+    value
   );
 }
 
@@ -3309,6 +3338,33 @@ function appointmentSetterRuleReply(memory, incoming, featureSettings = {}) {
     !wantsAppointmentOrScheduling(text)
   ) {
     return appointmentSetterContentReply();
+  }
+
+  if (
+    seemsToWantJobOrDrivingWork(text) &&
+    !hasClearStartIntent(text) &&
+    !wantsAppointmentOrScheduling(text)
+  ) {
+    return appointmentSetterJobSeekerReply();
+  }
+
+  if (
+    saysNoMoneyOrCapital(text) &&
+    !hasClearStartIntent(text) &&
+    !wantsAppointmentOrScheduling(text)
+  ) {
+    return appointmentSetterNoMoneyReply();
+  }
+
+  if (
+    wantsTrainingIntro(text) &&
+    !hasClearStartIntent(text) &&
+    !wantsAppointmentOrScheduling(text) &&
+    !memory?.training_link_sent &&
+    !memory?.youtube_link_sent &&
+    !memory?.booking_link_sent
+  ) {
+    return appointmentSetterTrainingAskReply();
   }
 
   const qualificationReply = appointmentSetterQualificationFlowReply(
