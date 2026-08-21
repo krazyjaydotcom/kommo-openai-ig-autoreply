@@ -73,7 +73,7 @@ const KPI_EVENT_TYPES = new Set([
 ]);
 const INCOMING_REPLY_DEBOUNCE_MS = Math.max(
   0,
-  numberEnv("INCOMING_REPLY_DEBOUNCE_MS", 12_000)
+  numberEnv("INCOMING_REPLY_DEBOUNCE_MS", 20_000)
 );
 const SELF_INSTAGRAM_USERNAMES = new Set(
   String(process.env.OWN_INSTAGRAM_USERNAME || "palletprosacademy")
@@ -1708,6 +1708,10 @@ function humanEscalationReason(text) {
     return "Angry or high-risk tone needs manual handling.";
   }
 
+  if (/\b(too aggressive|aggressive|pushy|too pushy|doing too much|too much pressure|stop pushing|pressure|pressuring|coming on too strong)\b/.test(lower)) {
+    return "Prospect said the conversation felt too aggressive or pushy.";
+  }
+
   return "";
 }
 
@@ -2111,6 +2115,16 @@ function mergeLeadProfile(existing = {}, incoming = {}) {
   return merged;
 }
 
+function containsBookingLink(text) {
+  const replyText = String(text || "");
+  return (
+    replyText.includes(BOOKING_URL) ||
+    replyText.includes(TRACKED_BOOKING_BASE_URL) ||
+    /https?:\/\/(?:www\.)?tidycal\.com\/palletprosga\/[^\s)]+/i.test(replyText) ||
+    /https?:\/\/go\.palletprosacademy\.com\/discovery(?:\?[^\s)]*)?/i.test(replyText)
+  );
+}
+
 function noteIncomingSignals(memory, incomingText, incomingAt) {
   memory.lead_profile = mergeLeadProfile(
     memory.lead_profile,
@@ -2161,7 +2175,7 @@ function updateLinkMemory(memory, text) {
     memory.training_link_sent = true;
   }
 
-  if (replyText.includes(BOOKING_URL) || replyText.includes(TRACKED_BOOKING_BASE_URL)) {
+  if (containsBookingLink(replyText)) {
     memory.booking_link_sent = true;
   }
 }
@@ -2194,7 +2208,7 @@ function updateQuestionMemory(memory, text) {
 function appointmentSetterCalendarAskReply() {
   return {
     reply:
-      "That makes sense. Let's get on a Zoom call this week. That way we can research your market, answer any questions you have and see if you'd be a good fit for the program.\n\nDo you mind if I send you a link to my calendar?",
+      "I respect that. Let's get on a Zoom call this week. That way we can research your market, answer any questions you have and see if you'd be a good fit for the program.\n\nDo you mind if I send you a link to my calendar?",
     needs_review: false,
     handled: true
   };
@@ -2445,7 +2459,7 @@ function appointmentSetterQualificationQuestionReply(memory) {
     const basedLine = profile.current_location && profile.operating_market && profile.current_location !== profile.operating_market
       ? `Got you. So you're based in ${profile.current_location}, but you'll be operating in the ${market} area. `
       : profile.operating_market
-        ? `Got you. ${market} makes sense. `
+        ? `Got you. ${market} is helpful to know. `
         : "";
 
     return {
@@ -2575,6 +2589,22 @@ function appointmentSetterQualificationFlowReply(memory, incoming, text) {
   ) {
     markQualificationPermissionGranted(memory);
     console.log(`Qualification permission granted for ${memory.key || "conversation"}.`);
+    return qualificationComplete(memory)
+      ? appointmentSetterZoomInviteReply(memory)
+      : appointmentSetterQualificationQuestionReply(memory);
+  }
+
+  if (
+    (qualificationPermissionRequested(memory) ||
+      lastAssistantAskedQualificationPermission(memory)) &&
+    !hasQualificationPermission(memory) &&
+    !memory.booking_link_sent &&
+    hasQualificationContinuationSignal(text)
+  ) {
+    markQualificationPermissionGranted(memory);
+    console.log(
+      `Qualification permission inferred from useful context for ${memory.key || "conversation"}.`
+    );
     return qualificationComplete(memory)
       ? appointmentSetterZoomInviteReply(memory)
       : appointmentSetterQualificationQuestionReply(memory);
@@ -2734,7 +2764,10 @@ function trackedBookingUrl(messageLike = {}) {
 }
 
 function withTrackedBookingUrl(replyText, messageLike = {}) {
-  return String(replyText || "").replaceAll(BOOKING_URL, trackedBookingUrl(messageLike));
+  return String(replyText || "").replace(
+    /https?:\/\/(?:www\.)?tidycal\.com\/palletprosga\/[^\s)]+/gi,
+    trackedBookingUrl(messageLike)
+  );
 }
 
 function appointmentSetterCalendarLinkReply(messageLike, memory = null) {
@@ -2883,7 +2916,7 @@ function yesToCalendarLink(text) {
     .replace(/\s+/g, " ")
     .trim();
 
-  return /^(yes|yea|yeah|yep|yup|sure|suree+|of course|that's fine|thats fine|that is fine|that's cool|thats cool|cool|fine|ok|okay|absolutely|please|send it|send me the link|go ahead|sounds good|that works|bet|i'm interested|im interested|interested|i'm down|im down|lets do it|let's do it|when are you available|how do i book|can we talk|yes that is fine)\b/i.test(
+  return /^(yes|yea|yeah|yep|yup|sure|suree+|of course|that's fine|thats fine|that is fine|that's cool|thats cool|cool|fine|k|ok|okay|absolutely|please|send it|send me the link|go ahead|sounds good|that works|bet|i'm interested|im interested|interested|i'm down|im down|lets do it|let's do it|when are you available|how do i book|can we talk|yes that is fine)\b/i.test(
     cleanText
   );
 }
@@ -3075,6 +3108,30 @@ function mentionsRelevantOccupationOrAsset(text) {
 function mentionsPersonalMotivation(text) {
   return /\b(extra income|side income|second income|replace (?:my )?job|quit (?:my )?job|leave (?:my )?job|financial freedom|own (?:my )?business|work for myself|family|kids|home more|tired of|on the road|local|make money|income source|build something)\b/i.test(
     String(text || "")
+  );
+}
+
+function hasQualificationContinuationSignal(text) {
+  const value = String(text || "");
+  const fields = extractQualificationFields(value);
+  return (
+    hasClearStartIntent(value) ||
+    wantsPalletBusiness(value) ||
+    mentionsRelevantOccupationOrAsset(value) ||
+    mentionsExistingPalletExperience(value) ||
+    mentionsPersonalMotivation(value) ||
+    Boolean(
+      fields.operating_market ||
+        fields.operating_city ||
+        fields.operating_state ||
+        fields.vehicle_type ||
+        fields.existing_business ||
+        fields.existing_business_type ||
+        fields.plans_to_rent ||
+        fields.financial_goal ||
+        fields.lifestyle_goal ||
+        fields.primary_motivation
+    )
   );
 }
 
@@ -3294,6 +3351,17 @@ function appointmentSetterRuleReply(memory, incoming, featureSettings = {}) {
   }
 
   if (existingOperatorBuyerProblem(memory, text)) {
+    markConversationState(memory, "PALLET_INTEREST_DETECTED");
+
+    if (!hasQualificationPermission(memory) && !qualificationQuestionWasAsked(memory)) {
+      return appointmentSetterQualificationPermissionReply(memory);
+    }
+
+    if (!qualificationComplete(memory)) {
+      markQualificationPermissionGranted(memory);
+      return appointmentSetterQualificationQuestionReply(memory);
+    }
+
     return appointmentSetterExistingBuyerProblemReply();
   }
 
@@ -4359,8 +4427,7 @@ function linkStatsForText(text) {
     replyText.includes(TRAINING_PLAYLIST_URL) ||
     replyText.includes("youtube.com/");
   const hasTraining = replyText.includes(TRAINING_URL);
-  const hasBooking =
-    replyText.includes(BOOKING_URL) || replyText.includes(TRACKED_BOOKING_BASE_URL);
+  const hasBooking = containsBookingLink(replyText);
 
   return {
     training_links_sent: hasYoutube || hasTraining ? 1 : 0,
@@ -5006,6 +5073,11 @@ function testMemoryFromThread(thread) {
   };
 
   updateLinkMemory(memory, memory.last_messages.map((message) => message.text).join("\n"));
+  for (const message of memory.last_messages) {
+    if (message.role === "assistant") {
+      updateQuestionMemory(memory, message.text);
+    }
+  }
   memory.booking_confirmed = isBookingConfirmation(
     memory.last_messages
       .filter((message) => message.role === "user")
@@ -5856,6 +5928,35 @@ async function sendReply(messageLike, replyText, featureSettings) {
   return sendReplyToZernio(messageLike, replyText, featureSettings);
 }
 
+async function currentAutomationHoldReason(messageLike) {
+  const store = await readStore();
+  const memory = getConversationMemory(store, messageLike);
+  const settings = getConversationSettings(
+    store,
+    messageLike.talk_id || memory.current_talk_id
+  );
+  const holdReason = conversationHoldReason(settings);
+
+  if (holdReason) {
+    return holdReason;
+  }
+
+  if (memoryAutomationPaused(memory)) {
+    return "Automation is paused for this prospect.";
+  }
+
+  return "";
+}
+
+async function sendAutoReply(messageLike, replyText, featureSettings) {
+  const holdReason = await currentAutomationHoldReason(messageLike);
+  if (holdReason) {
+    throw new Error(`Auto-send blocked: ${holdReason}`);
+  }
+
+  return sendReply(messageLike, replyText, featureSettings);
+}
+
 function replyMessages(replyLike) {
   const messages = Array.isArray(replyLike?.messages)
     ? replyLike.messages
@@ -5891,7 +5992,7 @@ async function sendReplySequence(messageLike, replyLike, featureSettings) {
             human_send_delay: false
           };
 
-    await sendReply(messageLike, messages[index], sendSettings);
+    await sendAutoReply(messageLike, messages[index], sendSettings);
   }
 
   return messages;
@@ -6177,6 +6278,7 @@ async function processManualOutgoingMessage(outgoing) {
   }
 
   const memory = getConversationMemory(store, outgoing);
+  const conversationKey = memory.key || makeConversationKey(outgoing);
   const duplicate = markProcessedMessage(memory, outgoing.incoming_message_id);
 
   if (duplicate) {
@@ -6199,6 +6301,7 @@ async function processManualOutgoingMessage(outgoing) {
   const settings = getConversationSettings(store, outgoing.talk_id);
 
   cancelFollowUp(memory);
+  clearPendingIncomingReply(conversationKey);
   addMemoryMessage(memory, {
     role: "assistant",
     text: outgoing.text,
@@ -6448,7 +6551,7 @@ async function sendDueFollowUp(conversationKey) {
   }
 
   try {
-    await sendReply(memory, replyText, featureSettings);
+    await sendAutoReply(memory, replyText, featureSettings);
   } catch (error) {
     memory.follow_up.active = false;
     memory.follow_up.due_at = null;
@@ -6647,6 +6750,25 @@ async function processIncomingMessage(incoming, parsedPayload) {
   }
 
   await scheduleIncomingReply(incoming, parsedPayload, conversationKey);
+}
+
+function clearPendingIncomingReply(conversationKey) {
+  const key = String(conversationKey || "").trim();
+  if (!key) {
+    return false;
+  }
+
+  const pending = pendingIncomingReplies.get(key);
+  if (!pending) {
+    return false;
+  }
+
+  if (pending.timer) {
+    clearTimeout(pending.timer);
+  }
+
+  pendingIncomingReplies.delete(key);
+  return true;
 }
 
 async function scheduleIncomingReply(incoming, parsedPayload, conversationKey) {
@@ -6885,7 +7007,7 @@ async function processIncomingReply(incoming, parsedPayload, conversationKey) {
 
   if (shouldAutoSend) {
     try {
-      await sendReply(incoming, aiReply.reply, featureSettings);
+      await sendAutoReply(incoming, aiReply.reply, featureSettings);
       await recordOutgoingForMemory(incoming, aiReply.reply, { source: "auto" });
       await appendAutomationEvent({
         level: "success",
