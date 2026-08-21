@@ -2520,7 +2520,9 @@ function qualificationInterruptionReply(memory, text) {
 
   let answer = "";
 
-  if (seemsToWantJobOrDrivingWork(text)) {
+  if (asksAccessibilityAccommodation(text)) {
+    return appointmentSetterAccessibilityReply();
+  } else if (seemsToWantJobOrDrivingWork(text)) {
     return appointmentSetterJobSeekerReply();
   } else if (saysNoMoneyOrCapital(text)) {
     return appointmentSetterNoMoneyReply();
@@ -2898,6 +2900,15 @@ function appointmentSetterJobSeekerReply() {
   };
 }
 
+function appointmentSetterAccessibilityReply() {
+  return {
+    reply:
+      "Yes, we can work around that. On the call we can keep things simple and use chat/text if needed.\n\nIf you already have the calendar link, grab a time that works and I'll verify it on my end.",
+    needs_review: false,
+    handled: true
+  };
+}
+
 function appointmentSetterSkepticReply() {
   return {
     reply:
@@ -2996,8 +3007,14 @@ function saysNoMoneyOrCapital(text) {
 
 function seemsToWantJobOrDrivingWork(text) {
   const value = String(text || "");
-  return /\b(driver|drivers|drive|driving|job|hire|hiring|work for|work with|join something already|needed help|need help|someone needed.*help|someone needed.*driver|assuming something else|thought.*driver|thought.*help)\b/i.test(
+  return /\b(driver|drivers|drive|driving|job|hire|hiring|work for|join something already|needed help|need help|someone needed.*help|someone needed.*driver|assuming something else|thought.*driver|thought.*help)\b/i.test(
     value
+  );
+}
+
+function asksAccessibilityAccommodation(text) {
+  return /\b(deaf|hard of hearing|hearing impaired|disabled|disability|accessibility|accommodation|accommodate|work with me as)\b/i.test(
+    String(text || "")
   );
 }
 
@@ -3338,6 +3355,12 @@ function appointmentSetterRuleReply(memory, incoming, featureSettings = {}) {
     !wantsAppointmentOrScheduling(text)
   ) {
     return appointmentSetterContentReply();
+  }
+
+  if (
+    asksAccessibilityAccommodation(text)
+  ) {
+    return appointmentSetterAccessibilityReply();
   }
 
   if (
