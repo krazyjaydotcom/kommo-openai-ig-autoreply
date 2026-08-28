@@ -1658,7 +1658,7 @@ function detectQuestionKeys(text) {
     keys.push("holding_back");
   }
 
-  if (/mind if i ask.*3 quick questions|3 quick questions|three quick questions/.test(lower)) {
+  if (/mind if i ask.*3 quick questions|3 quick questions|three quick questions|cool to ask you a few questions|best path for (?:you|u)/.test(lower)) {
     keys.push("qualification_permission");
   }
 
@@ -2347,7 +2347,7 @@ function latestAssistantText(memory) {
 }
 
 function lastAssistantAskedQualificationPermission(memory) {
-  return /3 quick questions|three quick questions|mind if i ask|where you're at and what you're looking to do/i.test(
+  return /3 quick questions|three quick questions|mind if i ask|cool to ask you a few questions|best path for (?:you|u)|where you're at and what you're looking to do/i.test(
     latestAssistantText(memory)
   );
 }
@@ -2434,7 +2434,7 @@ function appointmentSetterQualificationPermissionReply(memory) {
   markQualificationPermissionRequested(memory);
   return {
     reply:
-      "Sure. Mind if I ask you 3 quick questions so I can get a better idea of where you're at and what you're looking to do?",
+      "Sure. Is it cool if I ask you a few questions to help determine the best path for you?",
     needs_review: false,
     handled: true
   };
