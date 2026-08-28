@@ -2336,14 +2336,20 @@ function markCallInvited(memory) {
   markConversationState(memory, "CALL_INVITED");
 }
 
+function latestAssistantText(memory) {
+  const messages = Array.isArray(memory?.last_messages) ? memory.last_messages : [];
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === "assistant") {
+      return String(messages[index].text || "");
+    }
+  }
+  return "";
+}
+
 function lastAssistantAskedQualificationPermission(memory) {
-  return (Array.isArray(memory?.last_messages) ? memory.last_messages : [])
-    .slice(-5)
-    .some(
-      (message) =>
-        message.role === "assistant" &&
-        /3 quick questions|three quick questions|where you're at and what you're looking to do/i.test(message.text || "")
-    );
+  return /3 quick questions|three quick questions|mind if i ask|where you're at and what you're looking to do/i.test(
+    latestAssistantText(memory)
+  );
 }
 
 function qualificationQuestionWasAsked(memory) {
@@ -2364,15 +2370,9 @@ function qualificationQuestionWasAsked(memory) {
 }
 
 function lastAssistantAskedWhyNow(memory) {
-  return (Array.isArray(memory?.last_messages) ? memory.last_messages : [])
-    .slice(-6)
-    .some(
-      (message) =>
-        message.role === "assistant" &&
-        /what'?s got you interested|why is now a good time|why.*start.*now/i.test(
-          message.text || ""
-        )
-    );
+  return /what'?s got you interested|why is now a good time|why.*start.*now/i.test(
+    latestAssistantText(memory)
+  );
 }
 
 function lastAssistantInvitedToZoom(memory) {
@@ -2560,6 +2560,352 @@ function qualificationInterruptionReply(memory, text) {
     answer,
     appointmentSetterQualificationQuestionReply(memory)
   );
+}
+
+function lastAssistantAskedMarket(memory) {
+  return /(what city and state|city and state|what market|where.*operate|planning to operate)/i.test(
+    latestAssistantText(memory)
+  );
+}
+
+function lastAssistantAskedGoal(memory) {
+  return /(financially|financial goal|ideally like the pallet business to do|extra income|something bigger)/i.test(
+    latestAssistantText(memory)
+  );
+}
+
+function looksLikeShortLocationAnswer(text) {
+  const value = cleanProspectReply(text).trim();
+
+  if (!value || value.length > 90 || value.includes("?")) {
+    return false;
+  }
+
+  if (extractMarketInfo(value).operating_market) {
+    return true;
+  }
+
+  return /^[a-z][a-z\s.'-]{1,50}(?:,\s*[a-z][a-z\s.'-]{1,35})?$/i.test(value) &&
+    !/\b(yes|no|sure|ok|okay|price|cost|truck|trailer|money|capital|how|what|why|when|where|learn|start|business)\b/i.test(value);
+}
+
+function backfillFreshSetterAnswer(memory, text) {
+  if (!memory) return;
+
+  memory.lead_profile = memory.lead_profile && typeof memory.lead_profile === "object"
+    ? memory.lead_profile
+    : {};
+
+  if (lastAssistantAskedMarket(memory) && !hasOperatingMarket(memory) && looksLikeShortLocationAnswer(text)) {
+    const marketText = titleCaseWords(cleanProspectReply(text).replace(/\s*,\s*/g, ", "));
+    const extracted = extractMarketInfo(marketText);
+    memory.lead_profile = mergeLeadProfile(memory.lead_profile, {
+      operating_market: extracted.operating_market || marketText,
+      operating_city: extracted.operating_city || "",
+      operating_state: extracted.operating_state || ""
+    });
+  }
+
+  if (lastAssistantAskedWhyNow(memory) && !hasWhyStart(memory) && cleanProspectReply(text).trim()) {
+    memory.lead_profile.start_reason = cleanProspectReply(text).trim().slice(0, 180);
+  }
+
+  if (lastAssistantAskedGoal(memory) && !hasGoalMotivation(memory) && cleanProspectReply(text).trim()) {
+    memory.lead_profile.primary_motivation = cleanProspectReply(text).trim().slice(0, 180);
+  }
+}
+
+function freshQuestionTypeFromAssistantText(text) {
+  const value = String(text || "");
+
+  if (/(what city and state|city and state|what market|where.*operate|planning to operate)/i.test(value)) {
+    return "market";
+  }
+
+  if (/what'?s got you interested|why is now a good time|why.*start.*now/i.test(value)) {
+    return "why";
+  }
+
+  if (/(financially|financial goal|ideally like the pallet business to do|extra income|something bigger)/i.test(value)) {
+    return "goal";
+  }
+
+  return "";
+}
+
+function freshProfileSignalsForAnswer(text, questionType = "") {
+  const signals = leadProfileFromText(text);
+
+  if (questionType === "market" && looksLikeShortLocationAnswer(text)) {
+    const marketText = titleCaseWords(cleanProspectReply(text).replace(/\s*,\s*/g, ", "));
+    const extracted = extractMarketInfo(marketText);
+    return {
+      ...signals,
+      operating_market: extracted.operating_market || marketText,
+      operating_city: extracted.operating_city || "",
+      operating_state: extracted.operating_state || ""
+    };
+  }
+
+  if (questionType === "why") {
+    delete signals.financial_goal;
+    delete signals.lifestyle_goal;
+    delete signals.primary_motivation;
+    delete signals.motivation;
+    signals.start_reason = cleanProspectReply(text).trim().slice(0, 180);
+  }
+
+  if (questionType === "goal") {
+    delete signals.start_reason;
+    delete signals.why_now;
+    delete signals.start_motivation;
+    signals.primary_motivation = cleanProspectReply(text).trim().slice(0, 180);
+  }
+
+  return signals;
+}
+
+function hydrateFreshProfileFromHistory(memory) {
+  if (!memory || memory.fresh_profile_hydrated) {
+    return;
+  }
+
+  memory.lead_profile = memory.lead_profile && typeof memory.lead_profile === "object"
+    ? memory.lead_profile
+    : {};
+
+  let currentQuestionType = "";
+  for (const message of Array.isArray(memory.last_messages) ? memory.last_messages : []) {
+    if (message.role === "assistant") {
+      currentQuestionType = freshQuestionTypeFromAssistantText(message.text);
+      continue;
+    }
+
+    if (message.role !== "user") {
+      continue;
+    }
+
+    memory.lead_profile = mergeLeadProfile(
+      memory.lead_profile,
+      freshProfileSignalsForAnswer(message.text || "", currentQuestionType)
+    );
+    currentQuestionType = "";
+  }
+
+  memory.fresh_profile_hydrated = true;
+}
+
+function asksIncomePotential(text) {
+  return /\b(how much|how many|range|revenue|profit|income|money|earn|make|pay myself|potential)\b.{0,80}\b(make|earn|profit|income|revenue|money|business)|\b(make|earn|profit|income|revenue|money)\b.{0,80}\b(pallet|business|month|week|year|yr|range)\b/i.test(
+    String(text || "")
+  );
+}
+
+function appointmentSetterIncomeReply(memory) {
+  const suffix = memory?.booking_link_sent
+    ? "That's one of the main things we can look at on the call once you grab a time."
+    : "That's one of the main reasons I like doing the Zoom, so we can look at your market instead of guessing.";
+
+  return {
+    reply:
+      `It really depends on your market, buyers, and how consistent you are. As an example, my own business runs around $400k/year in revenue and I personally pay myself around $75k/year, but it did not start there and results vary.\n\n${suffix}`,
+    needs_review: false,
+    handled: true
+  };
+}
+
+function appointmentSetterQuestionReply(memory, incoming, text) {
+  if (asksAccessibilityAccommodation(text)) {
+    return appointmentSetterAccessibilityReply();
+  }
+
+  if (asksPriceOrCost(text)) {
+    return appointmentSetterCostReply();
+  }
+
+  if (asksIncomePotential(text)) {
+    return appointmentSetterIncomeReply(memory);
+  }
+
+  if (asksWhatCallIsAbout(text)) {
+    return appointmentSetterCallAboutReply();
+  }
+
+  if (asksHowItWorks(text)) {
+    return memory?.training_link_sent
+      ? {
+          reply:
+            "Short version, we help you learn how to source, move, and sell pallets in your area. The training breaks it down, and the call is where we can look at your market.",
+          needs_review: false,
+          handled: true
+        }
+      : appointmentSetterTrainingAskReply();
+  }
+
+  if (saysNoTruckYet(text)) {
+    return appointmentSetterNoTruckReply();
+  }
+
+  if (asksIfLegit(text)) {
+    return appointmentSetterSkepticReply();
+  }
+
+  if (wantsDirectPhoneCall(text)) {
+    return appointmentSetterPhoneReply(memory, incoming);
+  }
+
+  return null;
+}
+
+function freshSetterDecisionReply(memory, incoming, text, featureSettings = {}) {
+  if (!memory || memory.booking_confirmed) {
+    return null;
+  }
+
+  hydrateFreshProfileFromHistory(memory);
+  const profileSignals = freshProfileSignalsForAnswer(
+    text,
+    freshQuestionTypeFromAssistantText(latestAssistantText(memory))
+  );
+  memory.lead_profile = mergeLeadProfile(memory.lead_profile, profileSignals);
+  backfillFreshSetterAnswer(memory, text);
+
+  if (
+    lastAssistantAskedQualificationPermission(memory) &&
+    (yesToCalendarLink(text) || yesToBusinessInterest(text))
+  ) {
+    markQualificationPermissionGranted(memory);
+    return qualificationComplete(memory)
+      ? appointmentSetterZoomInviteReply(memory)
+      : appointmentSetterQualificationQuestionReply(memory);
+  }
+
+  if (
+    wantsContentOnly(text) &&
+    !hasClearStartIntent(text) &&
+    !wantsAppointmentOrScheduling(text)
+  ) {
+    return appointmentSetterContentReply();
+  }
+
+  if (
+    seemsToWantJobOrDrivingWork(text) &&
+    !lastAssistantAskedGoal(memory) &&
+    !hasClearStartIntent(text) &&
+    !wantsAppointmentOrScheduling(text)
+  ) {
+    return appointmentSetterJobSeekerReply();
+  }
+
+  if (
+    saysNoMoneyOrCapital(text) &&
+    !hasClearStartIntent(text) &&
+    !wantsAppointmentOrScheduling(text)
+  ) {
+    return appointmentSetterNoMoneyReply();
+  }
+
+  if (
+    !memory.booking_link_sent &&
+    lastAssistantAskedForTrainingPermission(memory) &&
+    (yesToBusinessInterest(text) || yesToCalendarLink(text))
+  ) {
+    return appointmentSetterTrainingLinkReply();
+  }
+
+  if (memory.booking_link_sent) {
+    if (asksToResendCalendarLink(text)) {
+      return appointmentSetterCalendarLinkReply(incoming, memory);
+    }
+
+    const replyToQuestion = appointmentSetterQuestionReply(memory, incoming, text);
+    if (replyToQuestion) {
+      return replyToQuestion;
+    }
+
+    if (zoomAcceptance(text) || directBookingIntent(text) || saysTheyWillBook(text)) {
+      return appointmentSetterUseLinkReply();
+    }
+  }
+
+  if (lastAssistantAskedForCalendarPermission(memory) && yesToCalendarLink(text)) {
+    return appointmentSetterCalendarLinkReply(incoming, memory);
+  }
+
+  if (lastAssistantInvitedToZoom(memory) && zoomAcceptance(text)) {
+    return appointmentSetterCalendarLinkReply(incoming, memory);
+  }
+
+  if (directBookingIntent(text)) {
+    return appointmentSetterCalendarLinkReply(incoming, memory);
+  }
+
+  const replyToQuestion = appointmentSetterQuestionReply(memory, incoming, text);
+  if (replyToQuestion) {
+    return replyToQuestion;
+  }
+
+  if (
+    wantsTrainingIntro(text) &&
+    !hasClearStartIntent(text) &&
+    !wantsAppointmentOrScheduling(text) &&
+    !memory.training_link_sent &&
+    !memory.youtube_link_sent &&
+    !memory.booking_link_sent
+  ) {
+    return appointmentSetterTrainingAskReply();
+  }
+
+  if (existingOperatorBuyerProblem(memory, text)) {
+    markConversationState(memory, "PALLET_INTEREST_DETECTED");
+    return appointmentSetterExistingBuyerProblemReply();
+  }
+
+  const seriousInterest =
+    hasClearStartIntent(text) ||
+    (lastAssistantAskedContentOrBusiness(memory) && yesToBusinessInterest(text)) ||
+    qualificationPermissionRequested(memory) ||
+    lastAssistantAskedQualificationPermission(memory) ||
+    qualificationQuestionWasAsked(memory);
+
+  if (seriousInterest) {
+    markConversationState(memory, "PALLET_INTEREST_DETECTED");
+
+    if (
+      !hasQualificationPermission(memory) &&
+      !qualificationPermissionRequested(memory) &&
+      !qualificationQuestionWasAsked(memory)
+    ) {
+      return appointmentSetterQualificationPermissionReply(memory);
+    }
+
+    if (
+      (qualificationPermissionRequested(memory) || lastAssistantAskedQualificationPermission(memory)) &&
+      (yesToCalendarLink(text) || yesToBusinessInterest(text) || hasQualificationContinuationSignal(text))
+    ) {
+      markQualificationPermissionGranted(memory);
+    }
+
+    if (qualificationComplete(memory)) {
+      return appointmentSetterZoomInviteReply(memory);
+    }
+
+    if (hasQualificationPermission(memory) || qualificationQuestionWasAsked(memory)) {
+      markQualificationPermissionGranted(memory);
+      return appointmentSetterQualificationQuestionReply(memory);
+    }
+  }
+
+  if (
+    (wantsTrainingIntro(text) || isAmbiguousShortReply(text)) &&
+    !memory.training_link_sent &&
+    !memory.youtube_link_sent &&
+    !memory.booking_link_sent
+  ) {
+    return appointmentSetterTrainingAskReply();
+  }
+
+  return null;
 }
 
 function appointmentSetterQualificationFlowReply(memory, incoming, text) {
@@ -3349,229 +3695,7 @@ function appointmentSetterRuleReply(memory, incoming, featureSettings = {}) {
     return null;
   }
 
-  if (
-    wantsContentOnly(text) &&
-    !hasClearStartIntent(text) &&
-    !wantsAppointmentOrScheduling(text)
-  ) {
-    return appointmentSetterContentReply();
-  }
-
-  if (
-    asksAccessibilityAccommodation(text)
-  ) {
-    return appointmentSetterAccessibilityReply();
-  }
-
-  if (
-    seemsToWantJobOrDrivingWork(text) &&
-    !hasClearStartIntent(text) &&
-    !wantsAppointmentOrScheduling(text)
-  ) {
-    return appointmentSetterJobSeekerReply();
-  }
-
-  if (
-    saysNoMoneyOrCapital(text) &&
-    !hasClearStartIntent(text) &&
-    !wantsAppointmentOrScheduling(text)
-  ) {
-    return appointmentSetterNoMoneyReply();
-  }
-
-  if (
-    wantsTrainingIntro(text) &&
-    !hasClearStartIntent(text) &&
-    !wantsAppointmentOrScheduling(text) &&
-    !memory?.training_link_sent &&
-    !memory?.youtube_link_sent &&
-    !memory?.booking_link_sent
-  ) {
-    return appointmentSetterTrainingAskReply();
-  }
-
-  const qualificationReply = appointmentSetterQualificationFlowReply(
-    memory,
-    incoming,
-    text
-  );
-  if (qualificationReply) {
-    return qualificationReply;
-  }
-
-  if (
-    !memory?.booking_confirmed &&
-    lastAssistantAskedForCalendarPermission(memory) &&
-    yesToCalendarLink(text)
-  ) {
-    return memory?.booking_link_sent
-      ? appointmentSetterUseLinkReply()
-      : appointmentSetterCalendarLinkReply(incoming, memory);
-  }
-
-  if (
-    !memory?.booking_confirmed &&
-    lastAssistantAskedForTrainingPermission(memory) &&
-    (yesToBusinessInterest(text) || yesToCalendarLink(text))
-  ) {
-    return appointmentSetterTrainingLinkReply();
-  }
-
-  if (wantsDirectPhoneCall(text) && !hasRichProspectContext(text)) {
-    return appointmentSetterPhoneReply(memory, incoming);
-  }
-
-  if (saysNoMoneyOrCapital(text)) {
-    return appointmentSetterNoMoneyReply();
-  }
-
-  if (saysNotReadyYet(text) && !memory?.booking_link_sent) {
-    return appointmentSetterNotReadyReply();
-  }
-
-  if (existingOperatorBuyerProblem(memory, text)) {
-    markConversationState(memory, "PALLET_INTEREST_DETECTED");
-
-    if (!hasQualificationPermission(memory) && !qualificationQuestionWasAsked(memory)) {
-      return appointmentSetterQualificationPermissionReply(memory);
-    }
-
-    if (!qualificationComplete(memory)) {
-      markQualificationPermissionGranted(memory);
-      return appointmentSetterQualificationQuestionReply(memory);
-    }
-
-    return appointmentSetterExistingBuyerProblemReply();
-  }
-
-  if (asksPriceOrCost(text)) {
-    return appointmentSetterCostReply();
-  }
-
-  if (
-    (hasClearStartIntent(text) || isSimplePalletBusinessIntent(text)) &&
-    !memory?.booking_link_sent &&
-    !lastAssistantAskedForCalendarPermission(memory)
-  ) {
-    if (shouldAskMotivationBeforeZoom(memory, text)) {
-      return appointmentSetterMotivationReply();
-    }
-
-    return appointmentSetterCalendarAskReply();
-  }
-
-  if (asksWhatCallIsAbout(text)) {
-    return appointmentSetterCallAboutReply();
-  }
-
-  if (asksHowItWorks(text)) {
-    return appointmentSetterHowItWorksReply();
-  }
-
-  if (saysNoTruckYet(text)) {
-    return appointmentSetterNoTruckReply();
-  }
-
-  if (asksIfLegit(text)) {
-    return appointmentSetterSkepticReply();
-  }
-
-  if (
-    lastAssistantAskedSoftLearningBridge(memory) &&
-    yesToBusinessInterest(text) &&
-    !memory?.booking_link_sent &&
-    !memory?.booking_confirmed
-  ) {
-    return appointmentSetterCalendarAskReply();
-  }
-
-  if (memory?.booking_confirmed) {
-    return null;
-  }
-
-  if (memory?.booking_link_sent && saysTheyWillBook(text) && !prospectAskedQuestion(text)) {
-    return {
-      reply: "Sounds good, grab the weekday time that works best and I'll verify it.",
-      needs_review: false,
-      handled: true
-    };
-  }
-
-  if (wantsCalendarLinkNow(text) && !memory?.booking_confirmed) {
-    return memory?.booking_link_sent && !asksToResendCalendarLink(text)
-      ? appointmentSetterUseLinkReply()
-      : appointmentSetterCalendarLinkReply(incoming, memory);
-  }
-
-  if (
-    wantsAppointmentOrScheduling(text) &&
-    !memory?.booking_link_sent &&
-    !memory?.booking_confirmed
-  ) {
-    return prospectAskedQuestion(text)
-      ? appointmentSetterCalendarAskReply()
-      : appointmentSetterCalendarLinkReply(incoming, memory);
-  }
-
-  if (
-    lastAssistantAskedContentOrBusiness(memory) &&
-    yesToBusinessInterest(text) &&
-    !memory?.booking_link_sent &&
-    !memory?.booking_confirmed
-  ) {
-    if (shouldAskMotivationBeforeZoom(memory, text)) {
-      return appointmentSetterMotivationReply();
-    }
-
-    return appointmentSetterCalendarAskReply();
-  }
-
-  if (
-    memory?.booking_link_sent &&
-    mentionsSpecificTimeInsteadOfBooking(text) &&
-    !prospectAskedQuestion(text)
-  ) {
-    return appointmentSetterUseLinkReply();
-  }
-
-  if (
-    wantsContentOnly(text) &&
-    !hasClearStartIntent(text) &&
-    !wantsAppointmentOrScheduling(text) &&
-    !prospectAskedQuestion(text)
-  ) {
-    return appointmentSetterContentReply();
-  }
-
-  if (
-    wantsPalletBusiness(text) &&
-    !memory?.booking_link_sent &&
-    !lastAssistantAskedForCalendarPermission(memory)
-  ) {
-    if (hasHotQualificationSignal(text)) {
-      return appointmentSetterCalendarAskReply();
-    }
-
-    if (shouldAskMotivationBeforeZoom(memory, text)) {
-      return appointmentSetterMotivationReply();
-    }
-
-    if (shouldRouteWarmLeadToTraining(memory, text, featureSettings)) {
-      return appointmentSetterTrainingAskReply();
-    }
-
-    return appointmentSetterTrainingAskReply();
-  }
-
-  if (
-    isAmbiguousShortReply(text) &&
-    !memory?.booking_link_sent &&
-    !lastAssistantAskedForCalendarPermission(memory)
-  ) {
-    return appointmentSetterTrainingAskReply();
-  }
-
-  return null;
+  return freshSetterDecisionReply(memory, incoming, text, featureSettings);
 }
 
 function isBookingConfirmation(text) {
