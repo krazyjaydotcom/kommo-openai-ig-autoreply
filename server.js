@@ -2494,7 +2494,7 @@ function appointmentSetterZoomInviteReply(memory, date = new Date()) {
 
   return {
     reply:
-      `${ack} Would you be open to hopping on a quick Zoom ${weekPhrase} so we can take a look at ${market} together and see if this could realistically make sense for you?`,
+      `${ack} If you're trying to build something that gives you more freedom, the best next step is for us to look at your market together.\n\nWould you be open to hopping on a quick Zoom ${weekPhrase} so we can look at ${market}, answer your questions, and see if the academy is a good fit?`,
     needs_review: false,
     handled: true
   };
@@ -3130,13 +3130,15 @@ function appointmentSetterCalendarLinkReply(messageLike, memory = null) {
     markConversationState(memory, "CALENDAR_SENT");
   }
   const messages = [
-    `Perfect. Here's my calendar. Grab whatever time works best for you:\n\n${calendarUrl}`
+    "Perfect. Give me one sec and I'll grab that link for you. 💯",
+    `Here's my calendar 🗓️\n${calendarUrl}`,
+    "I'll be by my phone for another 5 minutes. Choose a date/time that works for you and I'll verify it on my end."
   ];
 
   return {
     reply: messages.join("\n\n"),
     messages,
-    message_delays_ms: [],
+    message_delays_ms: [0, 10000, 4000],
     needs_review: false,
     handled: true
   };
