@@ -48,9 +48,10 @@ const FOLLOW_UP_OFFSETS_MS = [
 ];
 const FOLLOW_UP_CHECK_MS = 60 * 1000;
 const FOLLOW_UP_WINDOW_MS = 23 * 60 * 60 * 1000;
+const STALE_REENTRY_WINDOW_MS = 21 * 24 * 60 * 60 * 1000;
 const LEARNING_REVIEW_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
 const LEARNING_REVIEW_CHECK_MS = 60 * 60 * 1000;
-const APP_BUILD_MARKER = "2026-08-10-inbox-no-autofocus-v1";
+const APP_BUILD_MARKER = "2026-08-30-handsfree-guardrails-v1";
 const DEFAULT_KPI_TARGETS = {
   daily_touch_points_target: 100,
   touch_pitch_min_rate: 10,
@@ -1580,6 +1581,10 @@ function classifyLeadStatus(memory) {
     return "booked";
   }
 
+  if (memory?.soft_declined || memory?.content_nurture_stopped) {
+    return "curious";
+  }
+
   if (/\b(incarcerated|in jail|prison|dispatch|find loads|freight|no money|no capital)\b/.test(recentText)) {
     return "not_fit";
   }
@@ -2695,6 +2700,80 @@ function hydrateFreshProfileFromHistory(memory) {
   memory.fresh_profile_hydrated = true;
 }
 
+function previousActivityBeforeLatestUser(memory) {
+  const messages = Array.isArray(memory?.last_messages) ? memory.last_messages : [];
+  let latestUserIndex = -1;
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === "user") {
+      latestUserIndex = index;
+      break;
+    }
+  }
+
+  if (latestUserIndex <= 0) {
+    return null;
+  }
+
+  for (let index = latestUserIndex - 1; index >= 0; index -= 1) {
+    const atMs = messages[index]?.at ? Date.parse(String(messages[index].at)) : 0;
+    if (Number.isFinite(atMs) && atMs > 0) {
+      return {
+        atMs,
+        role: messages[index].role || "",
+        text: messages[index].text || ""
+      };
+    }
+  }
+
+  return null;
+}
+
+function looksLikeLightReentry(text) {
+  const cleanText = String(text || "")
+    .toLowerCase()
+    .replace(/[^\w\s']/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return /^(yo|hey|hello|hi|sup|what'?s up|whats up|still available|available|you still doing this|is this still available|sure|ok|okay|yeah|yes|interested|tell me more|more info)$/.test(
+    cleanText
+  );
+}
+
+function isStaleConversationReentry(memory, text) {
+  const previous = previousActivityBeforeLatestUser(memory);
+  const latestIncomingMs = memory?.last_incoming_at ? Date.parse(String(memory.last_incoming_at)) : Date.now();
+  const gapMs = previous && Number.isFinite(latestIncomingMs)
+    ? latestIncomingMs - previous.atMs
+    : 0;
+
+  return (
+    gapMs >= STALE_REENTRY_WINDOW_MS &&
+    looksLikeLightReentry(text) &&
+    !directBookingIntent(text) &&
+    !hasClearStartIntent(text) &&
+    !wantsContentOnly(text)
+  );
+}
+
+function appointmentSetterStaleReentryReply(memory) {
+  if (memory) {
+    memory.follow_up = memory.follow_up && typeof memory.follow_up === "object"
+      ? memory.follow_up
+      : {};
+    memory.follow_up.active = false;
+    memory.follow_up.due_at = null;
+    markConversationState(memory, "REOPENED");
+  }
+
+  return {
+    reply: "Yoo, good to hear from you. Were you still looking into starting the pallet business?",
+    needs_review: false,
+    handled: true
+  };
+}
+
 function asksIncomePotential(text) {
   return /\b(how much|how many|range|revenue|profit|income|money|earn|make|pay myself|potential)\b.{0,80}\b(make|earn|profit|income|revenue|money|business)|\b(make|earn|profit|income|revenue|money)\b.{0,80}\b(pallet|business|month|week|year|yr|range)\b/i.test(
     String(text || "")
@@ -2769,6 +2848,19 @@ function freshSetterDecisionReply(memory, incoming, text, featureSettings = {}) 
   );
   memory.lead_profile = mergeLeadProfile(memory.lead_profile, profileSignals);
   backfillFreshSetterAnswer(memory, text);
+
+  if (
+    saysSoftDecline(text) &&
+    !prospectAskedQuestion(text) &&
+    !hasClearStartIntent(text) &&
+    !wantsAppointmentOrScheduling(text)
+  ) {
+    return appointmentSetterSoftDeclineReply(memory);
+  }
+
+  if (isStaleConversationReentry(memory, text)) {
+    return appointmentSetterStaleReentryReply(memory);
+  }
 
   if (
     lastAssistantAskedQualificationPermission(memory) &&
@@ -3231,6 +3323,40 @@ function appointmentSetterNoTruckReply() {
   };
 }
 
+function saysSoftDecline(text) {
+  return /\b(nah|no thanks|no thank you|i'?m good|im good|all good|not interested|not really|not right now|not at the moment|busy|too busy|maybe later|i'?ll pass|ill pass|i will pass|not ready|just browsing|just looking for now)\b/i.test(
+    String(text || "")
+  );
+}
+
+function markContentNurtureStop(memory, reason = "soft_decline") {
+  if (!memory) return;
+  memory.soft_declined = true;
+  memory.content_nurture_stopped = true;
+  memory.content_nurture_reason = reason;
+  memory.content_nurture_stopped_at = new Date().toISOString();
+  memory.follow_up = memory.follow_up && typeof memory.follow_up === "object"
+    ? memory.follow_up
+    : {};
+  memory.follow_up.active = false;
+  memory.follow_up.due_at = null;
+  markConversationState(memory, "CONTENT_NURTURE");
+}
+
+function appointmentSetterSoftDeclineReply(memory) {
+  markContentNurtureStop(memory);
+  const alreadySentResource = Boolean(memory?.youtube_link_sent || memory?.training_link_sent);
+
+  return {
+    reply: alreadySentResource
+      ? "No problem at all. If you ever want to circle back to it, just message me."
+      : `No problem at all. If you ever want to learn more about it, the YouTube channel is a good place to start:\n\n${YOUTUBE_URL}`,
+    needs_review: false,
+    suppress_follow_up: true,
+    handled: true
+  };
+}
+
 function appointmentSetterNoMoneyReply() {
   return {
     reply: `No pressure. The YouTube channel is probably the best place to start for now: ${YOUTUBE_URL}`,
@@ -3290,7 +3416,7 @@ function yesToCalendarLink(text) {
     .replace(/\s+/g, " ")
     .trim();
 
-  return /^(yes|yea|yeah|yep|yup|sure|suree+|of course|that's fine|thats fine|that is fine|that's cool|thats cool|cool|fine|k|ok|okay|absolutely|please|send it|send me the link|go ahead|sounds good|that works|bet|i'm interested|im interested|interested|i'm down|im down|lets do it|let's do it|when are you available|how do i book|can we talk|yes that is fine)\b/i.test(
+  return /^(yes|yea|yeah|yep|yup|sure|suree+|of course|that's fine|thats fine|that is fine|that's cool|thats cool|cool|fine|k|ok|okay|absolutely|please|send it|send me the link|go ahead|sounds good|that sounds good|that sounds good to me|that works|bet|i'm interested|im interested|interested|i'm down|im down|lets do it|let's do it|when are you available|how do i book|can we talk|yes that is fine)\b/i.test(
     cleanText
   );
 }
@@ -3476,7 +3602,7 @@ function yesToBusinessInterest(text) {
     .replace(/\s+/g, " ")
     .trim();
 
-  return /^(yes|yea|yeah|yep|yup|both|bet|cool|that's cool|thats cool|that's fine|thats fine|sounds good|that works|most definitely|definitely|for sure|sure|yea definitely|yeah definitely|i am|i'm|im|interested|i'm interested|im interested|trying|tryna|i'm tryna|im tryna|i want|wanting|wanna|ready|down|let's do it|lets do it)\b/.test(
+  return /^(yes|yea|yeah|yep|yup|both|bet|cool|that's cool|thats cool|that's fine|thats fine|sounds good|that sounds good|that sounds good to me|that works|most definitely|definitely|for sure|sure|yea definitely|yeah definitely|i am|i'm|im|interested|i'm interested|im interested|trying|tryna|i'm tryna|im tryna|i want|wanting|wanna|ready|down|let's do it|lets do it)\b/.test(
     cleanText
   );
 }
@@ -4625,6 +4751,99 @@ async function appendAutomationEvent(event = {}) {
   await writeStore(store);
 }
 
+function latestAutomationEvent(store, predicate = () => true) {
+  return (Array.isArray(store?.automationEvents) ? store.automationEvents : [])
+    .slice()
+    .reverse()
+    .find(predicate) || null;
+}
+
+function latestConversationTimestamp(store, fieldNames = []) {
+  let latest = "";
+
+  for (const memory of Object.values(store?.conversations || {})) {
+    for (const fieldName of fieldNames) {
+      const value = memory?.[fieldName];
+      if (!value) continue;
+      const currentMs = Date.parse(String(value));
+      const latestMs = latest ? Date.parse(latest) : 0;
+      if (Number.isFinite(currentMs) && currentMs > latestMs) {
+        latest = String(value);
+      }
+    }
+  }
+
+  return latest;
+}
+
+function automationHealth(store, featureSettings, businessKnowledge) {
+  const recentCutoffMs = Date.now() - 24 * 60 * 60 * 1000;
+  const isRecentEvent = (event) => {
+    const atMs = event?.created_at ? Date.parse(String(event.created_at)) : 0;
+    return Number.isFinite(atMs) && atMs >= recentCutoffMs;
+  };
+  const latestError = latestAutomationEvent(store, (event) => event.level === "error" && isRecentEvent(event));
+  const latestWarning = latestAutomationEvent(store, (event) => event.level === "warn" && isRecentEvent(event));
+  const latestSuccess = latestAutomationEvent(store, (event) => event.level === "success");
+  const checks = {
+    auto_send: isAutoSendEnabled(featureSettings),
+    follow_ups: isFollowUpsEnabled(featureSettings),
+    approval_mode: isApprovalModeEnabled(featureSettings),
+    openai_configured: Boolean(process.env.OPENAI_API_KEY),
+    zernio_configured: Boolean(process.env.ZERNIO_API_KEY),
+    supabase_configured: Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY),
+    knowledge_base_configured: Boolean(businessKnowledge),
+    provider_enabled: isProviderEnabled(store, "zernio")
+  };
+  const blockingIssues = [];
+
+  if (!checks.openai_configured) blockingIssues.push("OpenAI key missing");
+  if (!checks.zernio_configured) blockingIssues.push("Zernio key missing");
+  if (storeBackend() === "supabase" && !checks.supabase_configured) blockingIssues.push("Supabase env missing");
+  if (!checks.provider_enabled) blockingIssues.push("Zernio provider disabled");
+  if (!checks.knowledge_base_configured) blockingIssues.push("Knowledge base missing");
+  if (!checks.auto_send) blockingIssues.push("Auto-send is off");
+  if (!checks.follow_ups) blockingIssues.push("Follow-ups are off");
+
+  return {
+    level: blockingIssues.length || latestError ? "needs" : latestWarning ? "watch" : "ok",
+    title: blockingIssues.length
+      ? "Hands-free checks need attention"
+      : latestError
+        ? "Recent automation error"
+        : latestWarning
+          ? "Recent automation warning"
+          : "Hands-free checks look ready",
+    message: blockingIssues.length
+      ? blockingIssues.join(", ")
+      : latestError
+        ? latestError.message || "Check automation logs."
+        : latestWarning
+          ? latestWarning.message || "Check automation logs."
+          : "Core automation settings are configured.",
+    checks,
+    last_incoming_at: latestConversationTimestamp(store, ["last_incoming_at"]),
+    last_outgoing_at: latestConversationTimestamp(store, ["last_outgoing_at"]),
+    last_auto_sent_at: latestSuccess?.created_at || "",
+    last_error: latestError
+      ? {
+          at: latestError.created_at || "",
+          type: latestError.type || "",
+          message: latestError.message || "",
+          reason: latestError.reason || ""
+        }
+      : null,
+    last_warning: latestWarning
+      ? {
+          at: latestWarning.created_at || "",
+          type: latestWarning.type || "",
+          message: latestWarning.message || "",
+          reason: latestWarning.reason || ""
+        }
+      : null
+  };
+}
+
 function linkStatsForText(text) {
   const replyText = String(text || "");
   const hasYoutube =
@@ -4775,6 +4994,11 @@ function publicConversation(memory, settings = {}, store = null) {
     last_objection: memory.last_objection || "",
     last_objection_at: memory.last_objection_at || null,
     last_reply_reason: memory.last_reply_reason || "",
+    soft_declined: Boolean(memory.soft_declined),
+    content_nurture_stopped: Boolean(memory.content_nurture_stopped),
+    content_nurture_reason: memory.content_nurture_reason || "",
+    content_nurture_stopped_at: memory.content_nurture_stopped_at || null,
+    conversation_state: memory.conversation_state || "",
     reply_reason_history: Array.isArray(memory.reply_reason_history)
       ? memory.reply_reason_history.slice(-10)
       : [],
@@ -6382,7 +6606,12 @@ async function recordOutgoingForMemory(messageLike, replyText, options = {}) {
     });
   }
   updateQuestionMemory(memory, replyText);
-  scheduleFollowUpIfNeeded(memory, replyText, sentAtMs, featureSettings);
+  if (options.suppressFollowUp) {
+    memory.follow_up.active = false;
+    memory.follow_up.due_at = null;
+  } else {
+    scheduleFollowUpIfNeeded(memory, replyText, sentAtMs, featureSettings);
+  }
   refreshMemorySummary(memory);
 
   recordDailyStat(store, conversationKey, {
@@ -7060,11 +7289,15 @@ async function processIncomingReply(incoming, parsedPayload, conversationKey) {
       !holdReason &&
       !reviewRequired &&
       Boolean(replyText);
+    let ruleSendError = "";
 
     if (shouldAutoSendRuleReply) {
       try {
         await sendReplySequence(incoming, ruleBasedReply, featureSettings);
-        await recordOutgoingForMemory(incoming, replyText, { source: "auto" });
+        await recordOutgoingForMemory(incoming, replyText, {
+          source: "auto",
+          suppressFollowUp: Boolean(ruleBasedReply.suppress_follow_up)
+        });
         await appendAutomationEvent({
           level: "success",
           type: "auto_sent",
@@ -7076,6 +7309,16 @@ async function processIncomingReply(incoming, parsedPayload, conversationKey) {
         console.log(`Auto-sent rule-based reply for talk_id=${incoming.talk_id}.`);
         return;
       } catch (error) {
+        ruleSendError = error.message;
+        await appendAutomationEvent({
+          level: "error",
+          type: "zernio_send_failed",
+          message: "Rule-based auto-send failed.",
+          talk_id: incoming.talk_id,
+          contact_id: incoming.contact_id,
+          conversation_key: resolvedConversationKey,
+          reason: error.message
+        });
         console.error(`Rule-based auto-send failed for talk_id=${incoming.talk_id}:`, error);
       }
     }
@@ -7094,7 +7337,7 @@ async function processIncomingReply(incoming, parsedPayload, conversationKey) {
       reply: replyText,
       needs_review: true,
       reason: shouldAutoSendRuleReply
-        ? "Rule-based auto-send failed; saved for review."
+        ? `Rule-based auto-send failed; saved for review.${ruleSendError ? ` ${ruleSendError}` : ""}`
         : holdReason ||
           (reviewRequired
             ? "Approval mode is on, so this rule-based reply was saved for review."
@@ -7518,6 +7761,7 @@ app.get("/api/stats", async (req, res, next) => {
     const featureSettings = getFeatureSettings(store);
     const businessKnowledge = await loadKnowledgeBase();
     const delayBounds = humanSendDelayBounds(featureSettings);
+    const health = automationHealth(store, featureSettings, businessKnowledge);
 
     res.json({
       day,
@@ -7537,6 +7781,7 @@ app.get("/api/stats", async (req, res, next) => {
       },
       kpi_targets: analytics.targets,
       kpi_diagnosis: analytics.diagnosis,
+      automation_health: health,
       learning_review: {
         latest: latestLearningGuidance(store),
         cadence_days: Math.round(LEARNING_REVIEW_INTERVAL_MS / (24 * 60 * 60 * 1000)),
@@ -7553,6 +7798,7 @@ app.get("/api/stats", async (req, res, next) => {
         human_send_delay_enabled: isHumanSendDelayEnabled(featureSettings),
         conversation_memory_enabled: isConversationMemoryEnabled(featureSettings),
         follow_ups_enabled: isFollowUpsEnabled(featureSettings),
+        openai_configured: Boolean(process.env.OPENAI_API_KEY),
         zernio_configured: Boolean(process.env.ZERNIO_API_KEY),
         knowledge_base_configured: Boolean(businessKnowledge),
         manual_takeover_minutes: manualTakeoverMinutes(featureSettings),
@@ -12218,7 +12464,7 @@ function renderModernHomePage() {
       if (needsHumanAttention(conversation)) return "needs";
       if (conversation.appointment_status === "showed") return "showed";
       if (conversation.booking_confirmed) return "booked";
-      if (conversation.youtube_link_sent || conversation.training_link_sent || conversation.lead_status === "content_only") return "youtube";
+      if (conversation.soft_declined || conversation.youtube_link_sent || conversation.training_link_sent || conversation.lead_status === "content_only") return "youtube";
       if (conversation.call_pitched || conversation.booking_link_sent || conversation.booking_link_clicked) return "pitched";
       return "initial";
     }
@@ -12404,19 +12650,20 @@ function renderModernHomePage() {
       const kpis = data.setter_kpis || {};
       const diagnosis = data.kpi_diagnosis || {};
       const settings = data.settings || {};
+      const health = data.automation_health || {};
       const attentionCount = attentionConversations().length;
       const lastActivity = state.conversations
         .map(conversationTime)
         .filter(Boolean)
         .sort()
         .pop();
-      const healthy = Boolean(settings.auto_send && settings.zernio_configured && settings.knowledge_base_configured);
+      const healthy = health.level ? health.level === "ok" : Boolean(settings.auto_send && settings.zernio_configured && settings.knowledge_base_configured);
 
       mobileHealthEl.className = "bot-health " + (healthy ? "ok" : "needs");
       mobileHealthLabelEl.textContent = healthy ? "Bot Working" : "Bot Needs Attention";
       mobileHealthDetailEl.textContent = healthy
         ? "Last activity: " + (lastActivity ? relativeTime(lastActivity) + " ago" : "waiting for messages")
-        : "One or more connection/settings checks need attention.";
+        : (health.message || "One or more connection/settings checks need attention.");
       mobileViewIssueEl.hidden = healthy;
 
       mobileCallsBookedEl.textContent = kpis.calls_booked || 0;
@@ -12444,10 +12691,13 @@ function renderModernHomePage() {
     }
 
     function renderStatuses(settings) {
-      botStatusEl.textContent = "OpenAI Bot: " + (settings.auto_send ? "Active" : "Draft Mode");
+      botStatusEl.textContent = "OpenAI Bot: " + (settings.openai_configured ? (settings.auto_send ? "Active" : "Draft Mode") : "Needs Key");
       webhookStatusEl.textContent = "IG Webhook: " + (settings.zernio_configured ? "Operational" : "Needs Key");
       flagsEl.innerHTML = "";
       [
+        ["OpenAI key", settings.openai_configured],
+        ["Zernio key", settings.zernio_configured],
+        ["Supabase", settings.supabase_configured],
         ["Memory", settings.conversation_memory_enabled],
         ["Approval mode", settings.approval_mode],
         ["Follow-ups", settings.follow_ups_enabled],
