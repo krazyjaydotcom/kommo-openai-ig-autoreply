@@ -2858,6 +2858,10 @@ function freshSetterDecisionReply(memory, incoming, text, featureSettings = {}) 
     return appointmentSetterSoftDeclineReply(memory);
   }
 
+  if (saysIncarcerated(text)) {
+    return appointmentSetterIncarceratedReply(memory);
+  }
+
   if (isStaleConversationReentry(memory, text)) {
     return appointmentSetterStaleReentryReply(memory);
   }
@@ -3351,6 +3355,32 @@ function appointmentSetterSoftDeclineReply(memory) {
     reply: alreadySentResource
       ? "No problem at all. If you ever want to circle back to it, just message me."
       : `No problem at all. If you ever want to learn more about it, the YouTube channel is a good place to start:\n\n${YOUTUBE_URL}`,
+    needs_review: false,
+    suppress_follow_up: true,
+    handled: true
+  };
+}
+
+function saysIncarcerated(text) {
+  return /\b(incarcerated|in jail|in prison|locked up|locked down|behind bars|doing time|when i get out|when i'm out|when im out|currently in custody|county jail|state prison|federal prison)\b/i.test(
+    String(text || "")
+  );
+}
+
+function appointmentSetterIncarceratedReply(memory) {
+  if (memory) {
+    memory.not_fit_reason = "incarcerated";
+    memory.follow_up = memory.follow_up && typeof memory.follow_up === "object"
+      ? memory.follow_up
+      : {};
+    memory.follow_up.active = false;
+    memory.follow_up.due_at = null;
+    markConversationState(memory, "NOT_FIT");
+  }
+
+  return {
+    reply:
+      `I respect that. While you're in there, the best move is probably to study the free content first.\n\nThe YouTube channel is a good place to start: ${YOUTUBE_URL}`,
     needs_review: false,
     suppress_follow_up: true,
     handled: true
