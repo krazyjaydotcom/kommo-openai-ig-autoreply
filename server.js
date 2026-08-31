@@ -137,6 +137,7 @@ Rules:
 17. After someone confirms they booked, send this free training playlist once so they can better understand the opportunity:
    https://www.youtube.com/playlist?list=PLPFyOjF-83nJ0B5xCreYqoQzcGx-SQsvs
 18. After someone confirms they booked, do not send the booking link again and do not keep qualifying them.
+19. After the calendar link sequence is sent, hand the thread off for manual follow-up. Do not keep sending automated nudges unless the owner turns automation back on for that prospect.
 
 Core appointment-setting objective:
 - Optimize for qualified conversations, qualified appointments, shows, and enrollments. Do not optimize merely for the number of calendar links sent.
@@ -193,6 +194,8 @@ Reply length rules:
 - Default to 1 short sentence.
 - Use 2 short sentences only when needed.
 - Only use multiple lines when sending the booking link.
+- Keep most replies under 240 characters unless answering price, income, or sending a link.
+- If a reply needs more than 2 sentences, set needs_review true instead of auto-sending.
 - Do not explain the whole program in DMs.
 - Do not ask more than one question.
 - If the prospect gives details about their market, truck, job, location, money, yards, contracts, prices, or current situation, do not ignore those details.
@@ -2499,7 +2502,7 @@ function appointmentSetterZoomInviteReply(memory, date = new Date()) {
 
   return {
     reply:
-      `${ack} If you're trying to build something that gives you more freedom, the best next step is for us to look at your market together.\n\nWould you be open to hopping on a quick Zoom ${weekPhrase} so we can look at ${market}, answer your questions, and see if the academy is a good fit?`,
+      `${ack} The best next step is to look at your market together.\n\nWould you be open to a quick Zoom ${weekPhrase} so we can look at ${market} and see if the academy is a good fit?`,
     needs_review: false,
     handled: true
   };
@@ -2782,13 +2785,50 @@ function asksIncomePotential(text) {
 
 function appointmentSetterIncomeReply(memory) {
   const suffix = memory?.booking_link_sent
-    ? "That's one of the main things we can look at on the call once you grab a time."
-    : "That's one of the main reasons I like doing the Zoom, so we can look at your market instead of guessing.";
+    ? "We can talk through that on the call once you grab a time."
+    : "That's why I like looking at the market together instead of guessing.";
 
   return {
     reply:
-      `It really depends on your market, buyers, and how consistent you are. As an example, my own business runs around $400k/year in revenue and I personally pay myself around $75k/year, but it did not start there and results vary.\n\n${suffix}`,
+      `It depends on your market, buyers, and consistency. My own business does around $400k/year in revenue, but results vary.\n\n${suffix}`,
     needs_review: false,
+    handled: true
+  };
+}
+
+function asksAcademyDefinition(text) {
+  const value = String(text || "").trim();
+  return (
+    /\bacademy\??$/i.test(value) ||
+    /\b(what(?:'s| is)?|tell me about|explain).{0,40}\b(academy|program|pallet pros)\b/i.test(value) ||
+    /\b(what do you teach|what are you showing|what do i learn)\b/i.test(value)
+  );
+}
+
+function asksCardOrPaymentConcern(text) {
+  return /\b(card|credit card|debit card|payment info|billing|charged|charge|enter my card|put my card|why.*card)\b/i.test(
+    String(text || "")
+  );
+}
+
+function appointmentSetterAcademyReply(memory) {
+  return {
+    reply: memory?.booking_link_sent
+      ? "The academy helps people learn how to source, move, and sell pallets. We can cover the details on the call if you grab a time."
+      : "The academy helps people learn how to source, move, and sell pallets in their area. Is that something you'd want to learn more about?",
+    needs_review: false,
+    handled: true
+  };
+}
+
+function appointmentSetterCardConcernReply(memory) {
+  return {
+    reply: memory?.booking_link_sent
+      ? "I understand. The calendar may ask that to hold the spot, but you do not have to book if it feels off. I can help manually from here."
+      : "I understand. We can keep it simple and talk through the next step first.",
+    needs_review: false,
+    suppress_follow_up: true,
+    pause_after_send: true,
     handled: true
   };
 }
@@ -2796,6 +2836,14 @@ function appointmentSetterIncomeReply(memory) {
 function appointmentSetterQuestionReply(memory, incoming, text) {
   if (asksAccessibilityAccommodation(text)) {
     return appointmentSetterAccessibilityReply();
+  }
+
+  if (asksCardOrPaymentConcern(text)) {
+    return appointmentSetterCardConcernReply(memory);
+  }
+
+  if (asksAcademyDefinition(text)) {
+    return appointmentSetterAcademyReply(memory);
   }
 
   if (asksPriceOrCost(text)) {
@@ -2928,10 +2976,6 @@ function freshSetterDecisionReply(memory, incoming, text, featureSettings = {}) 
     return appointmentSetterCalendarLinkReply(incoming, memory);
   }
 
-  if (lastAssistantInvitedToZoom(memory) && zoomAcceptance(text)) {
-    return appointmentSetterCalendarLinkReply(incoming, memory);
-  }
-
   if (directBookingIntent(text)) {
     return appointmentSetterCalendarLinkReply(incoming, memory);
   }
@@ -2939,6 +2983,10 @@ function freshSetterDecisionReply(memory, incoming, text, featureSettings = {}) 
   const replyToQuestion = appointmentSetterQuestionReply(memory, incoming, text);
   if (replyToQuestion) {
     return replyToQuestion;
+  }
+
+  if (lastAssistantInvitedToZoom(memory) && zoomAcceptance(text)) {
+    return appointmentSetterCalendarLinkReply(incoming, memory);
   }
 
   if (
@@ -3236,6 +3284,8 @@ function appointmentSetterCalendarLinkReply(messageLike, memory = null) {
     messages,
     message_delays_ms: [0, 10000, 4000],
     needs_review: false,
+    suppress_follow_up: true,
+    pause_after_send: true,
     handled: true
   };
 }
@@ -3269,7 +3319,7 @@ function appointmentSetterContentReply() {
 function appointmentSetterCostReply() {
   return {
     reply:
-      "We have a few different options depending on where you're starting and the level of help you need. Some options start as low as $37/month, and more hands-on help for existing business owners can go up to $5,500.\n\nWant me to send you the calendar link so we can point you in the right direction?",
+      "It depends on where you're starting and how much help you need. Options can start around $37/month and go up for hands-on help.\n\nWant me to send the calendar so we can point you in the right direction?",
     needs_review: false,
     handled: true
   };
@@ -3287,7 +3337,7 @@ function appointmentSetterHowItWorksReply() {
 function appointmentSetterCallAboutReply() {
   return {
     reply:
-      "We'll take a look at your local market, answer your questions, and see if Pallet Pros Academy makes sense for what you're trying to build.\n\nWant me to send you the calendar link?",
+      "We'll look at your local market, answer your questions, and see if Pallet Pros Academy makes sense for your goals.\n\nWant me to send the calendar link?",
     needs_review: false,
     handled: true
   };
@@ -3937,6 +3987,26 @@ function cancelFollowUp(memory) {
 
   memory.follow_up.active = false;
   memory.follow_up.due_at = null;
+}
+
+function pauseAutomationAfterCalendarSend(store, memory, messageLike, sentAt) {
+  if (!store || !memory) {
+    return;
+  }
+
+  const talkId = memory.current_talk_id || messageLike?.talk_id || "";
+  const settings = getConversationSettings(store, talkId);
+  const reason = "Calendar link sequence sent; manual follow-up recommended.";
+
+  cancelFollowUp(memory);
+  memory.ai_paused = true;
+  memory.manual_takeover_since = sentAt;
+  memory.manual_takeover_until = null;
+  memory.post_calendar_manual_handoff = true;
+  settings.paused = true;
+  settings.manual_takeover_since = sentAt;
+  settings.manual_takeover_until = null;
+  settings.manual_takeover_reason = reason;
 }
 
 function getDailyStats(store, day = todayKey()) {
@@ -6636,7 +6706,11 @@ async function recordOutgoingForMemory(messageLike, replyText, options = {}) {
     });
   }
   updateQuestionMemory(memory, replyText);
-  if (options.suppressFollowUp) {
+  if (options.pauseAfterSend || options.pause_after_send || linkStats.booking_links_sent) {
+    pauseAutomationAfterCalendarSend(store, memory, messageLike, sentAt);
+  }
+
+  if (options.suppressFollowUp || linkStats.booking_links_sent) {
     memory.follow_up.active = false;
     memory.follow_up.due_at = null;
   } else {
@@ -7326,7 +7400,8 @@ async function processIncomingReply(incoming, parsedPayload, conversationKey) {
         await sendReplySequence(incoming, ruleBasedReply, featureSettings);
         await recordOutgoingForMemory(incoming, replyText, {
           source: "auto",
-          suppressFollowUp: Boolean(ruleBasedReply.suppress_follow_up)
+          suppressFollowUp: Boolean(ruleBasedReply.suppress_follow_up),
+          pauseAfterSend: Boolean(ruleBasedReply.pause_after_send)
         });
         await appendAutomationEvent({
           level: "success",
