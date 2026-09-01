@@ -51,7 +51,8 @@ const FOLLOW_UP_WINDOW_MS = 23 * 60 * 60 * 1000;
 const STALE_REENTRY_WINDOW_MS = 21 * 24 * 60 * 60 * 1000;
 const LEARNING_REVIEW_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
 const LEARNING_REVIEW_CHECK_MS = 60 * 60 * 1000;
-const APP_BUILD_MARKER = "2026-08-30-handsfree-guardrails-v1";
+const CONVERSATION_CONTROLLER_VERSION = 2;
+const APP_BUILD_MARKER = "2026-09-01-conversation-controller-v2";
 const DEFAULT_KPI_TARGETS = {
   daily_touch_points_target: 100,
   touch_pitch_min_rate: 10,
@@ -96,7 +97,7 @@ const DEFAULT_STORE = {
     zernio: { enabled: true }
   },
   featureSettings: {
-    auto_send: true,
+    auto_send: false,
     follow_ups: true
   },
   conversations: {},
@@ -112,6 +113,7 @@ const DEFAULT_STORE = {
 };
 let storeWriteQueue = Promise.resolve();
 const pendingIncomingReplies = new Map();
+const conversationProcessingQueues = new Map();
 
 const HOUSE_RULES = `You are replying to Instagram DMs for Pallet Pros Academy.
 
@@ -219,11 +221,14 @@ Standing facts:
 
 Return only valid JSON in this exact shape:
 {
+  "action": "answer_question",
+  "confidence": 0.95,
+  "answered_question": true,
   "reply": "short reply text",
   "needs_review": false
 }
 
-Set needs_review to true when the reply should be reviewed before sending.`;
+Choose action only from the conversation_controller.allowed_actions supplied with the message. Confidence must be between 0 and 1. Set answered_question true only when the reply directly addresses the prospect's question. Set needs_review to true when the reply should be reviewed before sending.`;
 
 const HUMAN_STYLE_RULES = `Style guidance:
 - Write like a real person sending an Instagram DM.
@@ -836,6 +841,65 @@ function replyRepeatsRecentAssistant(memory, replyText) {
   });
 }
 
+function countQuestions(text) {
+  return (String(text || "").match(/\?/g) || []).length;
+}
+
+function replySafetyReview(memory, incoming, replyLike) {
+  const replyText = joinedReplyText(replyLike);
+  const messages = replyMessages(replyLike);
+  const incomingText = String(incoming?.text || "");
+  const expectsCalendar =
+    (lastAssistantInvitedToZoom(memory) || lastAssistantAskedForCalendarPermission(memory)) &&
+    schedulingAcceptance(incomingText) &&
+    !memory?.booking_link_sent;
+
+  if (expectsCalendar && !containsBookingLink(replyText)) {
+    return {
+      safe: true,
+      repaired: appointmentSetterCalendarLinkReply(incoming, memory),
+      reason: "Repaired accepted call invitation into the required calendar sequence."
+    };
+  }
+
+  if (!replyText) {
+    return { safe: false, repaired: null, reason: "Reply was empty." };
+  }
+
+  if (messages.length > 3) {
+    return { safe: false, repaired: null, reason: "Reply contained too many message parts." };
+  }
+
+  if (messages.some((message) => message.length > 520)) {
+    return { safe: false, repaired: null, reason: "Reply was too long for an Instagram DM." };
+  }
+
+  if (countQuestions(replyText) > 1) {
+    return { safe: false, repaired: null, reason: "Reply asked more than one question." };
+  }
+
+  if (/\b(?:bro|brother|my man)\b/i.test(replyText)) {
+    return { safe: false, repaired: null, reason: "Reply used gendered familiarity without evidence." };
+  }
+
+  if (
+    memory?.booking_link_sent &&
+    containsBookingLink(replyText) &&
+    !asksToResendCalendarLink(incomingText)
+  ) {
+    return { safe: false, repaired: null, reason: "Calendar link was already sent." };
+  }
+
+  if (
+    replyRepeatsRecentAssistant(memory, replyText) &&
+    !asksToResendCalendarLink(incomingText)
+  ) {
+    return { safe: false, repaired: null, reason: "Reply repeated a recent assistant message." };
+  }
+
+  return { safe: true, repaired: null, reason: "" };
+}
+
 function hasRecentAssistantContext(memory, thread = []) {
   const memoryHasAssistant = recentAssistantMessages(memory, 3).length > 0;
   const threadHasAssistant = (Array.isArray(thread) ? thread : [])
@@ -1366,6 +1430,14 @@ function getConversationMemory(store, messageLike) {
       booking_confirmed: false,
       lead_profile: {},
       conversation_state: "INITIAL",
+      controller: {
+        version: CONVERSATION_CONTROLLER_VERSION,
+        stage: "INITIAL",
+        expected_action: "identify_intent",
+        last_decision: "",
+        last_confidence: 1,
+        updated_at: null
+      },
       lead_status: "cold",
       ai_paused: false,
       manual_takeover_until: null,
@@ -1438,6 +1510,18 @@ function getConversationMemory(store, messageLike) {
       ? memory.lead_profile
       : {};
   memory.conversation_state = memory.conversation_state || "INITIAL";
+  memory.controller =
+    memory.controller && typeof memory.controller === "object"
+      ? memory.controller
+      : {};
+  memory.controller.version = CONVERSATION_CONTROLLER_VERSION;
+  memory.controller.stage = memory.controller.stage || memory.conversation_state;
+  memory.controller.expected_action = memory.controller.expected_action || "identify_intent";
+  memory.controller.last_decision = memory.controller.last_decision || "";
+  memory.controller.last_confidence = Number.isFinite(Number(memory.controller.last_confidence))
+    ? Number(memory.controller.last_confidence)
+    : 1;
+  memory.controller.updated_at = memory.controller.updated_at || null;
   memory.lead_status = classifyLeadStatus(memory);
   memory.manual_takeover_until = memory.manual_takeover_until || null;
   memory.manual_takeover_since = memory.manual_takeover_since || null;
@@ -2344,6 +2428,205 @@ function markCallInvited(memory) {
   markConversationState(memory, "CALL_INVITED");
 }
 
+function controllerStage(memory) {
+  if (memory?.booking_confirmed) return "BOOKED";
+  if (memory?.booking_link_sent) return "MANUAL_HANDOFF";
+  if (memory?.content_nurture_stopped) return "NURTURE_STOPPED";
+  if (lastAssistantInvitedToZoom(memory)) return "CALL_INVITED";
+  if (qualificationComplete(memory)) return "QUALIFIED";
+  if (hasQualificationPermission(memory) || qualificationQuestionWasAsked(memory)) {
+    return "QUALIFYING";
+  }
+  if (qualificationPermissionRequested(memory)) return "PERMISSION_REQUESTED";
+  if (
+    memory?.conversation_state === "PALLET_INTEREST_DETECTED" ||
+    memory?.lead_profile?.intent === "start_business"
+  ) {
+    return "PALLET_INTEREST_DETECTED";
+  }
+  if (memory?.conversation_state === "REOPENED") return "REOPENED";
+  return "INITIAL";
+}
+
+function controllerExpectedAction(memory, stage = controllerStage(memory)) {
+  if (["BOOKED", "MANUAL_HANDOFF", "NURTURE_STOPPED"].includes(stage)) {
+    return "manual_handoff";
+  }
+  if (stage === "CALL_INVITED") return "accept_call";
+  if (stage === "QUALIFIED") return "invite_call";
+  if (stage === "PERMISSION_REQUESTED") return "grant_qualification_permission";
+  if (stage === "QUALIFYING") {
+    const next = missingQualificationKeys(memory)[0];
+    return next ? `answer_${next}` : "invite_call";
+  }
+  if (stage === "PALLET_INTEREST_DETECTED") return "request_qualification_permission";
+  return "identify_intent";
+}
+
+function controllerAllowedActions(memory, stage = controllerStage(memory)) {
+  const common = ["answer_question", "soft_decline", "clarify", "manual_handoff"];
+  if (stage === "BOOKED") return ["acknowledge_booking", "answer_question", "manual_handoff"];
+  if (stage === "MANUAL_HANDOFF") return ["answer_question", "manual_handoff"];
+  if (stage === "NURTURE_STOPPED") return ["answer_question", "manual_handoff"];
+  if (stage === "CALL_INVITED") return ["send_calendar", ...common];
+  if (stage === "QUALIFIED") return ["invite_call", ...common];
+  if (stage === "PERMISSION_REQUESTED") {
+    return ["grant_qualification_permission", "continue_qualification", ...common];
+  }
+  if (stage === "QUALIFYING") return ["continue_qualification", "invite_call", ...common];
+  if (stage === "PALLET_INTEREST_DETECTED") {
+    return ["request_qualification_permission", "continue_qualification", ...common];
+  }
+  return [
+    "start_business",
+    "content_only",
+    "offer_training",
+    "send_training",
+    "send_calendar",
+    ...common
+  ];
+}
+
+function normalizeTurnText(text) {
+  return String(text || "")
+    .toLowerCase()
+    .replace(/[^\w\s']/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function broadAgreement(text) {
+  const value = normalizeTurnText(text);
+  return /^(?:y+e+s+|y+e+a+h*|y+e+p+|y+u+p+|sure+|sure thing|of course|absolutely|definitely|most definitely|for sure|fasho|fa sho|bet|cool|that'?s cool|thats cool|that'?s fine|thats fine|sounds good|that sounds good|that works|works for me|i'?m down|im down|go ahead|send it|let'?s do it|lets do it|i like the sound of that)(?:\b|$)/i.test(
+    value
+  );
+}
+
+function schedulingAcceptance(text) {
+  const value = normalizeTurnText(text);
+  return broadAgreement(value) ||
+    /^(?:when|what time|what day|when are you available|how do i book|where do i book|can we talk|let'?s talk|lets talk)(?:\b|$)/i.test(value) ||
+    /\b(?:ready to talk|ready for the call|send (?:me )?(?:the )?link|drop (?:the )?link)\b/i.test(value);
+}
+
+function palletBusinessTruckContext(text) {
+  const value = String(text || "");
+  return (
+    /\b(?:truck driver|driver|driving|cdl)\b/i.test(value) &&
+    (/\bpallets?\b/i.test(value) || hasClearStartIntent(value)) &&
+    /\b(?:collect|pick up|pickup|sell|start|business|learn|interested|how.*work|want|wanna)\b/i.test(value)
+  );
+}
+
+function interpretSetterTurn(memory, text) {
+  const stage = controllerStage(memory);
+  const expectedAction = controllerExpectedAction(memory, stage);
+  const askedQuestion = prospectAskedQuestion(text);
+  let action = "unknown";
+  let confidence = 0.55;
+
+  if (saysIncarcerated(text)) {
+    action = "disqualify_incarcerated";
+    confidence = 0.99;
+  } else if (saysSoftDecline(text)) {
+    action = "soft_decline";
+    confidence = 0.97;
+  } else if (wantsContentOnly(text)) {
+    action = "content_only";
+    confidence = 0.98;
+  } else if (directBookingIntent(text)) {
+    action = "send_calendar";
+    confidence = 0.99;
+  } else if (expectedAction === "accept_call" && schedulingAcceptance(text)) {
+    action = "send_calendar";
+    confidence = 0.98;
+  } else if (
+    expectedAction === "grant_qualification_permission" &&
+    (broadAgreement(text) || yesToBusinessInterest(text))
+  ) {
+    action = "grant_qualification_permission";
+    confidence = 0.97;
+  } else if (lastAssistantAskedForTrainingPermission(memory) && broadAgreement(text)) {
+    action = "send_training";
+    confidence = 0.97;
+  } else if (askedQuestion) {
+    action = "answer_question";
+    confidence = 0.9;
+  } else if (hasClearStartIntent(text)) {
+    action = "start_business";
+    confidence = 0.96;
+  } else if (palletBusinessTruckContext(text)) {
+    action = "start_business";
+    confidence = 0.94;
+  } else if (expectedAction.startsWith("answer_") && hasQualificationContinuationSignal(text)) {
+    action = expectedAction;
+    confidence = 0.91;
+  } else if (broadAgreement(text) && expectedAction !== "identify_intent") {
+    action = expectedAction;
+    confidence = 0.86;
+  }
+
+  return {
+    version: CONVERSATION_CONTROLLER_VERSION,
+    stage,
+    expected_action: expectedAction,
+    action,
+    confidence,
+    asked_question: askedQuestion
+  };
+}
+
+function controllerAllowedActionsForTurn(memory, text) {
+  const stage = controllerStage(memory);
+  const interpretation = interpretSetterTurn(memory, text);
+  const base = controllerAllowedActions(memory, stage);
+
+  if (interpretation.action === "send_calendar") {
+    return Array.from(new Set(["send_calendar", "answer_question", "clarify"]));
+  }
+  if (interpretation.action === "soft_decline") {
+    return ["soft_decline", "manual_handoff"];
+  }
+  if (interpretation.action === "content_only") {
+    return ["content_only", "manual_handoff"];
+  }
+  if (interpretation.action === "answer_question") {
+    return base.filter((action) =>
+      ["answer_question", "clarify", "offer_training", "manual_handoff"].includes(action)
+    );
+  }
+  if (stage === "INITIAL" || stage === "REOPENED") {
+    return base.filter((action) => action !== "send_calendar");
+  }
+
+  return base;
+}
+
+function recordControllerDecision(memory, interpretation, decision = "") {
+  if (!memory) return;
+  memory.controller = memory.controller && typeof memory.controller === "object"
+    ? memory.controller
+    : {};
+  memory.controller.version = CONVERSATION_CONTROLLER_VERSION;
+  memory.controller.stage = controllerStage(memory);
+  memory.controller.expected_action = controllerExpectedAction(
+    memory,
+    memory.controller.stage
+  );
+  memory.controller.last_interpretation =
+    interpretation?.action || memory.controller.last_interpretation || "unknown";
+  memory.controller.last_decision = decision || memory.controller.last_decision || "";
+  memory.controller.last_confidence = interpretation
+    ? interpretationConfidence(interpretation)
+    : Number(memory.controller.last_confidence || 0);
+  memory.controller.updated_at = new Date().toISOString();
+}
+
+function interpretationConfidence(interpretation) {
+  const value = Number(interpretation?.confidence);
+  return Number.isFinite(value) ? value : 0;
+}
+
 function latestAssistantText(memory) {
   const messages = Array.isArray(memory?.last_messages) ? memory.last_messages : [];
   for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -2395,7 +2678,7 @@ function lastAssistantInvitedToZoom(memory) {
 }
 
 function zoomAcceptance(text) {
-  return yesToCalendarLink(text) || /\b(open to it|i'?m all for it|all for it|that makes sense|works for me|let'?s talk|lets talk|we can|i can do that|sounds like a plan)\b/i.test(
+  return schedulingAcceptance(text) || /\b(open to it|i'?m all for it|all for it|that makes sense|works for me|let'?s talk|lets talk|we can|i can do that|sounds like a plan)\b/i.test(
     String(text || "")
   );
 }
@@ -2443,6 +2726,16 @@ function appointmentSetterQualificationPermissionReply(memory) {
   return {
     reply:
       "Sure. Is it cool if I ask you a few questions to help determine the best path for you?",
+    needs_review: false,
+    handled: true
+  };
+}
+
+function appointmentSetterPalletTruckInterestReply(memory) {
+  markQualificationPermissionRequested(memory);
+  return {
+    reply:
+      "The business is about sourcing, moving, and selling pallets, so you're already getting exposure to it. Is it cool if I ask you a few questions to help determine the best path for you?",
     needs_review: false,
     handled: true
   };
@@ -2530,7 +2823,7 @@ function qualificationInterruptionReply(memory, text) {
 
   if (asksAccessibilityAccommodation(text)) {
     return appointmentSetterAccessibilityReply();
-  } else if (seemsToWantJobOrDrivingWork(text)) {
+  } else if (seemsToWantJobOrDrivingWork(text) && !palletBusinessTruckContext(text)) {
     return appointmentSetterJobSeekerReply();
   } else if (saysNoMoneyOrCapital(text)) {
     return appointmentSetterNoMoneyReply();
@@ -2896,6 +3189,8 @@ function freshSetterDecisionReply(memory, incoming, text, featureSettings = {}) 
   );
   memory.lead_profile = mergeLeadProfile(memory.lead_profile, profileSignals);
   backfillFreshSetterAnswer(memory, text);
+  const interpretation = interpretSetterTurn(memory, text);
+  recordControllerDecision(memory, interpretation);
 
   if (
     saysSoftDecline(text) &&
@@ -2916,7 +3211,7 @@ function freshSetterDecisionReply(memory, incoming, text, featureSettings = {}) 
 
   if (
     lastAssistantAskedQualificationPermission(memory) &&
-    (yesToCalendarLink(text) || yesToBusinessInterest(text))
+    interpretation.action === "grant_qualification_permission"
   ) {
     markQualificationPermissionGranted(memory);
     return qualificationComplete(memory)
@@ -2932,8 +3227,13 @@ function freshSetterDecisionReply(memory, incoming, text, featureSettings = {}) 
     return appointmentSetterContentReply();
   }
 
+  if (isFriendlyNonLeadReply(text) && !prospectAskedQuestion(text)) {
+    return appointmentSetterFriendlyCloseReply();
+  }
+
   if (
     seemsToWantJobOrDrivingWork(text) &&
+    !palletBusinessTruckContext(text) &&
     !lastAssistantAskedGoal(memory) &&
     !hasClearStartIntent(text) &&
     !wantsAppointmentOrScheduling(text)
@@ -2952,7 +3252,7 @@ function freshSetterDecisionReply(memory, incoming, text, featureSettings = {}) 
   if (
     !memory.booking_link_sent &&
     lastAssistantAskedForTrainingPermission(memory) &&
-    (yesToBusinessInterest(text) || yesToCalendarLink(text))
+    interpretation.action === "send_training"
   ) {
     return appointmentSetterTrainingLinkReply();
   }
@@ -2972,7 +3272,10 @@ function freshSetterDecisionReply(memory, incoming, text, featureSettings = {}) 
     }
   }
 
-  if (lastAssistantAskedForCalendarPermission(memory) && yesToCalendarLink(text)) {
+  if (
+    lastAssistantAskedForCalendarPermission(memory) &&
+    (interpretation.action === "send_calendar" || schedulingAcceptance(text))
+  ) {
     return appointmentSetterCalendarLinkReply(incoming, memory);
   }
 
@@ -2980,12 +3283,24 @@ function freshSetterDecisionReply(memory, incoming, text, featureSettings = {}) 
     return appointmentSetterCalendarLinkReply(incoming, memory);
   }
 
+  if (
+    palletBusinessTruckContext(text) &&
+    !hasQualificationPermission(memory) &&
+    !qualificationPermissionRequested(memory) &&
+    !qualificationQuestionWasAsked(memory)
+  ) {
+    return appointmentSetterPalletTruckInterestReply(memory);
+  }
+
   const replyToQuestion = appointmentSetterQuestionReply(memory, incoming, text);
   if (replyToQuestion) {
     return replyToQuestion;
   }
 
-  if (lastAssistantInvitedToZoom(memory) && zoomAcceptance(text)) {
+  if (
+    lastAssistantInvitedToZoom(memory) &&
+    (interpretation.action === "send_calendar" || zoomAcceptance(text))
+  ) {
     return appointmentSetterCalendarLinkReply(incoming, memory);
   }
 
@@ -3006,6 +3321,7 @@ function freshSetterDecisionReply(memory, incoming, text, featureSettings = {}) 
   }
 
   const seriousInterest =
+    interpretation.action === "start_business" ||
     hasClearStartIntent(text) ||
     (lastAssistantAskedContentOrBusiness(memory) && yesToBusinessInterest(text)) ||
     qualificationPermissionRequested(memory) ||
@@ -3383,6 +3699,23 @@ function saysSoftDecline(text) {
   );
 }
 
+function isFriendlyNonLeadReply(text) {
+  const value = normalizeTurnText(text);
+  if (!value || hasClearStartIntent(text) || wantsAppointmentOrScheduling(text)) return false;
+  return /^(?:thank you|thanks|appreciate it|i appreciate it|blessings|keep going|love the content|good content|just showing support|small projects|building small projects)(?:\b|$)/i.test(
+    value
+  );
+}
+
+function appointmentSetterFriendlyCloseReply() {
+  return {
+    reply: "I appreciate that. Keep rocking with the content.",
+    needs_review: false,
+    suppress_follow_up: true,
+    handled: true
+  };
+}
+
 function markContentNurtureStop(memory, reason = "soft_decline") {
   if (!memory) return;
   memory.soft_declined = true;
@@ -3496,9 +3829,8 @@ function yesToCalendarLink(text) {
     .replace(/\s+/g, " ")
     .trim();
 
-  return /^(yes|yea|yeah|yep|yup|sure|suree+|of course|that's fine|thats fine|that is fine|that's cool|thats cool|cool|fine|k|ok|okay|absolutely|please|send it|send me the link|go ahead|sounds good|that sounds good|that sounds good to me|that works|bet|i'm interested|im interested|interested|i'm down|im down|lets do it|let's do it|when are you available|how do i book|can we talk|yes that is fine)\b/i.test(
-    cleanText
-  );
+  return broadAgreement(cleanText) ||
+    /^(?:k|ok|okay|fine|please|interested|i'?m interested|im interested|when are you available|how do i book|can we talk|yes that is fine)(?:\b|$)/i.test(cleanText);
 }
 
 function wantsCalendarLinkNow(text) {
@@ -3682,9 +4014,8 @@ function yesToBusinessInterest(text) {
     .replace(/\s+/g, " ")
     .trim();
 
-  return /^(yes|yea|yeah|yep|yup|both|bet|cool|that's cool|thats cool|that's fine|thats fine|sounds good|that sounds good|that sounds good to me|that works|most definitely|definitely|for sure|sure|yea definitely|yeah definitely|i am|i'm|im|interested|i'm interested|im interested|trying|tryna|i'm tryna|im tryna|i want|wanting|wanna|ready|down|let's do it|lets do it)\b/.test(
-    cleanText
-  );
+  return broadAgreement(cleanText) ||
+    /^(?:both|i am|i'?m|im|interested|i'?m interested|im interested|trying|tryna|i'?m tryna|im tryna|i want|wanting|wanna|ready|down|yea definitely|yeah definitely)(?:\b|$)/.test(cleanText);
 }
 
 function hasRichProspectContext(text) {
@@ -3903,7 +4234,17 @@ function appointmentSetterRuleReply(memory, incoming, featureSettings = {}) {
     return null;
   }
 
-  return freshSetterDecisionReply(memory, incoming, text, featureSettings);
+  const interpretation = interpretSetterTurn(memory, text);
+  const reply = freshSetterDecisionReply(memory, incoming, text, featureSettings);
+  return reply
+    ? {
+        ...reply,
+        controller_action: interpretation.action,
+        controller_confidence: interpretation.confidence,
+        controller_stage: interpretation.stage,
+        controller_expected_action: interpretation.expected_action
+      }
+    : null;
 }
 
 function isBookingConfirmation(text) {
@@ -4982,6 +5323,13 @@ function memoryForPrompt(memory, settings) {
     booking_link_clicked: Boolean(memory.booking_link_clicked),
     booking_link_clicked_at: memory.booking_link_clicked_at || null,
     booking_confirmed: Boolean(memory.booking_confirmed),
+    controller: {
+      ...(memory.controller || {}),
+      version: CONVERSATION_CONTROLLER_VERSION,
+      stage: controllerStage(memory),
+      expected_action: controllerExpectedAction(memory),
+      allowed_actions: controllerAllowedActions(memory)
+    },
     follow_up_count: Number(memory.follow_up?.count || 0)
   };
 }
@@ -5099,6 +5447,12 @@ function publicConversation(memory, settings = {}, store = null) {
     content_nurture_reason: memory.content_nurture_reason || "",
     content_nurture_stopped_at: memory.content_nurture_stopped_at || null,
     conversation_state: memory.conversation_state || "",
+    controller: {
+      ...(memory.controller || {}),
+      version: CONVERSATION_CONTROLLER_VERSION,
+      stage: controllerStage(memory),
+      expected_action: controllerExpectedAction(memory)
+    },
     reply_reason_history: Array.isArray(memory.reply_reason_history)
       ? memory.reply_reason_history.slice(-10)
       : [],
@@ -6315,11 +6669,19 @@ async function generateReply({
   const businessKnowledge = await loadKnowledgeBase();
   const learningStore = await readStore();
   const learningInsights = learningGuidanceForPrompt(learningStore);
+  const stage = controllerStage(memory);
+  const allowedActions = controllerAllowedActionsForTurn(memory, newMessage.text);
   const payload = {
     conversation_history: thread.slice(-30),
     conversation_memory: promptMemory,
     business_knowledge: businessKnowledge || null,
     learning_insights: learningInsights,
+    conversation_controller: {
+      version: CONVERSATION_CONTROLLER_VERSION,
+      stage,
+      expected_action: controllerExpectedAction(memory, stage),
+      allowed_actions: allowedActions
+    },
     context_status: {
       provider: normalizeProvider(newMessage.provider),
       history_messages_loaded: thread.length,
@@ -6348,6 +6710,7 @@ async function generateReply({
           content:
             "Use this JSON conversation data to write the next Instagram DM reply. Return JSON only.\n" +
             "Use conversation_history and conversation_memory to understand where the conversation is and avoid repeating links or qualifying questions.\n" +
+            "Classify the turn first. Choose one action from conversation_controller.allowed_actions, then write only the reply permitted by that action and stage.\n" +
             "Use business_knowledge for Pallet Pros facts and voice, but do not invent missing details.\n" +
             "Use learning_insights as recent performance guidance, but never violate house rules, safety rules, or business_knowledge.\n" +
             JSON.stringify(payload, null, 2)
@@ -6372,9 +6735,17 @@ async function generateReply({
     throw new Error(`OpenAI returned unexpected content: ${content}`);
   }
 
+  const action = String(parsed.action || "clarify");
+  const confidence = Math.max(0, Math.min(1, Number(parsed.confidence || 0)));
+  const controllerValid = allowedActions.includes(action);
+
   return {
+    action,
+    confidence,
+    answered_question: parsed.answered_question === true,
+    controller_valid: controllerValid,
     reply: parsed.reply.trim(),
-    needs_review: parsed.needs_review !== false
+    needs_review: parsed.needs_review !== false || !controllerValid || confidence < 0.65
   };
 }
 
@@ -6398,7 +6769,9 @@ async function sendReplyToZernio(messageLike, replyText, featureSettings) {
     throw new Error("Cannot send an empty reply.");
   }
 
-  await prepareZernioSend(messageLike, replyText, featureSettings);
+  if (!messageLike._send_prepared) {
+    await prepareZernioSend(messageLike, replyText, featureSettings);
+  }
 
   return zernioRequest(
     `/inbox/conversations/${encodeURIComponent(conversationId)}/messages`,
@@ -6477,13 +6850,42 @@ async function currentAutomationHoldReason(messageLike) {
   return "";
 }
 
+function latestProspectMemoryMessage(memory) {
+  const messages = Array.isArray(memory?.last_messages) ? memory.last_messages : [];
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === "user") return messages[index];
+  }
+  return null;
+}
+
+async function incomingStillCurrent(messageLike) {
+  const incomingId = String(messageLike?.incoming_message_id || "");
+  if (!incomingId || normalizeProvider(messageLike?.provider) === "test") return true;
+
+  const store = await readStore();
+  const memory = getConversationMemory(store, messageLike);
+  const latest = latestProspectMemoryMessage(memory);
+  return !latest?.id || String(latest.id) === incomingId;
+}
+
 async function sendAutoReply(messageLike, replyText, featureSettings) {
   const holdReason = await currentAutomationHoldReason(messageLike);
   if (holdReason) {
     throw new Error(`Auto-send blocked: ${holdReason}`);
   }
 
-  return sendReply(messageLike, replyText, featureSettings);
+  await prepareZernioSend(messageLike, replyText, featureSettings);
+  if (!(await incomingStillCurrent(messageLike))) {
+    const error = new Error("Auto-send cancelled because a newer prospect message arrived.");
+    error.code = "STALE_INCOMING";
+    throw error;
+  }
+
+  return sendReply(
+    { ...messageLike, _send_prepared: true },
+    replyText,
+    featureSettings
+  );
 }
 
 function replyMessages(replyLike) {
@@ -6506,11 +6908,17 @@ async function sendReplySequence(messageLike, replyLike, featureSettings) {
     ? replyLike.message_delays_ms
     : [];
 
+  const sentMessages = [];
+
   for (let index = 0; index < messages.length; index += 1) {
     const delayMs = Number(messageDelays[index]);
 
     if (index > 0 || delayMs > 0) {
       await sleep(Number.isFinite(delayMs) && delayMs >= 0 ? delayMs : CALENDAR_SEQUENCE_GAP_MS);
+    }
+
+    if (!(await incomingStillCurrent(messageLike))) {
+      return { messages: sentMessages, aborted: true };
     }
 
     const sendSettings =
@@ -6522,9 +6930,10 @@ async function sendReplySequence(messageLike, replyLike, featureSettings) {
           };
 
     await sendAutoReply(messageLike, messages[index], sendSettings);
+    sentMessages.push(messages[index]);
   }
 
-  return messages;
+  return { messages: sentMessages, aborted: false };
 }
 
 async function generateFollowUpReply(memory, featureSettings) {
@@ -6706,6 +7115,16 @@ async function recordOutgoingForMemory(messageLike, replyText, options = {}) {
     });
   }
   updateQuestionMemory(memory, replyText);
+  recordControllerDecision(
+    memory,
+    options.controllerAction
+      ? {
+          action: options.controllerAction,
+          confidence: options.controllerConfidence
+        }
+      : null,
+    replyReason
+  );
   if (options.pauseAfterSend || options.pause_after_send || linkStats.booking_links_sent) {
     pauseAutomationAfterCalendarSend(store, memory, messageLike, sentAt);
   }
@@ -7309,9 +7728,28 @@ function clearPendingIncomingReply(conversationKey) {
   return true;
 }
 
+function enqueueConversationProcessing(conversationKey, work) {
+  const key = String(conversationKey || "unknown");
+  const previous = conversationProcessingQueues.get(key) || Promise.resolve();
+  const next = previous
+    .catch(() => {})
+    .then(work);
+
+  conversationProcessingQueues.set(key, next);
+  next.finally(() => {
+    if (conversationProcessingQueues.get(key) === next) {
+      conversationProcessingQueues.delete(key);
+    }
+  }).catch(() => {});
+
+  return next;
+}
+
 async function scheduleIncomingReply(incoming, parsedPayload, conversationKey) {
   if (INCOMING_REPLY_DEBOUNCE_MS <= 0) {
-    await processIncomingReply(incoming, parsedPayload, conversationKey);
+    await enqueueConversationProcessing(conversationKey, () =>
+      processIncomingReply(incoming, parsedPayload, conversationKey)
+    );
     return;
   }
 
@@ -7330,10 +7768,12 @@ async function scheduleIncomingReply(incoming, parsedPayload, conversationKey) {
       return;
     }
 
-    processIncomingReply(
-      pending.incoming,
-      pending.parsedPayload,
-      pending.conversationKey
+    enqueueConversationProcessing(pending.conversationKey, () =>
+      processIncomingReply(
+        pending.incoming,
+        pending.parsedPayload,
+        pending.conversationKey
+      )
     ).catch((error) => {
       appendAutomationEvent({
         level: "error",
@@ -7375,11 +7815,15 @@ async function processIncomingReply(incoming, parsedPayload, conversationKey) {
   const resolvedConversationKey = memory.key || conversationKey || makeConversationKey(incoming);
   await writeStore(memoryStore);
 
-  const ruleBasedReply = isBookingConfirmation(incoming.text)
+  let ruleBasedReply = isBookingConfirmation(incoming.text)
     ? bookingConfirmationReply()
     : appointmentSetterRuleReply(memory, incoming, featureSettings);
 
   if (ruleBasedReply) {
+    const safetyReview = replySafetyReview(memory, incoming, ruleBasedReply);
+    if (safetyReview.repaired) {
+      ruleBasedReply = { ...ruleBasedReply, ...safetyReview.repaired };
+    }
     const replyText = joinedReplyText(ruleBasedReply);
     const store = await readStore();
     const settings = getConversationSettings(store, incoming.talk_id);
@@ -7391,18 +7835,52 @@ async function processIncomingReply(incoming, parsedPayload, conversationKey) {
     const shouldAutoSendRuleReply =
       isAutoSendEnabled(featureSettings) &&
       !holdReason &&
+      safetyReview.safe &&
       !reviewRequired &&
       Boolean(replyText);
     let ruleSendError = "";
 
     if (shouldAutoSendRuleReply) {
       try {
-        await sendReplySequence(incoming, ruleBasedReply, featureSettings);
-        await recordOutgoingForMemory(incoming, replyText, {
+        const sequenceResult = await sendReplySequence(
+          incoming,
+          ruleBasedReply,
+          featureSettings
+        );
+        const sentReplyText = sequenceResult.messages.join("\n\n");
+
+        if (!sentReplyText) {
+          await appendAutomationEvent({
+            level: "info",
+            type: "stale_reply_cancelled",
+            message: "Cancelled reply because a newer prospect message arrived.",
+            talk_id: incoming.talk_id,
+            contact_id: incoming.contact_id,
+            conversation_key: resolvedConversationKey
+          });
+          return;
+        }
+
+        await recordOutgoingForMemory(incoming, sentReplyText, {
           source: "auto",
-          suppressFollowUp: Boolean(ruleBasedReply.suppress_follow_up),
-          pauseAfterSend: Boolean(ruleBasedReply.pause_after_send)
+          controllerAction: ruleBasedReply.controller_action,
+          controllerConfidence: ruleBasedReply.controller_confidence,
+          suppressFollowUp:
+            !sequenceResult.aborted && Boolean(ruleBasedReply.suppress_follow_up),
+          pauseAfterSend:
+            !sequenceResult.aborted && Boolean(ruleBasedReply.pause_after_send)
         });
+        if (sequenceResult.aborted) {
+          await appendAutomationEvent({
+            level: "info",
+            type: "reply_sequence_cancelled",
+            message: "Stopped the remaining reply sequence after a newer prospect message arrived.",
+            talk_id: incoming.talk_id,
+            contact_id: incoming.contact_id,
+            conversation_key: resolvedConversationKey
+          });
+          return;
+        }
         await appendAutomationEvent({
           level: "success",
           type: "auto_sent",
@@ -7414,6 +7892,17 @@ async function processIncomingReply(incoming, parsedPayload, conversationKey) {
         console.log(`Auto-sent rule-based reply for talk_id=${incoming.talk_id}.`);
         return;
       } catch (error) {
+        if (error.code === "STALE_INCOMING") {
+          await appendAutomationEvent({
+            level: "info",
+            type: "stale_reply_cancelled",
+            message: "Cancelled reply because a newer prospect message arrived.",
+            talk_id: incoming.talk_id,
+            contact_id: incoming.contact_id,
+            conversation_key: resolvedConversationKey
+          });
+          return;
+        }
         ruleSendError = error.message;
         await appendAutomationEvent({
           level: "error",
@@ -7444,6 +7933,7 @@ async function processIncomingReply(incoming, parsedPayload, conversationKey) {
       reason: shouldAutoSendRuleReply
         ? `Rule-based auto-send failed; saved for review.${ruleSendError ? ` ${ruleSendError}` : ""}`
         : holdReason ||
+          (!safetyReview.safe ? safetyReview.reason : "") ||
           (reviewRequired
             ? "Approval mode is on, so this rule-based reply was saved for review."
             : "Appointment setter flow handled.")
@@ -7458,6 +7948,7 @@ async function processIncomingReply(incoming, parsedPayload, conversationKey) {
       conversation_key: conversationKey,
       reason:
         holdReason ||
+        (!safetyReview.safe ? safetyReview.reason : "") ||
         (reviewRequired
           ? "Approval mode required review."
           : "Rule-based auto-send failed or reply was empty.")
@@ -7524,6 +8015,35 @@ async function processIncomingReply(incoming, parsedPayload, conversationKey) {
   }
 
   let reviewReason = "";
+  const aiSafetyReview = replySafetyReview(memory, incoming, aiReply);
+  if (aiSafetyReview.repaired) {
+    aiReply = {
+      ...aiReply,
+      ...aiSafetyReview.repaired
+    };
+  } else if (!aiSafetyReview.safe) {
+    aiReply.needs_review = true;
+    reviewReason = aiSafetyReview.reason;
+  }
+
+  if (!reviewReason && aiReply.controller_valid === false) {
+    aiReply.needs_review = true;
+    reviewReason = `AI selected an action that is not allowed in ${controllerStage(memory)}.`;
+  }
+
+  if (!reviewReason && Number(aiReply.confidence || 0) < 0.65) {
+    aiReply.needs_review = true;
+    reviewReason = "AI interpretation confidence was too low for auto-send.";
+  }
+
+  if (
+    !reviewReason &&
+    prospectAskedQuestion(incoming.text) &&
+    aiReply.answered_question !== true
+  ) {
+    aiReply.needs_review = true;
+    reviewReason = "AI did not confirm that it answered the prospect's question.";
+  }
 
   if (contextWarning) {
     aiReply.needs_review = true;
@@ -7552,16 +8072,24 @@ async function processIncomingReply(incoming, parsedPayload, conversationKey) {
   const reviewRequired =
     isApprovalModeEnabled(featureSettings) &&
     (aiReply.needs_review || Boolean(reviewReason));
+  const hardSafetyHold =
+    !aiSafetyReview.safe ||
+    /ambiguous short reply|repeated a recent assistant message|not allowed|confidence was too low|did not confirm/i.test(reviewReason);
   const shouldAutoSend =
     isAutoSendEnabled(featureSettings) &&
     !holdReason &&
+    !hardSafetyHold &&
     !reviewRequired &&
     Boolean(aiReply.reply);
 
   if (shouldAutoSend) {
     try {
       await sendAutoReply(incoming, aiReply.reply, featureSettings);
-      await recordOutgoingForMemory(incoming, aiReply.reply, { source: "auto" });
+      await recordOutgoingForMemory(incoming, aiReply.reply, {
+        source: "auto",
+        controllerAction: aiReply.action,
+        controllerConfidence: aiReply.confidence
+      });
       await appendAutomationEvent({
         level: "success",
         type: "auto_sent",
@@ -7574,6 +8102,17 @@ async function processIncomingReply(incoming, parsedPayload, conversationKey) {
       console.log(`Auto-sent reply for talk_id=${incoming.talk_id}.`);
       return;
     } catch (error) {
+      if (error.code === "STALE_INCOMING") {
+        await appendAutomationEvent({
+          level: "info",
+          type: "stale_reply_cancelled",
+          message: "Cancelled AI reply because a newer prospect message arrived.",
+          talk_id: incoming.talk_id,
+          contact_id: incoming.contact_id,
+          conversation_key: conversationKey
+        });
+        return;
+      }
       await saveDraft({
         provider: normalizeProvider(incoming.provider),
         conversation_key: conversationKey,
@@ -8502,18 +9041,28 @@ app.post("/api/test-reply", async (req, res, next) => {
       origin: "instagram_business"
     };
     const memory = testMemoryFromThread(thread);
-    const ruleBasedReply = isBookingConfirmation(newMessage.text)
+    let ruleBasedReply = isBookingConfirmation(newMessage.text)
       ? bookingConfirmationReply()
       : appointmentSetterRuleReply(memory, newMessage, featureSettings);
 
     if (ruleBasedReply) {
+      const safetyReview = replySafetyReview(memory, newMessage, ruleBasedReply);
+      if (safetyReview.repaired) {
+        ruleBasedReply = { ...ruleBasedReply, ...safetyReview.repaired };
+      }
       res.json({
         ok: true,
         lead_status: memory.lead_status,
         reply: joinedReplyText(ruleBasedReply),
         messages: replyMessages(ruleBasedReply),
         needs_review: ruleBasedReply.needs_review,
-        source: "rule"
+        source: "rule",
+        safety: safetyReview,
+        controller: {
+          stage: controllerStage(memory),
+          expected_action: controllerExpectedAction(memory),
+          interpretation: interpretSetterTurn(memory, newMessage.text)
+        }
       });
       return;
     }
