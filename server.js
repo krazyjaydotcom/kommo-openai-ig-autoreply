@@ -51,8 +51,8 @@ const FOLLOW_UP_WINDOW_MS = 23 * 60 * 60 * 1000;
 const STALE_REENTRY_WINDOW_MS = 21 * 24 * 60 * 60 * 1000;
 const LEARNING_REVIEW_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
 const LEARNING_REVIEW_CHECK_MS = 60 * 60 * 1000;
-const CONVERSATION_CONTROLLER_VERSION = 3;
-const APP_BUILD_MARKER = "2026-09-02-seamless-conversation-controller-v3";
+const CONVERSATION_CONTROLLER_VERSION = 4;
+const APP_BUILD_MARKER = "2026-09-02-three-lane-controller-v4";
 const DEFAULT_KPI_TARGETS = {
   daily_touch_points_target: 100,
   touch_pitch_min_rate: 10,
@@ -860,9 +860,12 @@ function replySafetyReview(memory, incoming, replyLike) {
   const replyText = joinedReplyText(replyLike);
   const messages = replyMessages(replyLike);
   const incomingText = String(incoming?.text || "");
+  const acceptedExistingInvitation =
+    replyLike?.controller_action !== "invite_call" &&
+    (lastAssistantInvitedToZoom(memory) || lastAssistantAskedForCalendarPermission(memory)) &&
+    schedulingAcceptance(incomingText);
   const expectsCalendar =
-    ((lastAssistantInvitedToZoom(memory) || lastAssistantAskedForCalendarPermission(memory)) &&
-      schedulingAcceptance(incomingText) ||
+    (acceptedExistingInvitation ||
       directBookingIntent(incomingText) ||
       replyLike?.controller_action === "send_calendar") &&
     !memory?.booking_link_sent;
@@ -2453,6 +2456,7 @@ function markCallInvited(memory) {
 
 function controllerStage(memory) {
   if (memory?.booking_confirmed) return "BOOKED";
+  if (memory?.needs_human_review) return "NEEDS_ATTENTION";
   if (memory?.booking_link_sent) return "MANUAL_HANDOFF";
   if (memory?.content_nurture_stopped) return "NURTURE_STOPPED";
   if (lastAssistantInvitedToZoom(memory)) return "CALL_INVITED";
@@ -2472,7 +2476,7 @@ function controllerStage(memory) {
 }
 
 function controllerExpectedAction(memory, stage = controllerStage(memory)) {
-  if (["BOOKED", "MANUAL_HANDOFF", "NURTURE_STOPPED"].includes(stage)) {
+  if (["BOOKED", "NEEDS_ATTENTION", "MANUAL_HANDOFF", "NURTURE_STOPPED"].includes(stage)) {
     return "manual_handoff";
   }
   if (stage === "CALL_INVITED") return "accept_call";
@@ -2489,6 +2493,7 @@ function controllerExpectedAction(memory, stage = controllerStage(memory)) {
 function controllerAllowedActions(memory, stage = controllerStage(memory)) {
   const common = ["answer_question", "soft_decline", "clarify", "manual_handoff"];
   if (stage === "BOOKED") return ["acknowledge_booking", "answer_question", "manual_handoff"];
+  if (stage === "NEEDS_ATTENTION") return ["manual_handoff"];
   if (stage === "MANUAL_HANDOFF") return ["answer_question", "manual_handoff"];
   if (stage === "NURTURE_STOPPED") return ["answer_question", "manual_handoff"];
   if (stage === "CALL_INVITED") return ["send_calendar", ...common];
@@ -2925,18 +2930,17 @@ function appointmentSetterControllerRecoveryReply(memory, incoming, reason = "")
 
 function appointmentSetterZoomInviteReply(memory, date = new Date()) {
   markCallInvited(memory);
-  const market = formatKnownMarket(memory);
   const weekPhrase = zoomWeekPhrase(date);
-  const ack = goalAcknowledgement(memory) || resourceAcknowledgement(memory) || "Based on what you told me, I think it'd be worth looking at this properly.";
   console.log(
-    `Qualification complete for ${memory?.key || "conversation"}; weekday=${easternWeekdayName(date)}; zoom_phrase=${weekPhrase}; market=${market}`
+    `Three-lane controller routed business interest for ${memory?.key || "conversation"}; weekday=${easternWeekdayName(date)}; zoom_phrase=${weekPhrase}`
   );
 
   return {
     reply:
-      `${ack} The best next step is to look at your market together.\n\nWould you be open to a quick Zoom ${weekPhrase} so we can look at ${market} and see if the academy is a good fit?`,
+      `Great. Let's get on a quick Zoom ${weekPhrase}. We can look at your market, answer your questions, and see if the academy would be a good fit. Mind if I send you my calendar?`,
     needs_review: false,
-    handled: true
+    handled: true,
+    controller_action: "invite_call"
   };
 }
 
@@ -3816,11 +3820,14 @@ function appointmentSetterPhoneReply(memory, messageLike) {
   };
 }
 
-function appointmentSetterContentReply() {
+function appointmentSetterContentReply(memory = null) {
+  markContentNurtureStop(memory, "content_only");
   return {
     reply: `Got you. The YouTube is probably the best place to start: ${YOUTUBE_URL}`,
     needs_review: false,
-    handled: true
+    suppress_follow_up: true,
+    handled: true,
+    controller_action: "content_only"
   };
 }
 
@@ -4042,9 +4049,9 @@ function saysTheyWillBook(text) {
 }
 
 function wantsContentOnly(text) {
-  return /\b(just content|only content|free content|here for (?:the )?content|just here for (?:the )?content|just looking|just curious|researching|youtube)\b/i.test(
-    String(text || "")
-  );
+  const value = normalizeTurnText(text);
+  return /\b(just content|only content|free content|here for (?:the )?content|just here for (?:the )?content|just looking|just curious|researching|youtube)\b/i.test(value) ||
+    /^(?:content|the content)$/.test(value);
 }
 
 function isLikelyNonLeadBroadcast(text) {
@@ -4408,7 +4415,7 @@ function lastAssistantAskedForCalendarPermission(memory) {
     .some(
       (message) =>
         message.role === "assistant" &&
-        /send you a link to my calendar|send (?:you )?(?:the|a) calendar link|link to my calendar|calendar link/i.test(
+        /send you (?:a link to )?my calendar|send (?:you )?(?:the|a) calendar link|link to my calendar|calendar link/i.test(
           message.text || ""
         )
     );
@@ -4445,6 +4452,136 @@ function latestProspectTurnText(memory, incoming) {
   return combined || String(incoming?.text || "");
 }
 
+function clearThreeLaneBusinessIntent(memory, text) {
+  const value = normalizeTurnText(text);
+  const explicitBinaryChoice =
+    lastAssistantAskedContentOrBusiness(memory) &&
+    (yesToBusinessInterest(value) || /^(?:business|pallet business|start (?:a |my )?(?:pallet )?business)$/.test(value));
+
+  return Boolean(
+    explicitBinaryChoice ||
+      hasClearStartIntent(text) ||
+      palletSideHustleIntent(text) ||
+      palletBusinessTruckContext(text)
+  );
+}
+
+function threeLaneReviewReason(memory, text) {
+  if (saysIncarcerated(text)) {
+    return "Prospect mentioned incarceration or custody; handle this conversation personally.";
+  }
+  if (saysSoftDecline(text)) {
+    return "Prospect declined, is busy, or is not ready; no automated reply was sent.";
+  }
+  if (prospectAskedQuestion(text)) {
+    return "Prospect asked a question that needs a personal, context-aware answer.";
+  }
+  if (lastAssistantAskedQualificationPermission(memory) || qualificationQuestionWasAsked(memory)) {
+    return "Conversation came from the retired qualification flow and needs a personal transition.";
+  }
+  if (isFriendlyNonLeadReply(text)) {
+    return "Prospect sent a friendly reply outside the business-or-content paths.";
+  }
+  return "Reply did not clearly match business interest or content-only intent.";
+}
+
+function appointmentSetterNeedsAttentionReply(memory, reason) {
+  const reviewAt = memory?.last_incoming_at || new Date().toISOString();
+  if (memory) {
+    memory.needs_human_review = true;
+    memory.needs_human_review_reason = reason;
+    memory.needs_human_review_at = reviewAt;
+    memory.ai_paused = true;
+    cancelFollowUp(memory);
+    markConversationState(memory, "NEEDS_ATTENTION");
+  }
+
+  return {
+    reply: "",
+    needs_review: true,
+    handled: true,
+    skip_reply: true,
+    needs_attention: true,
+    skip_reason: reason,
+    controller_action: "manual_handoff"
+  };
+}
+
+function threeLaneSetterDecisionReply(memory, incoming, text) {
+  if (!memory || memory.booking_confirmed) {
+    return null;
+  }
+
+  hydrateFreshProfileFromHistory(memory);
+  memory.lead_profile = mergeLeadProfile(memory.lead_profile, leadProfileFromText(text));
+  const interpretation = interpretSetterTurn(memory, text);
+  recordControllerDecision(memory, interpretation);
+
+  if (isLikelyNonLeadBroadcast(text)) {
+    return {
+      reply: "",
+      needs_review: false,
+      handled: true,
+      skip_reply: true,
+      needs_attention: false,
+      skip_reason: "Likely non-lead promotional broadcast.",
+      controller_action: "ignore_broadcast"
+    };
+  }
+
+  if (memory.booking_link_sent) {
+    return appointmentSetterNeedsAttentionReply(
+      memory,
+      "Calendar sequence is complete; automation is paused for personal follow-through."
+    );
+  }
+
+  if (
+    (lastAssistantAskedForCalendarPermission(memory) || lastAssistantInvitedToZoom(memory)) &&
+    schedulingAcceptance(text)
+  ) {
+    return {
+      ...appointmentSetterCalendarLinkReply(incoming, memory),
+      controller_action: "send_calendar"
+    };
+  }
+
+  if (directBookingIntent(text)) {
+    return {
+      ...appointmentSetterCalendarLinkReply(incoming, memory),
+      controller_action: "send_calendar"
+    };
+  }
+
+  if (
+    wantsContentOnly(text) &&
+    !clearThreeLaneBusinessIntent(memory, text) &&
+    !wantsAppointmentOrScheduling(text)
+  ) {
+    return appointmentSetterContentReply(memory);
+  }
+
+  if (prospectAskedQuestion(text)) {
+    return appointmentSetterNeedsAttentionReply(memory, threeLaneReviewReason(memory, text));
+  }
+
+  if (
+    saysIncarcerated(text) ||
+    saysSoftDecline(text) ||
+    humanEscalationReason(text) ||
+    lastAssistantAskedQualificationPermission(memory) ||
+    qualificationQuestionWasAsked(memory)
+  ) {
+    return appointmentSetterNeedsAttentionReply(memory, threeLaneReviewReason(memory, text));
+  }
+
+  if (clearThreeLaneBusinessIntent(memory, text)) {
+    return appointmentSetterZoomInviteReply(memory);
+  }
+
+  return appointmentSetterNeedsAttentionReply(memory, threeLaneReviewReason(memory, text));
+}
+
 function appointmentSetterRuleReply(memory, incoming, featureSettings = {}) {
   const text = latestProspectTurnText(memory, incoming);
 
@@ -4453,11 +4590,11 @@ function appointmentSetterRuleReply(memory, incoming, featureSettings = {}) {
   }
 
   const interpretation = interpretSetterTurn(memory, text);
-  const reply = freshSetterDecisionReply(memory, incoming, text, featureSettings);
+  const reply = threeLaneSetterDecisionReply(memory, incoming, text, featureSettings);
   return reply
     ? {
         ...reply,
-        controller_action: interpretation.action,
+        controller_action: reply.controller_action || interpretation.action,
         controller_confidence: interpretation.confidence,
         controller_stage: interpretation.stage,
         controller_expected_action: interpretation.expected_action
@@ -7896,21 +8033,6 @@ async function processIncomingMessage(incoming, parsedPayload) {
   }
 
   if (memory?.needs_human_review && memory.needs_human_review_at === memory.last_incoming_at) {
-    await saveDraft({
-      provider: normalizeProvider(incoming.provider),
-      conversation_key: conversationKey,
-      talk_id: incoming.talk_id,
-      chat_id: incoming.chat_id,
-      contact_id: incoming.contact_id,
-      zernio_conversation_id: incoming.zernio_conversation_id,
-      zernio_account_id: incoming.zernio_account_id,
-      incoming_message_id: incoming.incoming_message_id,
-      incoming_text: incoming.text,
-      origin: incoming.origin,
-      reply: "",
-      needs_review: true,
-      reason: memory.needs_human_review_reason || "Needs manual review."
-    });
     await appendAutomationEvent({
       level: "warn",
       type: "needs_human_review",
@@ -8040,10 +8162,13 @@ async function processIncomingReply(incoming, parsedPayload, conversationKey) {
   if (ruleBasedReply) {
     if (ruleBasedReply.skip_reply) {
       await writeStore(memoryStore);
+      const needsAttention = Boolean(ruleBasedReply.needs_attention);
       await appendAutomationEvent({
-        level: "info",
-        type: "non_lead_ignored",
-        message: "Ignored an obvious non-lead promotional broadcast.",
+        level: needsAttention ? "warn" : "info",
+        type: needsAttention ? "needs_human_review" : "non_lead_ignored",
+        message: needsAttention
+          ? "Held the conversation for personal follow-through; no reply was sent."
+          : "Ignored an obvious non-lead promotional broadcast.",
         talk_id: incoming.talk_id,
         contact_id: incoming.contact_id,
         conversation_key: resolvedConversationKey,
@@ -9279,14 +9404,16 @@ app.post("/api/test-reply", async (req, res, next) => {
 
     if (ruleBasedReply) {
       if (ruleBasedReply.skip_reply) {
+        const needsAttention = Boolean(ruleBasedReply.needs_attention);
         res.json({
           ok: true,
           lead_status: memory.lead_status,
           reply: "",
           messages: [],
-          needs_review: false,
+          needs_review: needsAttention,
           source: "rule",
-          ignored: true,
+          ignored: !needsAttention,
+          needs_attention: needsAttention,
           safety: { safe: true, repaired: null, reason: ruleBasedReply.skip_reason || "" },
           controller: {
             stage: controllerStage(memory),
@@ -13931,6 +14058,13 @@ function renderModernHomePage() {
       message.className = "lead-message";
       const lastText = conversation.last_message && conversation.last_message.text ? conversation.last_message.text : conversation.summary || "No recent message yet.";
       message.textContent = lastText;
+      const attentionReason = conversation.needs_human_review_reason
+        ? document.createElement("div")
+        : null;
+      if (attentionReason) {
+        attentionReason.className = "lead-meta";
+        attentionReason.textContent = "Needs Me: " + conversation.needs_human_review_reason;
+      }
       const scorecard = renderReplyScorecard(conversation);
 
       const actions = document.createElement("div");
@@ -13977,6 +14111,7 @@ function renderModernHomePage() {
 
       actions.append(openDmButton, pauseButton, linkButton);
       card.append(top, tags, message);
+      if (attentionReason) card.appendChild(attentionReason);
       if (scorecard) card.appendChild(scorecard);
       card.appendChild(actions);
       return card;
@@ -13993,6 +14128,7 @@ function renderModernHomePage() {
           conversation.contact_id,
           conversation.talk_id,
           conversation.summary,
+          conversation.needs_human_review_reason,
           conversation.last_message && conversation.last_message.text
         ]
           .join(" ")
@@ -14044,6 +14180,7 @@ function renderModernHomePage() {
         const preview = document.createElement("span");
         preview.className = "thread-preview";
         preview.textContent =
+          conversation.needs_human_review_reason ||
           (conversation.last_message && conversation.last_message.text) ||
           conversation.summary ||
           "No recent message yet.";

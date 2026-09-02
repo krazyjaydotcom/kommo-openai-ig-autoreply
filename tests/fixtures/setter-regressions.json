@@ -1,140 +1,155 @@
 [
   {
-    "name": "permission acceptance starts with market",
-    "transcript": "Prospect: I'm looking to start my own pallet business\nYou: Sure. Is it cool if I ask you a few questions to help determine the best path for you?",
-    "new_message": "that sounds good to me",
-    "includes": ["city and state"],
-    "excludes": ["tidycal.com"]
+    "name": "clear business interest goes directly to Zoom invitation",
+    "transcript": "You: Yoo. Thanks for the follow! Are you here for content or wanting to start your own pallet business?",
+    "new_message": "I'm looking to start my own pallet business",
+    "includes": ["quick zoom", "answer your questions", "send you my calendar"],
+    "excludes": ["few questions", "city and state", "tidycal.com"],
+    "message_count": 1
   },
   {
-    "name": "market answer advances to why now",
-    "transcript": "Prospect: I want to start a pallet business\nYou: Sure. Is it cool if I ask you a few questions to help determine the best path for you?\nProspect: Sure\nYou: Perfect. First one, what city and state are you planning to operate your pallet business in?",
-    "new_message": "Lithonia, GA",
-    "includes": ["got you interested", "now"],
-    "excludes": ["tidycal.com"]
+    "name": "simple business choice goes directly to Zoom invitation",
+    "transcript": "You: Are you here for the content or wanting to start your own pallet business?",
+    "new_message": "Business",
+    "includes": ["quick zoom", "send you my calendar"],
+    "excludes": ["few questions", "city and state"]
   },
   {
-    "name": "why-now answer advances to financial goal",
-    "transcript": "Prospect: I want to start a pallet business\nYou: Sure. Is it cool if I ask you a few questions to help determine the best path for you?\nProspect: Sure\nYou: Perfect. First one, what city and state are you planning to operate your pallet business in?\nProspect: Lithonia, GA\nYou: Got you. What's got you interested in starting a pallet business now?",
-    "new_message": "We have more kids on the way and I need another income stream.",
-    "includes": ["last question", "financially"],
-    "excludes": ["tidycal.com"]
+    "name": "agreement after binary intro means business interest",
+    "transcript": "You: Are you here for the content or wanting to start your own pallet business?",
+    "new_message": "Yes, definitely",
+    "includes": ["quick zoom", "send you my calendar"],
+    "excludes": ["few questions", "city and state"]
   },
   {
-    "name": "financial goal advances to personalized Zoom invite",
-    "transcript": "Prospect: I want to start a pallet business\nYou: Sure. Is it cool if I ask you a few questions to help determine the best path for you?\nProspect: Sure\nYou: Perfect. First one, what city and state are you planning to operate your pallet business in?\nProspect: Lithonia, GA\nYou: Got you. What's got you interested in starting a pallet business now?\nProspect: I need another income stream for my family.\nYou: I respect that. Last question. What would you ideally like the pallet business to do for you financially?",
-    "new_message": "Give me financial freedom and eventually replace my job.",
-    "includes": ["quick zoom", "lithonia"],
-    "excludes": ["tidycal.com"]
+    "name": "side hustle pallet interest goes directly to Zoom",
+    "transcript": "You: Are you here for the content or wanting to start your own pallet business?",
+    "new_message": "I do junk removal but I want to make some side money with pallets.",
+    "includes": ["quick zoom", "send you my calendar"],
+    "excludes": ["few questions", "city and state"]
   },
   {
-    "name": "when after Zoom invitation sends calendar immediately",
-    "transcript": "Prospect: I want to start a pallet business\nYou: Based on what you told me, the best next step is to look at your market together. Would you be open to a quick Zoom this week so we can see if the academy is a good fit?",
-    "new_message": "When?",
-    "includes": ["go.palletprosacademy.com/discovery", "grab that link"],
-    "message_count": 3
-  },
-  {
-    "name": "elongated casual agreement sends calendar",
-    "transcript": "Prospect: I collect pallets and want to learn the business\nYou: Would you be open to a quick Zoom this week so we can look at your market and see if the academy is a good fit?",
-    "new_message": "Yeaaaa that's cool fasho",
-    "includes": ["go.palletprosacademy.com/discovery"],
-    "message_count": 3
-  },
-  {
-    "name": "truck driver with pallet intent is not treated as job seeker",
+    "name": "truck driver with pallet intent goes directly to Zoom",
     "transcript": "",
-    "new_message": "I'm interested. I'm a truck driver and I collect pallets and want to know how this business works.",
-    "includes": ["few questions", "best path"],
-    "excludes": ["hiring drivers", "youtube.com"]
+    "new_message": "I'm a truck driver and I collect pallets. I want to start this business.",
+    "includes": ["quick zoom", "send you my calendar"],
+    "excludes": ["hiring drivers", "few questions"]
   },
   {
-    "name": "content-only visitor receives YouTube without sales chase",
+    "name": "content-only visitor receives YouTube and no pitch",
     "transcript": "You: Are you here for the content or wanting to start your own pallet business?",
     "new_message": "Just here for the content",
+    "includes": ["youtube.com/@palletprosacademy"],
+    "excludes": ["calendar", "zoom"],
+    "message_count": 1
+  },
+  {
+    "name": "single-word content choice receives YouTube",
+    "transcript": "You: Are you here for the content or wanting to start your own pallet business?",
+    "new_message": "Content",
     "includes": ["youtube.com/@palletprosacademy"],
     "excludes": ["calendar", "zoom"]
   },
   {
-    "name": "academy question is answered before calendar",
-    "transcript": "Prospect: I want to start\nYou: Would you be open to a quick Zoom this week so we can see if the academy is a good fit?",
-    "new_message": "Academy?",
-    "includes": ["source, move, and sell pallets"],
-    "excludes": ["tidycal.com"]
+    "name": "calendar permission sends the timed sequence",
+    "transcript": "Prospect: I want to start a pallet business\nYou: Great. Let's get on a quick Zoom this week. We can look at your market, answer your questions, and see if the academy would be a good fit. Mind if I send you my calendar?",
+    "new_message": "Sure",
+    "includes": ["grab that link", "go.palletprosacademy.com/discovery", "another 5 minutes"],
+    "message_count": 3
   },
   {
-    "name": "friendly support closes without pushing a call",
-    "transcript": "",
-    "new_message": "Thanks, I appreciate it. Just showing support.",
-    "includes": ["keep rocking with the content"],
-    "excludes": ["calendar", "zoom", "?"]
+    "name": "time and date after Zoom invitation sends calendar",
+    "transcript": "You: Great. Let's get on a quick Zoom this week. We can look at your market, answer your questions, and see if the academy would be a good fit. Mind if I send you my calendar?",
+    "new_message": "Time and date",
+    "includes": ["go.palletprosacademy.com/discovery", "grab that link"],
+    "message_count": 3
   },
   {
-    "name": "direct booking request bypasses qualification",
-    "transcript": "Prospect: I'm ready to talk about getting started",
+    "name": "direct booking request sends calendar",
+    "transcript": "Prospect: I'm ready to get started",
     "new_message": "Send me the calendar link",
     "includes": ["go.palletprosacademy.com/discovery"],
     "message_count": 3
   },
   {
-    "name": "agreement plus scheduling question does not repeat Zoom pitch",
-    "transcript": "Prospect: I need another income stream\nYou: Would you be open to a quick Zoom this week so we can look at your market and see if the academy is a good fit?",
-    "new_message": "Yes. When?",
-    "includes": ["go.palletprosacademy.com/discovery"],
-    "excludes": ["would you be open"],
-    "message_count": 3
+    "name": "question is held for Needs Me without a bot reply",
+    "transcript": "You: Are you here for the content or wanting to start your own pallet business?",
+    "new_message": "How much does the academy cost?",
+    "includes": [],
+    "message_count": 0,
+    "ignored": false,
+    "needs_attention": true
   },
   {
-    "name": "payment concern after calendar is answered without resending link",
-    "transcript": "Prospect: Yes\nYou: Here's my calendar: https://go.palletprosacademy.com/discovery",
-    "new_message": "Why is it asking for my card info?",
-    "includes": ["do not have to book", "manually"],
-    "excludes": ["go.palletprosacademy.com/discovery"]
+    "name": "business interest plus a question is held for personal context",
+    "transcript": "You: Are you here for the content or wanting to start your own pallet business?",
+    "new_message": "I want to start, but can I do this without a truck?",
+    "includes": [],
+    "message_count": 0,
+    "ignored": false,
+    "needs_attention": true
   },
   {
-    "name": "time and date acceptance sends calendar instead of duplicate draft",
-    "transcript": "Prospect: Will love to start my own business\nYou: Sure. Is it cool if I ask you a few questions to help determine the best path for you?\nProspect: I'm listening\nYou: Perfect. First one, what city and state are you planning to operate your pallet business in?\nProspect: South Jersey\nYou: Got you. South Jersey is helpful to know. What's got you interested in starting a pallet business now?\nProspect: I'm out of work and looking for another avenue.\nYou: The best next step is to look at your market together. Would you be open to a quick Zoom this week so we can look at South Jersey and see if the academy is a good fit?",
-    "new_message": "Time And Date",
-    "includes": ["go.palletprosacademy.com/discovery", "grab that link"],
-    "excludes": ["would you be open"],
-    "message_count": 3
+    "name": "vague reply is held for Needs Me",
+    "transcript": "You: Are you here for the content or wanting to start your own pallet business?",
+    "new_message": "Maybe",
+    "includes": [],
+    "message_count": 0,
+    "ignored": false,
+    "needs_attention": true
   },
   {
-    "name": "consecutive market and motivation messages advance without re-asking why",
-    "transcript": "Prospect: I want to start a pallet business\nYou: Sure. Is it cool if I ask you a few questions to help determine the best path for you?\nProspect: Yes\nYou: Perfect. First one, what city and state are you planning to operate your pallet business in?\nProspect: Deptford NJ\nProspect: I saw someone in Philly making decent side money and thought I could do that.\nYou: Still interested in getting this started?\nYou: No pressure, just checking if this is still something you want to look into.",
-    "new_message": "Yes",
-    "includes": ["financially"],
-    "excludes": ["what's got you interested", "tidycal.com"]
+    "name": "soft decline is held without sending another message",
+    "transcript": "You: Are you here for the content or wanting to start your own pallet business?",
+    "new_message": "Nah, I'm good for now",
+    "includes": [],
+    "message_count": 0,
+    "ignored": false,
+    "needs_attention": true
   },
   {
-    "name": "detailed pallet setup answer returns to permission path",
-    "transcript": "Prospect: I thought about starting this in the past but had no real guidance.\nYou: Got you. It sounds like you're ready for a change. What part of starting a pallet business interests you the most right now?",
-    "new_message": "Ground zero. I have a pickup and trailer and someone willing to help. I'm not looking to get rich, just options.",
-    "includes": ["few questions", "best path"],
-    "excludes": ["tidycal.com"],
-    "message_count": 1
+    "name": "incarceration context is held for personal handling",
+    "transcript": "You: Are you here for the content or wanting to start your own pallet business?",
+    "new_message": "I want to do it when I get out of prison.",
+    "includes": [],
+    "message_count": 0,
+    "ignored": false,
+    "needs_attention": true
+  },
+  {
+    "name": "retired qualification answer is held for a personal transition",
+    "transcript": "Prospect: I want to start a pallet business\nYou: Perfect. First one, what city and state are you planning to operate your pallet business in?",
+    "new_message": "Lithonia, GA",
+    "includes": [],
+    "message_count": 0,
+    "ignored": false,
+    "needs_attention": true
+  },
+  {
+    "name": "friendly support is held instead of receiving an awkward sales reply",
+    "transcript": "",
+    "new_message": "Thanks, I appreciate it. Just showing support.",
+    "includes": [],
+    "message_count": 0,
+    "ignored": false,
+    "needs_attention": true
   },
   {
     "name": "obvious promotional broadcast is ignored",
     "transcript": "You: Are you here for the content or wanting to start your own pallet business?",
     "new_message": "Yo! New post out! We hit 3 goals and I wanted to thank all of you for the support. Feel free to like and comment!",
     "includes": [],
-    "excludes": ["youtube.com", "calendar", "pallet business"],
     "message_count": 0,
-    "ignored": true
+    "ignored": true,
+    "needs_attention": false
   },
   {
-    "name": "im listening grants permission without becoming the market",
-    "transcript": "Prospect: I'm looking to start my own pallet business\nYou: Sure. Is it cool if I ask you a few questions to help determine the best path for you?",
-    "new_message": "I'm listening",
-    "includes": ["city and state"],
-    "excludes": ["i'm listening is helpful", "tidycal.com"]
-  },
-  {
-    "name": "side hustle interest follows qualification path before Zoom",
-    "transcript": "You: Are you here for the content or wanting to start your own pallet business?",
-    "new_message": "I do junk removal but I was hoping to make a little money on the side with pallets when times are slow.",
-    "includes": ["few questions", "best path"],
-    "excludes": ["calendar", "zoom"]
+    "name": "calendar follow-up does not resend the link",
+    "transcript": "You: Here's my calendar https://go.palletprosacademy.com/discovery",
+    "new_message": "Why is it asking for my card info?",
+    "includes": [],
+    "message_count": 0,
+    "ignored": false,
+    "needs_attention": true
   }
 ]

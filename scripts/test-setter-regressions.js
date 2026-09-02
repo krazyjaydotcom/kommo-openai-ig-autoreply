@@ -79,6 +79,13 @@ async function run() {
           `${fixture.name}: unexpected ignored state`
         );
       }
+      if (fixture.needs_attention !== undefined) {
+        assert.strictEqual(
+          Boolean(body.needs_attention),
+          Boolean(fixture.needs_attention),
+          `${fixture.name}: unexpected needs-attention state`
+        );
+      }
 
       const reply = String(body.reply || "").toLowerCase();
       for (const expected of fixture.includes || []) {
