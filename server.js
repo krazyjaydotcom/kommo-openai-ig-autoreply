@@ -51,8 +51,8 @@ const FOLLOW_UP_WINDOW_MS = 23 * 60 * 60 * 1000;
 const STALE_REENTRY_WINDOW_MS = 21 * 24 * 60 * 60 * 1000;
 const LEARNING_REVIEW_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
 const LEARNING_REVIEW_CHECK_MS = 60 * 60 * 1000;
-const CONVERSATION_CONTROLLER_VERSION = 2;
-const APP_BUILD_MARKER = "2026-09-01-conversation-controller-v2";
+const CONVERSATION_CONTROLLER_VERSION = 3;
+const APP_BUILD_MARKER = "2026-09-02-seamless-conversation-controller-v3";
 const DEFAULT_KPI_TARGETS = {
   daily_touch_points_target: 100,
   touch_pitch_min_rate: 10,
@@ -845,13 +845,26 @@ function countQuestions(text) {
   return (String(text || "").match(/\?/g) || []).length;
 }
 
+function unsafeReplyReview(memory, incoming, reason) {
+  const repaired = appointmentSetterControllerRecoveryReply(memory, incoming, reason);
+  return repaired
+    ? {
+        safe: true,
+        repaired,
+        reason: `Repaired unsafe reply with the controller fallback: ${reason}`
+      }
+    : { safe: false, repaired: null, reason };
+}
+
 function replySafetyReview(memory, incoming, replyLike) {
   const replyText = joinedReplyText(replyLike);
   const messages = replyMessages(replyLike);
   const incomingText = String(incoming?.text || "");
   const expectsCalendar =
-    (lastAssistantInvitedToZoom(memory) || lastAssistantAskedForCalendarPermission(memory)) &&
-    schedulingAcceptance(incomingText) &&
+    ((lastAssistantInvitedToZoom(memory) || lastAssistantAskedForCalendarPermission(memory)) &&
+      schedulingAcceptance(incomingText) ||
+      directBookingIntent(incomingText) ||
+      replyLike?.controller_action === "send_calendar") &&
     !memory?.booking_link_sent;
 
   if (expectsCalendar && !containsBookingLink(replyText)) {
@@ -863,23 +876,27 @@ function replySafetyReview(memory, incoming, replyLike) {
   }
 
   if (!replyText) {
-    return { safe: false, repaired: null, reason: "Reply was empty." };
+    return unsafeReplyReview(memory, incoming, "Reply was empty.");
   }
 
   if (messages.length > 3) {
-    return { safe: false, repaired: null, reason: "Reply contained too many message parts." };
+    return unsafeReplyReview(memory, incoming, "Reply contained too many message parts.");
   }
 
   if (messages.some((message) => message.length > 520)) {
-    return { safe: false, repaired: null, reason: "Reply was too long for an Instagram DM." };
+    return unsafeReplyReview(memory, incoming, "Reply was too long for an Instagram DM.");
   }
 
   if (countQuestions(replyText) > 1) {
-    return { safe: false, repaired: null, reason: "Reply asked more than one question." };
+    return unsafeReplyReview(memory, incoming, "Reply asked more than one question.");
   }
 
   if (/\b(?:bro|brother|my man)\b/i.test(replyText)) {
-    return { safe: false, repaired: null, reason: "Reply used gendered familiarity without evidence." };
+    return unsafeReplyReview(
+      memory,
+      incoming,
+      "Reply used gendered familiarity without evidence."
+    );
   }
 
   if (
@@ -887,14 +904,20 @@ function replySafetyReview(memory, incoming, replyLike) {
     containsBookingLink(replyText) &&
     !asksToResendCalendarLink(incomingText)
   ) {
-    return { safe: false, repaired: null, reason: "Calendar link was already sent." };
+    return unsafeReplyReview(memory, incoming, "Calendar link was already sent.");
   }
 
   if (
     replyRepeatsRecentAssistant(memory, replyText) &&
-    !asksToResendCalendarLink(incomingText)
+    !asksToResendCalendarLink(incomingText) &&
+    !expectsCalendar &&
+    !replyLike?.controller_recovery
   ) {
-    return { safe: false, repaired: null, reason: "Reply repeated a recent assistant message." };
+    return unsafeReplyReview(
+      memory,
+      incoming,
+      "Reply repeated a recent assistant message."
+    );
   }
 
   return { safe: true, repaired: null, reason: "" };
@@ -2440,7 +2463,7 @@ function controllerStage(memory) {
   if (qualificationPermissionRequested(memory)) return "PERMISSION_REQUESTED";
   if (
     memory?.conversation_state === "PALLET_INTEREST_DETECTED" ||
-    memory?.lead_profile?.intent === "start_business"
+    ["start_business", "interested", "ready"].includes(memory?.lead_profile?.intent)
   ) {
     return "PALLET_INTEREST_DETECTED";
   }
@@ -2505,7 +2528,7 @@ function broadAgreement(text) {
 function schedulingAcceptance(text) {
   const value = normalizeTurnText(text);
   return broadAgreement(value) ||
-    /^(?:when|what time|what day|when are you available|how do i book|where do i book|can we talk|let'?s talk|lets talk)(?:\b|$)/i.test(value) ||
+    /^(?:when|time and date|date and time|what time(?: and date)?|what day|which day|when are you available|send (?:me )?(?:a )?(?:time|date)|how do i book|where do i book|can we talk|let'?s talk|lets talk)(?:\b|$)/i.test(value) ||
     /\b(?:ready to talk|ready for the call|send (?:me )?(?:the )?link|drop (?:the )?link)\b/i.test(value);
 }
 
@@ -2516,6 +2539,14 @@ function palletBusinessTruckContext(text) {
     (/\bpallets?\b/i.test(value) || hasClearStartIntent(value)) &&
     /\b(?:collect|pick up|pickup|sell|start|business|learn|interested|how.*work|want|wanna)\b/i.test(value)
   );
+}
+
+function palletSideHustleIntent(text) {
+  const value = String(text || "");
+  return /\bpallets?\b/i.test(value) &&
+    /\b(side hustle|on the side|side money|extra money|extra income|make (?:a little )?money|when (?:work|business|times) (?:is|are )?slow|hoping to make)\b/i.test(
+      value
+    );
 }
 
 function interpretSetterTurn(memory, text) {
@@ -2555,6 +2586,9 @@ function interpretSetterTurn(memory, text) {
   } else if (hasClearStartIntent(text)) {
     action = "start_business";
     confidence = 0.96;
+  } else if (palletSideHustleIntent(text)) {
+    action = "start_business";
+    confidence = 0.95;
   } else if (palletBusinessTruckContext(text)) {
     action = "start_business";
     confidence = 0.94;
@@ -2784,6 +2818,111 @@ function appointmentSetterQualificationQuestionReply(memory) {
   return appointmentSetterZoomInviteReply(memory);
 }
 
+function appointmentSetterQualificationRecoveryReply(memory) {
+  markConversationState(memory, "QUALIFYING");
+  const next = missingQualificationKeys(memory)[0];
+
+  if (next === "market") {
+    return {
+      reply: "What city and state will you be operating your pallet business in?",
+      needs_review: false,
+      handled: true,
+      controller_recovery: true
+    };
+  }
+
+  if (next === "why") {
+    return {
+      reply: "What makes now feel like the right time for you to start?",
+      needs_review: false,
+      handled: true,
+      controller_recovery: true
+    };
+  }
+
+  if (next === "goal") {
+    return {
+      reply: "What would you want the pallet business to change for you financially?",
+      needs_review: false,
+      handled: true,
+      controller_recovery: true
+    };
+  }
+
+  return {
+    ...appointmentSetterZoomInviteReply(memory),
+    controller_recovery: true
+  };
+}
+
+function appointmentSetterControllerRecoveryReply(memory, incoming, reason = "") {
+  if (!memory || memory.booking_confirmed || memoryAutomationPaused(memory)) {
+    return null;
+  }
+
+  hydrateFreshProfileFromHistory(memory);
+  const text = latestProspectTurnText(memory, incoming);
+  const interpretation = interpretSetterTurn(memory, text);
+  const stage = controllerStage(memory);
+
+  if (
+    !memory.booking_link_sent &&
+    (interpretation.action === "send_calendar" ||
+      directBookingIntent(text) ||
+      (stage === "CALL_INVITED" && schedulingAcceptance(text)))
+  ) {
+    return {
+      ...appointmentSetterCalendarLinkReply(incoming, memory),
+      controller_action: "send_calendar",
+      controller_confidence: Math.max(0.98, interpretation.confidence || 0),
+      controller_recovery: true,
+      recovery_reason: reason
+    };
+  }
+
+  if (prospectAskedQuestion(text)) {
+    return null;
+  }
+
+  if (stage === "PALLET_INTEREST_DETECTED") {
+    return {
+      ...appointmentSetterQualificationPermissionReply(memory),
+      reply: "Is it cool if I ask you a few questions so I can point you toward the best path?",
+      controller_action: "request_qualification_permission",
+      controller_confidence: 0.95,
+      controller_valid: true,
+      controller_recovery: true,
+      recovery_reason: reason
+    };
+  }
+
+  if (
+    stage === "PERMISSION_REQUESTED" &&
+    (broadAgreement(text) || yesToBusinessInterest(text))
+  ) {
+    markQualificationPermissionGranted(memory);
+    return {
+      ...appointmentSetterQualificationRecoveryReply(memory),
+      controller_action: "continue_qualification",
+      controller_confidence: 0.95,
+      controller_valid: true,
+      recovery_reason: reason
+    };
+  }
+
+  if (stage === "QUALIFYING" || stage === "QUALIFIED") {
+    return {
+      ...appointmentSetterQualificationRecoveryReply(memory),
+      controller_action: stage === "QUALIFIED" ? "invite_call" : "continue_qualification",
+      controller_confidence: 0.95,
+      controller_valid: true,
+      recovery_reason: reason
+    };
+  }
+
+  return null;
+}
+
 function appointmentSetterZoomInviteReply(memory, date = new Date()) {
   markCallInvited(memory);
   const market = formatKnownMarket(memory);
@@ -2966,8 +3105,31 @@ function freshProfileSignalsForAnswer(text, questionType = "") {
   return signals;
 }
 
+function qualificationFieldPresent(memory, questionType) {
+  if (questionType === "market") return hasOperatingMarket(memory);
+  if (questionType === "why") return hasWhyStart(memory);
+  if (questionType === "goal") return hasGoalMotivation(memory);
+  return false;
+}
+
+function usableQualificationAnswer(text, questionType) {
+  const value = cleanProspectReply(text).trim();
+  if (!value || value.includes("?") || saysSoftDecline(value)) return false;
+  if (questionType === "market") return looksLikeShortLocationAnswer(value);
+  if (broadAgreement(value) || value.length < 8) return false;
+  return true;
+}
+
+function isLightConsentSignal(text) {
+  const value = normalizeTurnText(text);
+  return broadAgreement(value) ||
+    /^(?:i'?m listening|im listening|i am listening|go ahead|ask away|what do you need to know|i'?m ready|im ready)$/i.test(
+      value
+    );
+}
+
 function hydrateFreshProfileFromHistory(memory) {
-  if (!memory || memory.fresh_profile_hydrated) {
+  if (!memory) {
     return;
   }
 
@@ -2978,7 +3140,10 @@ function hydrateFreshProfileFromHistory(memory) {
   let currentQuestionType = "";
   for (const message of Array.isArray(memory.last_messages) ? memory.last_messages : []) {
     if (message.role === "assistant") {
-      currentQuestionType = freshQuestionTypeFromAssistantText(message.text);
+      const askedType = freshQuestionTypeFromAssistantText(message.text);
+      if (askedType) {
+        currentQuestionType = askedType;
+      }
       continue;
     }
 
@@ -2986,11 +3151,24 @@ function hydrateFreshProfileFromHistory(memory) {
       continue;
     }
 
-    memory.lead_profile = mergeLeadProfile(
-      memory.lead_profile,
-      freshProfileSignalsForAnswer(message.text || "", currentQuestionType)
-    );
-    currentQuestionType = "";
+    if (currentQuestionType && qualificationFieldPresent(memory, currentQuestionType)) {
+      currentQuestionType = missingQualificationKeys(memory)[0] || "";
+    }
+
+    const answerType = currentQuestionType;
+    const usedQualificationAnswer =
+      Boolean(answerType) && usableQualificationAnswer(message.text || "", answerType);
+    const signals =
+      usedQualificationAnswer
+        ? freshProfileSignalsForAnswer(message.text || "", answerType)
+        : isLightConsentSignal(message.text || "")
+          ? {}
+          : leadProfileFromText(message.text || "");
+
+    memory.lead_profile = mergeLeadProfile(memory.lead_profile, signals);
+    currentQuestionType = answerType
+      ? missingQualificationKeys(memory)[0] || ""
+      : "";
   }
 
   memory.fresh_profile_hydrated = true;
@@ -3071,9 +3249,11 @@ function appointmentSetterStaleReentryReply(memory) {
 }
 
 function asksIncomePotential(text) {
-  return /\b(how much|how many|range|revenue|profit|income|money|earn|make|pay myself|potential)\b.{0,80}\b(make|earn|profit|income|revenue|money|business)|\b(make|earn|profit|income|revenue|money)\b.{0,80}\b(pallet|business|month|week|year|yr|range)\b/i.test(
-    String(text || "")
-  );
+  const value = String(text || "");
+  return prospectAskedQuestion(value) &&
+    /\b(how much|how many|range|revenue|profit|income|money|earn|make|pay myself|potential)\b.{0,80}\b(make|earn|profit|income|revenue|money|business)|\b(make|earn|profit|income|revenue|money)\b.{0,80}\b(pallet|business|month|week|year|yr|range)\b/i.test(
+      value
+    );
 }
 
 function appointmentSetterIncomeReply(memory) {
@@ -3191,6 +3371,16 @@ function freshSetterDecisionReply(memory, incoming, text, featureSettings = {}) 
   backfillFreshSetterAnswer(memory, text);
   const interpretation = interpretSetterTurn(memory, text);
   recordControllerDecision(memory, interpretation);
+
+  if (isLikelyNonLeadBroadcast(text)) {
+    return {
+      reply: "",
+      needs_review: false,
+      handled: true,
+      skip_reply: true,
+      skip_reason: "Likely non-lead promotional broadcast."
+    };
+  }
 
   if (
     saysSoftDecline(text) &&
@@ -3323,7 +3513,9 @@ function freshSetterDecisionReply(memory, incoming, text, featureSettings = {}) 
   const seriousInterest =
     interpretation.action === "start_business" ||
     hasClearStartIntent(text) ||
+    palletSideHustleIntent(text) ||
     (lastAssistantAskedContentOrBusiness(memory) && yesToBusinessInterest(text)) ||
+    controllerStage(memory) === "PALLET_INTEREST_DETECTED" ||
     qualificationPermissionRequested(memory) ||
     lastAssistantAskedQualificationPermission(memory) ||
     qualificationQuestionWasAsked(memory);
@@ -3855,6 +4047,28 @@ function wantsContentOnly(text) {
   );
 }
 
+function isLikelyNonLeadBroadcast(text) {
+  const value = String(text || "");
+  if (
+    !value.trim() ||
+    hasClearStartIntent(value) ||
+    wantsPalletBusiness(value) ||
+    wantsAppointmentOrScheduling(value) ||
+    prospectAskedQuestion(value)
+  ) {
+    return false;
+  }
+
+  const signals = [
+    /\b(new|latest)\s+(?:post|reel|video|episode|drop|song|track)\b/i,
+    /\b(?:like|comment|share|subscribe|check it out|link in bio)\b/i,
+    /\b(?:thank (?:all of )?you|thanks everyone|appreciate (?:all of )?you|thank you for the support)\b/i,
+    /https?:\/\//i
+  ].filter((pattern) => pattern.test(value)).length;
+
+  return signals >= 2;
+}
+
 function saysNotReadyYet(text) {
   return /\b(not now|not right now|not ready|when i'?m ready|when im ready|i'?ll let you know|i will let you know|later|another time|not at the moment|not today|maybe later)\b/i.test(
     String(text || "")
@@ -3918,7 +4132,7 @@ function asksIfLegit(text) {
 }
 
 function mentionsExistingPalletBusiness(text) {
-  return /\b(started|have|own|run|running|been in|already (?:have|run|started)).{0,80}\b(pallet|pallets|pallet business)\b|\b(pallet|pallets)\b.{0,80}\b(5 years|years ago|already started|my business|our business|slowed down|slow|slower)\b/i.test(
+  return /\b(started|have|own|run|running|been in|already (?:have|run|started)).{0,80}\b(pallet|pallets|pallet business)\b|\b(pallet|pallets)\b.{0,80}\b(5 years|years ago|already started|my business|our business|my pallet business)\b/i.test(
     String(text || "")
   );
 }
@@ -3930,8 +4144,12 @@ function mentionsBuyerProblem(text) {
 }
 
 function existingOperatorBuyerProblem(memory, text) {
-  const recent = recentConversationText(memory, 8);
-  const combined = `${recent} ${String(text || "").toLowerCase()}`;
+  const recentProspectText = (Array.isArray(memory?.last_messages) ? memory.last_messages : [])
+    .filter((message) => message.role === "user")
+    .slice(-8)
+    .map((message) => String(message.text || ""))
+    .join(" ");
+  const combined = `${recentProspectText} ${String(text || "").toLowerCase()}`;
 
   return mentionsBuyerProblem(text) && mentionsExistingPalletBusiness(combined);
 }
@@ -4139,7 +4357,7 @@ function prospectAskedQuestion(text) {
     /^(how|what|where|when|why|who|can i|can you|do you|does it|is it|are there|would|could|should)\b/i.test(
       cleanText
     ) ||
-    /\b(price|cost|pay|make|need)\b/i.test(
+    /^(?:price|pricing|cost|requirements?|how much)$/i.test(
       cleanText
     )
   );
@@ -7820,6 +8038,20 @@ async function processIncomingReply(incoming, parsedPayload, conversationKey) {
     : appointmentSetterRuleReply(memory, incoming, featureSettings);
 
   if (ruleBasedReply) {
+    if (ruleBasedReply.skip_reply) {
+      await writeStore(memoryStore);
+      await appendAutomationEvent({
+        level: "info",
+        type: "non_lead_ignored",
+        message: "Ignored an obvious non-lead promotional broadcast.",
+        talk_id: incoming.talk_id,
+        contact_id: incoming.contact_id,
+        conversation_key: resolvedConversationKey,
+        reason: ruleBasedReply.skip_reason || "No reply was appropriate."
+      });
+      return;
+    }
+
     const safetyReview = replySafetyReview(memory, incoming, ruleBasedReply);
     if (safetyReview.repaired) {
       ruleBasedReply = { ...ruleBasedReply, ...safetyReview.repaired };
@@ -9046,6 +9278,25 @@ app.post("/api/test-reply", async (req, res, next) => {
       : appointmentSetterRuleReply(memory, newMessage, featureSettings);
 
     if (ruleBasedReply) {
+      if (ruleBasedReply.skip_reply) {
+        res.json({
+          ok: true,
+          lead_status: memory.lead_status,
+          reply: "",
+          messages: [],
+          needs_review: false,
+          source: "rule",
+          ignored: true,
+          safety: { safe: true, repaired: null, reason: ruleBasedReply.skip_reason || "" },
+          controller: {
+            stage: controllerStage(memory),
+            expected_action: controllerExpectedAction(memory),
+            interpretation: interpretSetterTurn(memory, newMessage.text)
+          }
+        });
+        return;
+      }
+
       const safetyReview = replySafetyReview(memory, newMessage, ruleBasedReply);
       if (safetyReview.repaired) {
         ruleBasedReply = { ...ruleBasedReply, ...safetyReview.repaired };

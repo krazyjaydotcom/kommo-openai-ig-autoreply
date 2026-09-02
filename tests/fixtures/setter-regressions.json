@@ -90,5 +90,51 @@
     "new_message": "Why is it asking for my card info?",
     "includes": ["do not have to book", "manually"],
     "excludes": ["go.palletprosacademy.com/discovery"]
+  },
+  {
+    "name": "time and date acceptance sends calendar instead of duplicate draft",
+    "transcript": "Prospect: Will love to start my own business\nYou: Sure. Is it cool if I ask you a few questions to help determine the best path for you?\nProspect: I'm listening\nYou: Perfect. First one, what city and state are you planning to operate your pallet business in?\nProspect: South Jersey\nYou: Got you. South Jersey is helpful to know. What's got you interested in starting a pallet business now?\nProspect: I'm out of work and looking for another avenue.\nYou: The best next step is to look at your market together. Would you be open to a quick Zoom this week so we can look at South Jersey and see if the academy is a good fit?",
+    "new_message": "Time And Date",
+    "includes": ["go.palletprosacademy.com/discovery", "grab that link"],
+    "excludes": ["would you be open"],
+    "message_count": 3
+  },
+  {
+    "name": "consecutive market and motivation messages advance without re-asking why",
+    "transcript": "Prospect: I want to start a pallet business\nYou: Sure. Is it cool if I ask you a few questions to help determine the best path for you?\nProspect: Yes\nYou: Perfect. First one, what city and state are you planning to operate your pallet business in?\nProspect: Deptford NJ\nProspect: I saw someone in Philly making decent side money and thought I could do that.\nYou: Still interested in getting this started?\nYou: No pressure, just checking if this is still something you want to look into.",
+    "new_message": "Yes",
+    "includes": ["financially"],
+    "excludes": ["what's got you interested", "tidycal.com"]
+  },
+  {
+    "name": "detailed pallet setup answer returns to permission path",
+    "transcript": "Prospect: I thought about starting this in the past but had no real guidance.\nYou: Got you. It sounds like you're ready for a change. What part of starting a pallet business interests you the most right now?",
+    "new_message": "Ground zero. I have a pickup and trailer and someone willing to help. I'm not looking to get rich, just options.",
+    "includes": ["few questions", "best path"],
+    "excludes": ["tidycal.com"],
+    "message_count": 1
+  },
+  {
+    "name": "obvious promotional broadcast is ignored",
+    "transcript": "You: Are you here for the content or wanting to start your own pallet business?",
+    "new_message": "Yo! New post out! We hit 3 goals and I wanted to thank all of you for the support. Feel free to like and comment!",
+    "includes": [],
+    "excludes": ["youtube.com", "calendar", "pallet business"],
+    "message_count": 0,
+    "ignored": true
+  },
+  {
+    "name": "im listening grants permission without becoming the market",
+    "transcript": "Prospect: I'm looking to start my own pallet business\nYou: Sure. Is it cool if I ask you a few questions to help determine the best path for you?",
+    "new_message": "I'm listening",
+    "includes": ["city and state"],
+    "excludes": ["i'm listening is helpful", "tidycal.com"]
+  },
+  {
+    "name": "side hustle interest follows qualification path before Zoom",
+    "transcript": "You: Are you here for the content or wanting to start your own pallet business?",
+    "new_message": "I do junk removal but I was hoping to make a little money on the side with pallets when times are slow.",
+    "includes": ["few questions", "best path"],
+    "excludes": ["calendar", "zoom"]
   }
 ]

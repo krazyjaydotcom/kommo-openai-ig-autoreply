@@ -72,6 +72,13 @@ async function run() {
       const body = await response.json();
       assert.strictEqual(response.ok, true, `${fixture.name}: ${JSON.stringify(body)}`);
       assert.strictEqual(body.source, "rule", `${fixture.name}: expected deterministic rule route`);
+      if (fixture.ignored !== undefined) {
+        assert.strictEqual(
+          Boolean(body.ignored),
+          Boolean(fixture.ignored),
+          `${fixture.name}: unexpected ignored state`
+        );
+      }
 
       const reply = String(body.reply || "").toLowerCase();
       for (const expected of fixture.includes || []) {
