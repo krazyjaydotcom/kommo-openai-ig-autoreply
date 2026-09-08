@@ -12821,6 +12821,31 @@ function renderModernHomePage() {
         padding: 4px 6px;
       }
     }
+    .companion { grid-template-rows: auto minmax(0,1fr) auto auto; }
+    .companion-head { grid-template-columns: auto minmax(0,1fr) auto auto; }
+    .companion-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #dm-send-status { font-size: 12px; padding: 0 18px; background: inherit; }
+    #dm-send-status:not(:empty) { padding-bottom: 8px; }
+    #dm-companion-booking { min-height: 44px; font-size: 12px; }
+    #dm-companion-booking[aria-checked="true"] { color: #168047; background: #e6f6ed; }
+    .companion-thread { overflow-y: auto; overscroll-behavior: contain; }
+    @media (max-width: 768px) {
+      .companion-head { grid-template-columns: 32px 40px minmax(0,1fr) auto; min-height: 72px; padding: max(10px,env(safe-area-inset-top)) 12px 10px; gap: 8px; }
+      .companion-head .avatar { width: 40px; height: 40px; }
+      .companion-title { font-size: 16px; }
+      .companion-subtitle { font-size: 12px; }
+      #dm-companion-booking { grid-column: 4; grid-row: 1; min-width: 60px; border-radius: 20px; padding: 0 8px; }
+      .companion-thread { padding: 16px 12px; gap: 8px; }
+      .bubble { font-size: 16px; line-height: 1.4; padding: 10px 14px; max-width: 84%; overflow-wrap: anywhere; }
+      .bubble.user { background: #f1f2f5; border-color: #f1f2f5; }
+      .bubble.assistant { background: #4765e8; border-color: #4765e8; color: white; }
+      .bubble.assistant small { color: #e1e6ff; }
+      .bubble small { font-size: 11px; }
+      .companion-composer { grid-template-columns: minmax(0,1fr) 52px; padding: 8px 12px max(8px,env(safe-area-inset-bottom)); }
+      .companion-composer textarea { grid-column: 1; font-size: 16px; min-height: 44px; height: 44px; max-height: 112px; border-radius: 22px; padding: 10px 14px; }
+      .companion-actions { display: contents; }
+      #dm-companion-send { grid-column: 2; min-height: 48px; }
+    }
   </style>
 </head>
 <body>
@@ -13156,16 +13181,17 @@ function renderModernHomePage() {
           <div class="companion-title" id="dm-companion-title">DM Companion</div>
           <div class="companion-subtitle" id="dm-companion-subtitle">Recent Instagram context</div>
         </div>
-        <button class="companion-close" id="dm-companion-close" type="button" aria-label="Back to inbox">&lt;</button>
+        <button class="companion-close" id="dm-companion-close" type="button" aria-label="Back to inbox">&#8249;</button>
+        <button class="action" id="dm-companion-booking" type="button" role="switch" aria-label="Automation for this prospect">Bot</button>
       </header>
       <div class="companion-thread" id="dm-companion-thread"></div>
       <form class="companion-composer" id="dm-companion-form">
-        <textarea id="dm-companion-text" aria-label="Manual Instagram reply" maxlength="1200" placeholder="Type a message..."></textarea>
+        <textarea id="dm-companion-text" rows="1" aria-label="Manual Instagram reply" maxlength="1200" placeholder="Message..."></textarea>
         <div class="companion-actions">
-          <button class="action" id="dm-companion-booking" type="button">Turn Bot Off</button>
-          <button class="action primary" id="dm-companion-send" type="submit">Send DM</button>
+          <button class="action primary" id="dm-companion-send" type="submit">Send</button>
         </div>
       </form>
+      <div id="dm-send-status" role="status" aria-live="polite"></div>
     </section>
   </div>
 
@@ -13827,8 +13853,13 @@ function renderModernHomePage() {
       companionAvatarEl.textContent = conversation ? initials(conversation) : "IG";
     }
 
+    const companionDrafts = new Map();
+    let renderedCompanionKey = "";
     function renderCompanion(conversation) {
       if (!conversation) return;
+      const followLatest = renderedCompanionKey !== conversation.key || companionThreadEl.scrollHeight - companionThreadEl.scrollTop - companionThreadEl.clientHeight < 80;
+      const previousScroll = companionThreadEl.scrollTop;
+      renderedCompanionKey = conversation.key;
       renderCompanionAvatar(conversation);
       companionTitleEl.textContent = displayLeadName(conversation);
       companionSubtitleEl.textContent =
@@ -13842,7 +13873,8 @@ function renderModernHomePage() {
       }
       if (companionBookingEl) {
         const botPaused = Boolean(conversation.ai_paused || conversation.manual_takeover_active);
-        companionBookingEl.textContent = botPaused ? "Turn Bot On" : "Turn Bot Off";
+        companionBookingEl.textContent = botPaused ? "Bot off" : "Bot on";
+        companionBookingEl.setAttribute("aria-checked", String(!botPaused));
         companionBookingEl.classList.toggle("primary", botPaused);
         companionBookingEl.setAttribute(
           "aria-pressed",
@@ -13878,16 +13910,20 @@ function renderModernHomePage() {
         bubble.append(text, meta);
         companionThreadEl.appendChild(bubble);
       });
-      companionThreadEl.scrollTop = companionThreadEl.scrollHeight;
+      companionThreadEl.scrollTop = followLatest ? companionThreadEl.scrollHeight : previousScroll;
     }
 
     function openCompanion(conversation) {
+      if (state.activeConversationKey) companionDrafts.set(state.activeConversationKey, companionTextEl.value);
       state.activeConversationKey = conversation.key;
-      renderCompanion(conversation);
       companionEl.hidden = false;
+      companionTextEl.value = companionDrafts.get(conversation.key) || "";
+      document.getElementById("dm-send-status").textContent = "";
+      renderCompanion(conversation);
     }
 
     function closeCompanion() {
+      companionDrafts.set(state.activeConversationKey, companionTextEl.value);
       companionEl.hidden = true;
       state.activeConversationKey = "";
       companionTextEl.value = "";
@@ -13899,6 +13935,8 @@ function renderModernHomePage() {
       if (!conversation || !reply) return;
 
       companionSendEl.disabled = true;
+      companionTextEl.readOnly = true;
+      document.getElementById("dm-send-status").textContent = "Sending...";
       companionBookingEl.disabled = true;
       setStatus("Sending manual DM...");
       try {
@@ -13908,6 +13946,8 @@ function renderModernHomePage() {
           body: JSON.stringify({ reply })
         });
         companionTextEl.value = "";
+        companionDrafts.delete(conversation.key);
+        document.getElementById("dm-send-status").textContent = "Sent";
         await loadAll(true);
         if (data.conversation) {
           state.activeConversationKey = data.conversation.key;
@@ -13917,8 +13957,10 @@ function renderModernHomePage() {
         }
         setStatus("Manual DM sent. AI is paused briefly for this lead.");
       } catch (error) {
+        document.getElementById("dm-send-status").textContent = error.message;
         setStatus(error.message);
       } finally {
+        companionTextEl.readOnly = false;
         companionSendEl.disabled = false;
         companionBookingEl.disabled = false;
       }
