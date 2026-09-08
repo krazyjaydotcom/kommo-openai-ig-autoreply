@@ -6049,7 +6049,7 @@ async function openAiLearningReview(store, timeframe = "7d") {
     },
     body: JSON.stringify({
       model: process.env.OPENAI_MODEL || DEFAULT_OPENAI_MODEL,
-      temperature: 0.2,
+      ...(/^gpt-5/.test(process.env.OPENAI_MODEL || DEFAULT_OPENAI_MODEL) ? { reasoning_effort: "none" } : { temperature: 0.2 }),
       response_format: { type: "json_object" },
       messages: [
         {
@@ -7054,7 +7054,7 @@ async function generateReply({
     },
     body: JSON.stringify({
       model: process.env.OPENAI_MODEL || DEFAULT_OPENAI_MODEL,
-      temperature: 0.4,
+      ...(/^gpt-5/.test(process.env.OPENAI_MODEL || DEFAULT_OPENAI_MODEL) ? { reasoning_effort: "none" } : { temperature: 0.4 }),
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: systemPrompt(featureSettings) },
