@@ -42,9 +42,7 @@ const DEFAULT_HUMAN_SEND_DELAY_MAX_MS = 7000;
 const APP_OUTGOING_ECHO_WINDOW_MS = 15 * 60 * 1000;
 const CALENDAR_SEQUENCE_GAP_MS = 8 * 1000;
 const FOLLOW_UP_OFFSETS_MS = [
-  45 * 60 * 1000,
-  4 * 60 * 60 * 1000,
-  18 * 60 * 60 * 1000
+  4 * 60 * 60 * 1000
 ];
 const FOLLOW_UP_CHECK_MS = 60 * 1000;
 const FOLLOW_UP_WINDOW_MS = 23 * 60 * 60 * 1000;
@@ -3790,7 +3788,7 @@ function appointmentSetterCalendarLinkReply(messageLike, memory = null) {
   const messages = [
     "Perfect. Give me one sec and I'll grab that link for you. 💯",
     `Here's my calendar 🗓️\n${calendarUrl}`,
-    "I'll be by my phone for another 5 minutes. Choose a date/time that works for you and I'll verify it on my end."
+    "Choose a weekday date and time that works for you. Let me know once you've booked."
   ];
 
   return {
@@ -6184,6 +6182,11 @@ function latestLearningGuidance(store) {
 }
 
 function learningGuidanceForPrompt(store) {
+  // Reviews remain visible in the dashboard but do not rewrite the live sales approach.
+  return null;
+}
+
+function learningGuidanceForReview(store) {
   const guidance = latestLearningGuidance(store);
   if (!guidance) {
     return null;

@@ -79,7 +79,8 @@
     "name": "calendar permission sends the timed sequence",
     "transcript": "Prospect: I want to start a pallet business\nYou: Great. Let's get on a quick Zoom this week. We can look at your market, answer your questions, and see if the academy would be a good fit. Mind if I send you my calendar?",
     "new_message": "Sure",
-    "includes": ["grab that link", "go.palletprosacademy.com/discovery", "another 5 minutes"],
+    "includes": ["grab that link", "go.palletprosacademy.com/discovery", "weekday"],
+    "excludes": ["by my phone"],
     "message_count": 3
   },
   {
