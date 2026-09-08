@@ -7132,7 +7132,8 @@ async function sendReplyToZernio(messageLike, replyText, featureSettings) {
       method: "POST",
       body: JSON.stringify({
         accountId,
-        message: replyText.trim()
+        message: replyText.trim(),
+        ...(messageLike.manual_support_tag ? { messagingType: "MESSAGE_TAG", messageTag: "HUMAN_AGENT" } : {})
       })
     }
   );
@@ -9201,7 +9202,20 @@ app.post("/api/conversations/:key/send-message", async (req, res, next) => {
       return;
     }
 
+    const inboundAt = Date.parse(memory.last_incoming_at || "");
+    const inboundAge = Date.now() - inboundAt;
+    if (!Number.isFinite(inboundAge) || inboundAge < 0 || inboundAge >= 7 * 86400000) {
+      res.status(409).json({ ok: false, error: "Reply window closed or unknown. Wait for a new Instagram message." });
+      return;
+    }
+    const extendedSupport = inboundAge >= 86400000;
+    if (extendedSupport && req.body?.human_support !== true) {
+      res.status(409).json({ ok: false, error: "After 24 hours, only a personally written customer-support reply is eligible. Select Human support to continue." });
+      return;
+    }
+
     const messageLike = {
+      manual_support_tag: extendedSupport,
       provider: memory.provider,
       contact_id: memory.contact_id,
       chat_id: memory.chat_id,
@@ -13192,6 +13206,7 @@ function renderModernHomePage() {
         </div>
       </form>
       <div id="dm-send-status" role="status" aria-live="polite"></div>
+      <label id="dm-support-option" hidden style="font-size:12px;padding:8px 16px"><input id="dm-human-support" type="checkbox"> Human support reply (no automated or promotional follow-up)</label>
     </section>
   </div>
 
@@ -13861,6 +13876,10 @@ function renderModernHomePage() {
       const previousScroll = companionThreadEl.scrollTop;
       renderedCompanionKey = conversation.key;
       renderCompanionAvatar(conversation);
+      const replyAge = Date.now() - Date.parse(conversation.last_incoming_at || "");
+      const supportOnly = replyAge >= 86400000 && replyAge < 7 * 86400000;
+      document.getElementById("dm-support-option").hidden = !supportOnly;
+      companionTextEl.placeholder = supportOnly ? "Customer-support reply..." : "Message...";
       companionTitleEl.textContent = displayLeadName(conversation);
       companionSubtitleEl.textContent =
         conversation.ai_paused || conversation.manual_takeover_active
@@ -13918,6 +13937,7 @@ function renderModernHomePage() {
       state.activeConversationKey = conversation.key;
       companionEl.hidden = false;
       companionTextEl.value = companionDrafts.get(conversation.key) || "";
+      document.getElementById("dm-human-support").checked = false;
       document.getElementById("dm-send-status").textContent = "";
       renderCompanion(conversation);
     }
@@ -13943,7 +13963,7 @@ function renderModernHomePage() {
         const data = await api("/api/conversations/" + encodeURIComponent(conversation.key) + "/send-message", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ reply })
+          body: JSON.stringify({ reply, human_support: document.getElementById("dm-human-support").checked })
         });
         companionTextEl.value = "";
         companionDrafts.delete(conversation.key);
