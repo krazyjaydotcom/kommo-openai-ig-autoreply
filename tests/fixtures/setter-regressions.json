@@ -1,5 +1,30 @@
 [
   {
+    "name": "training permission from observed live conversation is honored",
+    "transcript": "You: I've got a training video that can show you exactly how this business works. Do you mind if I send you the link to it?",
+    "new_message": "Yea I'll be glad to browse the link/website",
+    "includes": ["palletprosacademy.com/training"],
+    "excludes": ["calendar"],
+    "message_count": 1,
+    "needs_attention": false
+  },
+  {
+    "name": "latest training offer wins over earlier calendar offer",
+    "transcript": "You: Mind if I send you my calendar?\nProspect: Can I watch something first?\nYou: I have a training video. Want me to send it?",
+    "new_message": "Sure",
+    "includes": ["palletprosacademy.com/training"],
+    "excludes": ["discovery"],
+    "message_count": 1
+  },
+  {
+    "name": "agreement to learn more progresses to invitation",
+    "transcript": "You: Would you like to learn more about what the academy offers?",
+    "new_message": "Yes",
+    "includes": ["zoom", "calendar"],
+    "excludes": ["tidycal.com"],
+    "message_count": 1
+  },
+  {
     "name": "clear business interest goes directly to Zoom invitation",
     "transcript": "You: Yoo. Thanks for the follow! Are you here for content or wanting to start your own pallet business?",
     "new_message": "I'm looking to start my own pallet business",
@@ -72,22 +97,24 @@
     "message_count": 3
   },
   {
-    "name": "question is held for Needs Me without a bot reply",
+    "name": "price question receives a brief answer without invented pricing",
     "transcript": "You: Are you here for the content or wanting to start your own pallet business?",
     "new_message": "How much does the academy cost?",
-    "includes": [],
-    "message_count": 0,
+    "includes": ["pricing depends", "learn more"],
+    "excludes": ["$37", "calendar"],
+    "message_count": 1,
     "ignored": false,
-    "needs_attention": true
+    "needs_attention": false
   },
   {
-    "name": "business interest plus a question is held for personal context",
+    "name": "business interest plus truck question answers the question first",
     "transcript": "You: Are you here for the content or wanting to start your own pallet business?",
     "new_message": "I want to start, but can I do this without a truck?",
-    "includes": [],
-    "message_count": 0,
+    "includes": ["truck helps"],
+    "excludes": ["calendar"],
+    "message_count": 1,
     "ignored": false,
-    "needs_attention": true
+    "needs_attention": false
   },
   {
     "name": "vague reply is held for Needs Me",

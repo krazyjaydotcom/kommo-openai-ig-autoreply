@@ -1834,6 +1834,7 @@ function humanEscalationReason(text) {
 }
 
 function hotLeadReason(text) {
+  if (isLikelyNonLeadBroadcast(text)) return "";
   const lower = String(text || "").toLowerCase();
 
   if (/\b(book|schedule|calendar|appointment|zoom|call|talk|consultation|meeting)\b/.test(lower)) {
@@ -2525,6 +2526,7 @@ function normalizeTurnText(text) {
 
 function broadAgreement(text) {
   const value = normalizeTurnText(text);
+  if (/\b(?:not now|not yet|don't send|do not send|no thanks|but|however)\b/i.test(value)) return false;
   return /^(?:y+e+s+|y+e+a+h*|y+e+p+|y+u+p+|sure+|sure thing|of course|absolutely|definitely|most definitely|for sure|fasho|fa sho|bet|cool|that'?s cool|thats cool|that'?s fine|thats fine|sounds good|that sounds good|that works|works for me|i'?m down|im down|go ahead|send it|let'?s do it|lets do it|i like the sound of that)(?:\b|$)/i.test(
     value
   );
@@ -3834,7 +3836,7 @@ function appointmentSetterContentReply(memory = null) {
 function appointmentSetterCostReply() {
   return {
     reply:
-      "It depends on where you're starting and how much help you need. Options can start around $37/month and go up for hands-on help.\n\nWant me to send the calendar so we can point you in the right direction?",
+      "Pricing depends on the level of help you're looking for, so I don't want to quote the wrong option. Would you like to learn more about what the academy offers?",
     needs_review: false,
     handled: true
   };
@@ -4056,6 +4058,7 @@ function wantsContentOnly(text) {
 
 function isLikelyNonLeadBroadcast(text) {
   const value = String(text || "");
+  if (/broadcast channel|deluxe release/i.test(value) && /stream|post|join/i.test(value) && !/pallet/i.test(value)) return true;
   if (
     !value.trim() ||
     hasClearStartIntent(value) ||
@@ -4221,15 +4224,8 @@ function lastAssistantAskedSoftLearningBridge(memory) {
 }
 
 function lastAssistantAskedForTrainingPermission(memory) {
-  return (Array.isArray(memory?.last_messages) ? memory.last_messages : [])
-    .slice(-5)
-    .some(
-      (message) =>
-        message.role === "assistant" &&
-        /(training video|explains how the pallet business works|want me to send it|send it)/i.test(
-          message.text || ""
-        )
-    );
+  const text = latestAssistantText(memory);
+  return /training|video/i.test(text) && /send|want|mind/i.test(text) && !/https?:\/\//i.test(text);
 }
 
 function yesToBusinessInterest(text) {
@@ -4410,15 +4406,8 @@ function mentionsSpecificTimeInsteadOfBooking(text) {
 }
 
 function lastAssistantAskedForCalendarPermission(memory) {
-  return (Array.isArray(memory?.last_messages) ? memory.last_messages : [])
-    .slice(-5)
-    .some(
-      (message) =>
-        message.role === "assistant" &&
-        /send you (?:a link to )?my calendar|send (?:you )?(?:the|a) calendar link|link to my calendar|calendar link/i.test(
-          message.text || ""
-        )
-    );
+  const text = latestAssistantText(memory);
+  return /calendar/i.test(text) && /send|want|mind/i.test(text) && !/https?:\/\//i.test(text);
 }
 
 function latestProspectTurnText(memory, incoming) {
@@ -4536,8 +4525,16 @@ function threeLaneSetterDecisionReply(memory, incoming, text) {
     );
   }
 
+  if (lastAssistantAskedForTrainingPermission(memory) && schedulingAcceptance(text) && !prospectAskedQuestion(text)) {
+    return { ...appointmentSetterTrainingLinkReply(), controller_action: "send_training" };
+  }
+
+  if (/would you like to learn more|want to learn more|interested in learning more/i.test(latestAssistantText(memory)) && broadAgreement(text) && !prospectAskedQuestion(text)) {
+    return appointmentSetterZoomInviteReply(memory);
+  }
+
   if (
-    (lastAssistantAskedForCalendarPermission(memory) || lastAssistantInvitedToZoom(memory)) &&
+    (lastAssistantAskedForCalendarPermission(memory) || /quick zoom|call this week/i.test(latestAssistantText(memory))) &&
     schedulingAcceptance(text)
   ) {
     return {
@@ -4562,7 +4559,8 @@ function threeLaneSetterDecisionReply(memory, incoming, text) {
   }
 
   if (prospectAskedQuestion(text)) {
-    return appointmentSetterNeedsAttentionReply(memory, threeLaneReviewReason(memory, text));
+    const answer = appointmentSetterQuestionReply(memory, incoming, text);
+    return answer || appointmentSetterNeedsAttentionReply(memory, threeLaneReviewReason(memory, text));
   }
 
   if (
@@ -8430,6 +8428,7 @@ async function processIncomingReply(incoming, parsedPayload, conversationKey) {
     isApprovalModeEnabled(featureSettings) &&
     (aiReply.needs_review || Boolean(reviewReason));
   const hardSafetyHold =
+    Boolean(contextWarning) ||
     !aiSafetyReview.safe ||
     /ambiguous short reply|repeated a recent assistant message|not allowed|confidence was too low|did not confirm/i.test(reviewReason);
   const shouldAutoSend =
@@ -13723,8 +13722,8 @@ function renderModernHomePage() {
     }
 
     function renderStatuses(settings) {
-      botStatusEl.textContent = "OpenAI Bot: " + (settings.openai_configured ? (settings.auto_send ? "Active" : "Draft Mode") : "Needs Key");
-      webhookStatusEl.textContent = "IG Webhook: " + (settings.zernio_configured ? "Operational" : "Needs Key");
+      botStatusEl.textContent = "Auto-send: " + (settings.openai_configured ? (settings.auto_send ? "Enabled" : "Disabled") : "Needs Key");
+      webhookStatusEl.textContent = "IG Connection: " + (settings.zernio_configured ? "Configured" : "Needs Key");
       flagsEl.innerHTML = "";
       [
         ["OpenAI key", settings.openai_configured],
@@ -13886,7 +13885,6 @@ function renderModernHomePage() {
       state.activeConversationKey = conversation.key;
       renderCompanion(conversation);
       companionEl.hidden = false;
-      setTimeout(() => companionTextEl.focus(), 30);
     }
 
     function closeCompanion() {
