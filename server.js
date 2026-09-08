@@ -513,7 +513,7 @@ async function ensureSupabaseStore() {
   const rows = await supabaseRestRequest(
     `${encodeURIComponent(SUPABASE_STATE_TABLE)}?key=eq.${encodeURIComponent(
       SUPABASE_STATE_KEY
-    )}&select=value`,
+    )}&select=key`,
     { method: "GET" }
   );
 
@@ -14889,7 +14889,8 @@ function renderModernHomePage() {
     });
 
     loadAll();
-    setInterval(() => loadAll(true), 10000);
+    setInterval(() => { if (!document.hidden) loadAll(true); }, 10000);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) loadAll(true); });
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("/sw.js").catch(() => {});
     }
