@@ -2,8 +2,28 @@ const crypto = require("crypto");
 const express = require("express");
 const fs = require("fs/promises");
 const path = require("path");
+const { createDurableJobs } = require("./scripts/durable-jobs");
+const { createDeliveryLedger } = require("./scripts/delivery-ledger");
+const { dashboardAuth } = require("./scripts/dashboard-auth");
+const deliveryLedger = createDeliveryLedger(supabaseRestRequest);
 
 const app = express();
+app.use((req, res, next) => dashboardAuth({
+  required: Boolean(process.env.DASHBOARD_PASSWORD) || process.env.NODE_ENV === "production" || storeBackend() === "supabase",
+  username: process.env.DASHBOARD_USER || "admin",
+  password: process.env.DASHBOARD_PASSWORD
+})(req, res, next));
+const durableReplies = createDurableJobs(supabaseRestRequest, async ({ incoming, parsedPayload }) => {
+  await sleep(INCOMING_REPLY_DEBOUNCE_MS);
+  if (!(await incomingStillCurrent(incoming))) return;
+  const conversationKey = makeConversationKey(incoming);
+  await enqueueConversationProcessing(conversationKey, () => processIncomingReply(incoming, parsedPayload, conversationKey));
+}, "reply");
+const durableJobs = createDurableJobs(supabaseRestRequest, async ({ incoming, parsedPayload }) => {
+  if (incoming.event_type === "message.sent") return processManualOutgoingMessage(incoming);
+  if (incoming.event_type && incoming.event_type !== "message.received") return;
+  await processIncomingMessage({ ...incoming, durable_job: true }, parsedPayload);
+});
 
 const PORT = Number(process.env.PORT || 3000);
 const DEFAULT_DATA_DIR = path.join(__dirname, "data");
@@ -538,17 +558,21 @@ async function ensureSupabaseStore() {
   }
 }
 
+const storeVersions = new WeakMap();
+
 async function readStore() {
   if (storeBackend() === "supabase") {
     await ensureSupabaseStore();
     const rows = await supabaseRestRequest(
       `${encodeURIComponent(SUPABASE_STATE_TABLE)}?key=eq.${encodeURIComponent(
         SUPABASE_STATE_KEY
-      )}&select=value`,
+      )}&select=value,updated_at`,
       { method: "GET" }
     );
 
-    return normalizeStore(Array.isArray(rows) ? rows[0]?.value || {} : {});
+    const store = normalizeStore(Array.isArray(rows) ? rows[0]?.value || {} : {});
+    if (rows?.[0]?.updated_at) storeVersions.set(store, rows[0].updated_at);
+    return store;
   }
 
   await ensureStoreFile();
@@ -562,6 +586,25 @@ async function writeStore(store) {
   const normalized = normalizeStore(store);
 
   if (storeBackend() === "supabase") {
+    if (process.env.STATE_VERSION_CHECKS === "true") {
+      const expected = storeVersions.get(store);
+      if (!expected) throw new Error("Store revision missing; reload before writing.");
+      const updatedAt = new Date(Math.max(Date.now(), Date.parse(expected) + 1)).toISOString();
+      const rows = await supabaseRestRequest(
+        `${encodeURIComponent(SUPABASE_STATE_TABLE)}?key=eq.${encodeURIComponent(SUPABASE_STATE_KEY)}&updated_at=eq.${encodeURIComponent(expected)}&select=updated_at`,
+        {
+          method: "PATCH", headers: { Prefer: "return=representation" },
+          body: JSON.stringify({ value: normalized, updated_at: updatedAt })
+        }
+      );
+      if (!rows?.length) {
+        const error = new Error("Conversation state changed concurrently; reload and review before retrying.");
+        error.code = "STATE_CONFLICT";
+        throw error;
+      }
+      storeVersions.set(store, rows[0].updated_at);
+      return;
+    }
     await supabaseRestRequest(encodeURIComponent(SUPABASE_STATE_TABLE), {
       method: "POST",
       headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
@@ -7232,17 +7275,33 @@ async function sendAutoReply(messageLike, replyText, featureSettings) {
   }
 
   await prepareZernioSend(messageLike, replyText, featureSettings);
+  const latestHoldReason = await currentAutomationHoldReason(messageLike);
+  if (latestHoldReason) throw new Error(`Auto-send blocked: ${latestHoldReason}`);
   if (!(await incomingStillCurrent(messageLike))) {
     const error = new Error("Auto-send cancelled because a newer prospect message arrived.");
     error.code = "STALE_INCOMING";
     throw error;
   }
 
-  return sendReply(
-    { ...messageLike, _send_prepared: true },
-    replyText,
-    featureSettings
-  );
+  const transmit = async () => {
+    const finalHold = await currentAutomationHoldReason(messageLike);
+    if (finalHold) throw new Error(`Auto-send blocked: ${finalHold}`);
+    if (!(await incomingStillCurrent(messageLike))) {
+      const error = new Error("A newer message arrived before delivery.");
+      error.code = "STALE_INCOMING";
+      throw error;
+    }
+    return sendReply({ ...messageLike, _send_prepared: true }, replyText, featureSettings);
+  };
+  if (storeBackend() === "supabase" && process.env.RELIABLE_DELIVERY === "true") {
+    return deliveryLedger.send({
+      account: messageLike.zernio_account_id,
+      conversation: messageLike.zernio_conversation_id || messageLike.talk_id || messageLike.current_talk_id,
+      trigger: messageLike._delivery_trigger || messageLike.incoming_message_id,
+      step: messageLike._delivery_step || "sequence-0"
+    }, replyText, transmit);
+  }
+  return transmit();
 }
 
 function replyMessages(replyLike) {
@@ -7286,7 +7345,7 @@ async function sendReplySequence(messageLike, replyLike, featureSettings) {
             human_send_delay: false
           };
 
-    await sendAutoReply(messageLike, messages[index], sendSettings);
+    await sendAutoReply({ ...messageLike, _delivery_step: `sequence-${index}` }, messages[index], sendSettings);
     sentMessages.push(messages[index]);
   }
 
@@ -7865,7 +7924,7 @@ async function sendDueFollowUp(conversationKey) {
   }
 
   try {
-    await sendAutoReply(memory, replyText, featureSettings);
+    await sendAutoReply({ ...memory, _delivery_trigger: `follow-up:${memory.last_incoming_at}:${memory.follow_up.count + 1}` }, replyText, featureSettings);
   } catch (error) {
     memory.follow_up.active = false;
     memory.follow_up.due_at = null;
@@ -8020,7 +8079,7 @@ async function processIncomingMessage(incoming, parsedPayload) {
     featureSettings
   );
 
-  if (duplicate) {
+  if (duplicate && !incoming.durable_job) {
     console.log(`Webhook ignored: duplicate message ${incoming.incoming_message_id}.`);
     await appendAutomationEvent({
       level: "info",
@@ -8088,6 +8147,10 @@ function enqueueConversationProcessing(conversationKey, work) {
 }
 
 async function scheduleIncomingReply(incoming, parsedPayload, conversationKey) {
+  if (incoming.durable_job) {
+    await durableReplies.enqueue(incoming, parsedPayload);
+    return;
+  }
   if (INCOMING_REPLY_DEBOUNCE_MS <= 0) {
     await enqueueConversationProcessing(conversationKey, () =>
       processIncomingReply(incoming, parsedPayload, conversationKey)
@@ -8544,7 +8607,7 @@ async function processIncomingReply(incoming, parsedPayload, conversationKey) {
 app.post(
   "/webhook/zernio",
   express.raw({ type: "*/*", limit: "2mb" }),
-  (req, res) => {
+  async (req, res) => {
     const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.from("");
     const webhookSecret = process.env.ZERNIO_WEBHOOK_SECRET;
     const signature =
@@ -8579,6 +8642,16 @@ app.post(
     console.log("Zernio webhook extracted message:");
     console.log(JSON.stringify(incoming, null, 2));
 
+    if (storeBackend() === "supabase" && process.env.DURABLE_JOBS === "true") {
+      try {
+        const jobId = await durableJobs.enqueue(incoming, parsedPayload);
+        res.status(202).json({ ok: true, job_id: jobId });
+      } catch (error) {
+        console.error("Could not persist incoming job:", error.message);
+        res.status(503).json({ ok: false, error: "Unable to persist message; retry delivery." });
+      }
+      return;
+    }
     res.status(202).json({ ok: true });
 
     if (incoming.event_type === "message.sent") {
@@ -12838,6 +12911,79 @@ function renderModernHomePage() {
         padding: 4px 6px;
       }
     }
+    /* Motion stays on dashboard surfaces, never on repeatedly rendered messages. */
+    .pulse-brand-title { position: relative; width: fit-content; }
+    .pulse-brand-title::after {
+      content: ""; position: absolute; left: 0; bottom: -5px;
+      width: 32px; height: 2px; background: var(--ig-gradient);
+      transform: skewX(-24deg); pointer-events: none;
+    }
+    .hero-metric.pulse-card::before {
+      background: linear-gradient(125deg, rgba(109,40,255,.13), transparent 42%, rgba(255,63,143,.13) 78%, rgba(255,159,28,.12));
+    }
+    .hero-metric.pulse-card::after {
+      top: 0; left: 0; right: auto; width: 44%; height: 2px;
+      background: var(--ig-gradient); opacity: .8;
+      animation: pulseEdgeDrift 12s ease-in-out infinite alternate;
+      pointer-events: none;
+    }
+    .hero-metric.pulse-card {
+      border-color: rgba(255,255,255,.18);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 12px 32px rgba(0,0,0,.18);
+    }
+    .mobile-supporting-metrics article {
+      border-color: rgba(255,255,255,.12);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.05);
+    }
+    .timeframe button, .nav a, .attention-row, .companion-composer button {
+      transition: transform 160ms ease, background-color 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .timeframe button:active, .attention-row:active, .companion-composer button:active {
+      transform: scale(.97);
+    }
+    .nav a { position: relative; }
+    .nav a.active::after {
+      content: ""; position: absolute; left: 0; top: 28%; bottom: 28%;
+      width: 3px; border-radius: 2px; background: var(--ig-gradient);
+      pointer-events: none;
+    }
+    .timeframe button.active {
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.28), 0 3px 12px rgba(219,44,255,.12);
+    }
+    .mobile-screen.active > .bot-health,
+    .mobile-screen.active > .hero-metric,
+    .mobile-screen.active > .mobile-supporting-metrics,
+    .mobile-screen.active > .mobile-ratios,
+    .mobile-screen.active > .attention-row {
+      animation: pulseSurfaceEnter 360ms cubic-bezier(.22,.8,.3,1) both;
+    }
+    .mobile-screen.active > .hero-metric { animation-delay: 35ms; }
+    .mobile-screen.active > .mobile-supporting-metrics { animation-delay: 65ms; }
+    .mobile-screen.active > .mobile-ratios { animation-delay: 90ms; }
+    .mobile-screen.active > .attention-row { animation-delay: 110ms; }
+    .mobile-screen.active > .hero-metric.booking-pulse { animation: bookingCardPulse 1.35s ease-out; }
+    .app :is(button, a, input, textarea):focus-visible {
+      outline: 2px solid #ff74b1; outline-offset: 3px;
+    }
+    @media (hover: hover) and (pointer: fine) {
+      .nav a:hover { transform: translateX(3px); }
+      .attention-row:hover { border-color: rgba(255,63,143,.6); }
+      .timeframe button:hover { transform: translateY(-1px); }
+    }
+    @keyframes pulseEdgeDrift {
+      from { transform: translateX(-20%); opacity: .45; }
+      to { transform: translateX(150%); opacity: .9; }
+    }
+    @keyframes pulseSurfaceEnter {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .app *, .app *::before, .app *::after {
+        animation: none !important; transition: none !important;
+      }
+    }
     .companion { grid-template-rows: auto minmax(0,1fr) auto auto; }
     .companion-head { grid-template-columns: auto minmax(0,1fr) auto auto; }
     .companion-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -14903,6 +15049,11 @@ ensureStoreFile()
   .then(async () => {
     const store = await readStore();
     const featureSettings = getFeatureSettings(store);
+
+    setInterval(() => {
+      if (storeBackend() === "supabase" && process.env.DURABLE_JOBS === "true") durableJobs.sweep().catch(error => console.error("Message queue error:", error.message));
+      if (storeBackend() === "supabase" && process.env.DURABLE_JOBS === "true") durableReplies.sweep().catch(error => console.error("Reply queue error:", error.message));
+    }, 2000);
 
     setInterval(() => {
       processDueFollowUps().catch((error) => {
